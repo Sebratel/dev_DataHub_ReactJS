@@ -1,0 +1,142 @@
+// Pools de conexão por fonte — lazy, pequenos e somente-leitura por contrato.
+// Pool ≤ 3 conexões e statement_timeout de 120 s: a ingestão jamais pode pesar
+// nos bancos de produção (docs §9.1). Portado do padrão makePool do churn_mvp.
+import pg from 'pg'
+import mysql from 'mysql2/promise'
+import { CONNECTORS, getConnector, isConfigured, type ConnectorDef } from './registry.js'
+import { assertReadOnly } from '../core/guard.js'
+
+const { Pool } = pg
+
+const pgPools = new Map<string, pg.Pool>()
+const mysqlPools = new Map<string, mysql.Pool>()
+
+function env(def: ConnectorDef, suffix: string): string | undefined {
+  return process.env[`${def.envPrefix}_${suffix}`]
+}
+
+function requireConfigured(def: ConnectorDef): void {
+  if (!isConfigured(def)) {
+    throw new Error(`Fonte "${def.id}" sem credenciais no .env (${def.envPrefix}_*).`)
+  }
+}
+
+function getPgPool(def: ConnectorDef): pg.Pool {
+  let pool = pgPools.get(def.id)
+  if (pool) return pool
+  requireConfigured(def)
+  pool = new Pool({
+    host: env(def, 'HOST'),
+    port: Number(env(def, 'PORT')) || 5432,
+    database: env(def, 'DATABASE'),
+    user: env(def, 'USER'),
+    password: env(def, 'PASSWORD'),
+    ssl: env(def, 'SSL') === 'true' ? { rejectUnauthorized: false } : false,
+    max: 3,
+    connectionTimeoutMillis: 15_000,
+    statement_timeout: 120_000,
+  })
+  pgPools.set(def.id, pool)
+  return pool
+}
+
+function getMysqlPool(def: ConnectorDef): mysql.Pool {
+  let pool = mysqlPools.get(def.id)
+  if (pool) return pool
+  requireConfigured(def)
+  pool = mysql.createPool({
+    host: env(def, 'HOST'),
+    port: Number(env(def, 'PORT')) || 3306,
+    database: env(def, 'DATABASE'),
+    user: env(def, 'USER'),
+    password: env(def, 'PASSWORD'),
+    connectionLimit: 3,
+    connectTimeout: 15_000,
+    dateStrings: true,
+  })
+  mysqlPools.set(def.id, pool)
+  return pool
+}
+
+// Executa um SELECT (validado pelo guard) na fonte. Uso interno: descoberta de
+// tabelas e ingestão. Nunca exposto cru ao usuário final.
+export async function querySource(
+  connectorId: string,
+  sql: string,
+  params: unknown[] = [],
+): Promise<{ rows: Record<string, unknown>[] }> {
+  const def = getConnector(connectorId)
+  if (!def) throw new Error(`Fonte desconhecida: ${connectorId}`)
+  assertReadOnly(sql)
+  if (def.kind === 'postgres') {
+    const res = await getPgPool(def).query(sql, params as never[])
+    return { rows: res.rows }
+  }
+  if (def.kind === 'mysql') {
+    const [rows] = await getMysqlPool(def).query(sql, params)
+    return { rows: rows as Record<string, unknown>[] }
+  }
+  throw new Error(`Fonte "${connectorId}" (${def.kind}) não suporta SQL.`)
+}
+
+// Ping barato (SELECT 1) para a tela de conexões do admin.
+export async function checkConnection(connectorId: string): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+  const started = Date.now()
+  try {
+    await querySource(connectorId, 'select 1 as ok')
+    return { ok: true, latencyMs: Date.now() - started }
+  } catch (e) {
+    return { ok: false, latencyMs: Date.now() - started, error: (e as Error).message }
+  }
+}
+
+// Descoberta GENERALISTA de tabelas/views — só information_schema, sem nada
+// específico de negócio. É a matéria-prima da publicação de datasets.
+export async function discoverObjects(connectorId: string): Promise<
+  { schema: string; name: string; kind: 'table' | 'view'; columns: number }[]
+> {
+  const def = getConnector(connectorId)
+  if (!def) throw new Error(`Fonte desconhecida: ${connectorId}`)
+  const sql = def.kind === 'mysql'
+    ? `select table_schema as schema_name, table_name, table_type,
+              (select count(*) from information_schema.columns c
+                where c.table_schema = t.table_schema and c.table_name = t.table_name) as column_count
+         from information_schema.tables t
+        where table_schema = database()
+        order by table_name`
+    : `select table_schema as schema_name, table_name, table_type,
+              (select count(*) from information_schema.columns c
+                where c.table_schema = t.table_schema and c.table_name = t.table_name) as column_count
+         from information_schema.tables t
+        where table_schema not in ('pg_catalog', 'information_schema')
+        order by table_schema, table_name`
+  const { rows } = await querySource(connectorId, sql)
+  return rows.map((r) => ({
+    schema: String(r.schema_name),
+    name: String(r.table_name),
+    kind: String(r.table_type).toLowerCase().includes('view') ? 'view' : 'table',
+    columns: Number(r.column_count) || 0,
+  }))
+}
+
+// Colunas de um objeto físico — insumo para o admin publicar um dataset.
+export async function discoverColumns(connectorId: string, schema: string, table: string): Promise<
+  { name: string; dataType: string; nullable: boolean }[]
+> {
+  const sql = `select column_name, data_type, is_nullable
+                 from information_schema.columns
+                where table_schema = $1 and table_name = $2
+                order by ordinal_position`
+  const def = getConnector(connectorId)
+  if (!def) throw new Error(`Fonte desconhecida: ${connectorId}`)
+  const { rows } = def.kind === 'mysql'
+    ? await querySource(connectorId, sql.replace('$1', '?').replace('$2', '?'), [schema, table])
+    : await querySource(connectorId, sql, [schema, table])
+  return rows.map((r) => ({
+    name: String(r.column_name),
+    dataType: String(r.data_type),
+    nullable: String(r.is_nullable).toLowerCase() === 'yes',
+  }))
+}
+
+export { CONNECTORS, isConfigured }

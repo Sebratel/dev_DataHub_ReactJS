@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+# ─────────────────────────────────────────────────────────────
+# API do Data Hub (apps/api). Roda sob tsx (sem build step), como no churn_mvp.
+# Credenciais entram por variáveis de ambiente da stack — nunca na imagem.
+# ─────────────────────────────────────────────────────────────
+FROM node:22-alpine
+WORKDIR /app
+
+# Manifests do monorepo primeiro (cache de camada do npm ci).
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/
+COPY packages/shared/package.json packages/shared/
+RUN npm ci --omit=dev
+
+# Código: API + tipos compartilhados (tsx resolve os imports .ts em runtime).
+COPY tsconfig.base.json ./
+COPY packages/shared ./packages/shared
+COPY apps/api ./apps/api
+
+ENV NODE_ENV=production
+ENV API_PORT=8790
+
+EXPOSE 8790
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:8790/api/health >/dev/null 2>&1 || exit 1
+
+CMD ["npx", "tsx", "apps/api/src/index.ts"]
