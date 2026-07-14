@@ -7,6 +7,8 @@ import clsx from 'clsx'
 import type { DatasetDetail, AdminDatasetField } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import SyncPanel from './SyncPanel'
+import DataTable from './DataTable'
 
 const TYPE_LABEL: Record<string, string> = {
   text: 'Texto', number: 'Número', date: 'Data', bool: 'Sim/Não', json: 'Estruturado',
@@ -173,7 +175,13 @@ export default function DatasetDetailPage() {
         </table>
       </div>
 
-      {/* Preview (admin) */}
+      {/* Sincronização com o lake (admin) */}
+      {isAdmin && <SyncPanel dataset={dataset} onSynced={load} />}
+
+      {/* Dados do lake — qualquer usuário, quando já sincronizado */}
+      {dataset.lastSyncAt && <DataTable dataset={dataset} />}
+
+      {/* Preview ao vivo da fonte (admin) */}
       {preview && (
         <>
           <h2 className="mt-8 text-sm font-medium uppercase tracking-wider text-zinc-400">

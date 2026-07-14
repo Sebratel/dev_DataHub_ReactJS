@@ -57,6 +57,19 @@ export interface DatasetSummary {
   updatedAt: string
   // Origem física — presente APENAS para admins.
   source?: { connectionId: string; schema: string; table: string }
+  // Configuração de sincronização — presente APENAS para admins.
+  sync?: { mode: 'live' | 'snapshot' | 'incremental'; incrementalKey: string | null }
+}
+
+export interface SyncRun {
+  id: string
+  mode: string
+  status: 'running' | 'done' | 'error'
+  rows: number
+  bytes: number
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
 }
 
 export interface DatasetDetail extends DatasetSummary {

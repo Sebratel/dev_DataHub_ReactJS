@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@datahub/shared": "*",
+    "@duckdb/node-api": "^1.5.4-r.1",
+    "@google-cloud/storage": "^7.21.0",
     "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "mysql2": "^3.22.5",

@@ -52,6 +52,7 @@ const DATASET_COLUMNS = `
   d.id, d.slug, d.name, d.description, d.tags, d.owner_email,
   d.row_count, d.last_sync_at, d.updated_at,
   d.connection_id, d.schema_name, d.object_name,
+  d.sync_mode, d.incremental_key,
   (select count(*) from dataset_fields f where f.dataset_id = d.id and not f.hidden) as field_count`
 
 function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary {
@@ -67,11 +68,17 @@ function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary
     lastSyncAt: row.last_sync_at ? String(row.last_sync_at) : null,
     updatedAt: String(row.updated_at),
     // Nomes físicos só para admin — o usuário nunca vê schema/tabela.
-    ...(admin ? { source: {
-      connectionId: String(row.connection_id),
-      schema: String(row.schema_name),
-      table: String(row.object_name),
-    } } : {}),
+    ...(admin ? {
+      source: {
+        connectionId: String(row.connection_id),
+        schema: String(row.schema_name),
+        table: String(row.object_name),
+      },
+      sync: {
+        mode: String(row.sync_mode) as 'live' | 'snapshot' | 'incremental',
+        incrementalKey: (row.incremental_key as string) ?? null,
+      },
+    } : {}),
   }
 }
 
