@@ -7,6 +7,7 @@ import HomePage from '@/features/home/HomePage'
 import ConnectionsPage from '@/features/admin/ConnectionsPage'
 import DatasetsPage from '@/features/datasets/DatasetsPage'
 import DatasetDetailPage from '@/features/datasets/DatasetDetailPage'
+import ExplorerPage from '@/features/explorer/ExplorerPage'
 import PlaceholderPage from '@/components/PlaceholderPage'
 import '@/styles/index.css'
 
@@ -19,6 +20,7 @@ const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: 'datasets', element: <DatasetsPage /> },
       { path: 'datasets/:slug', element: <DatasetDetailPage /> },
+      { path: 'datasets/:slug/explore', element: <ExplorerPage /> },
       { path: 'dashboards', element: <PlaceholderPage title="Dashboards" sprint="Sprint 5" /> },
       { path: 'ai', element: <PlaceholderPage title="Assistente IA" sprint="Sprint 6" /> },
       { path: 'integrations', element: <PlaceholderPage title="Integrações" sprint="Sprint 6" /> },

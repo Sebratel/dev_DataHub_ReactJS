@@ -118,6 +118,26 @@ export interface ConnectionInfo {
   error: string | null
 }
 
+// ── Explorador ────────────────────────────────────────────────
+// Estado salvo de uma visualização do Explorador.
+export interface ViewDefinition {
+  filters?: QueryFilter[]
+  orderBy?: { field: string; dir: 'asc' | 'desc' }[]
+  groupBy?: string | null
+  hiddenColumns?: string[]
+  search?: string
+  pageSize?: number
+}
+
+export interface SavedView {
+  id: string
+  name: string
+  definition: ViewDefinition
+  ownerEmail: string
+  shared: boolean
+  updatedAt: string
+}
+
 // ── Auth ──────────────────────────────────────────────────────
 export interface SessionUser {
   email: string

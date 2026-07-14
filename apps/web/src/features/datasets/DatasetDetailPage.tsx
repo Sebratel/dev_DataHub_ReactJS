@@ -2,7 +2,7 @@
 // editam labels, ocultam campos, marcam sensíveis e pré-visualizam a amostra.
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check, Compass } from 'lucide-react'
 import clsx from 'clsx'
 import type { DatasetDetail, AdminDatasetField } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -90,16 +90,26 @@ export default function DatasetDetailPage() {
             )}
           </p>
         </div>
-        {isAdmin && (
-          <button
-            onClick={loadPreview}
-            disabled={previewBusy}
-            className="flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover disabled:opacity-60"
-          >
-            {previewBusy ? <Loader2 size={14} className="animate-spin" /> : <Table2 size={14} />}
-            Pré-visualizar dados
-          </button>
-        )}
+        <div className="flex shrink-0 gap-2">
+          {dataset.lastSyncAt && (
+            <Link
+              to={`/datasets/${dataset.slug}/explore`}
+              className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover"
+            >
+              <Compass size={14} /> Explorar
+            </Link>
+          )}
+          {isAdmin && (
+            <button
+              onClick={loadPreview}
+              disabled={previewBusy}
+              className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-100 disabled:opacity-60 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              {previewBusy ? <Loader2 size={14} className="animate-spin" /> : <Table2 size={14} />}
+              Preview da fonte
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
