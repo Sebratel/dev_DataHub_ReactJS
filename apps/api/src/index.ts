@@ -7,6 +7,7 @@ import { config } from './core/config.js'
 import { runMigrations, isDbAvailable } from './db/pool.js'
 import { requireAuth } from './modules/auth/middleware.js'
 import { connectionsRouter } from './modules/catalog/connectionsRouter.js'
+import { datasetsRouter } from './modules/catalog/datasetsRouter.js'
 
 const app = express()
 app.use(express.json({ limit: '4mb' }))
@@ -34,6 +35,9 @@ app.get('/api/v1/auth/me', requireAuth(), (req, res) => {
 
 // Admin: fontes de dados.
 app.use('/api/v1/connections', connectionsRouter)
+
+// Catálogo de conjuntos de dados.
+app.use('/api/v1/datasets', datasetsRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
 

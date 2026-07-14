@@ -44,6 +44,36 @@ export interface QueryResult {
 }
 
 // ── Catálogo ──────────────────────────────────────────────────
+export interface DatasetSummary {
+  id: string
+  slug: string
+  name: string
+  description: string
+  tags: string[]
+  ownerEmail: string | null
+  fieldCount: number
+  rowCount: number | null
+  lastSyncAt: string | null
+  updatedAt: string
+  // Origem física — presente APENAS para admins.
+  source?: { connectionId: string; schema: string; table: string }
+}
+
+export interface DatasetDetail extends DatasetSummary {
+  fields: AdminDatasetField[]
+}
+
+export interface AdminDatasetField {
+  id: string
+  key: string
+  label: string
+  description: string | null
+  type: FieldType
+  hidden: boolean // só admins recebem campos hidden (para poder reexibi-los)
+  sensitive: boolean
+  sortOrder: number
+}
+
 export interface DatasetMeta {
   slug: string
   name: string

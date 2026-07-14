@@ -19,6 +19,9 @@ export const CONNECTORS: ConnectorDef[] = [
   { id: 'radius', name: 'RADIUS', kind: 'postgres', envPrefix: 'DB_RADIUS' },
   { id: 'autoisp', name: 'AutoISP (ONU/PPPoE)', kind: 'postgres', envPrefix: 'DB_AUTOISP' },
   { id: 'maria', name: 'Massivas (MariaDB)', kind: 'mysql', envPrefix: 'DB_MARIA' },
+  // Banco de metadados do próprio hub — serve de fonte DEMO em dev (as fontes
+  // reais não têm rota fora do servidor) e de auditoria em produção.
+  { id: 'datahub-meta', name: 'Metadados do Hub (demo)', kind: 'postgres', envPrefix: 'DATAHUB_DB' },
   // SOAP (RH) e GCS entram no módulo sync — não são fontes SQL navegáveis.
 ]
 

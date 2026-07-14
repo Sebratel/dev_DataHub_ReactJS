@@ -1,18 +1,43 @@
 // Admin › Conexões — status ao vivo das fontes e descoberta de tabelas
 // (matéria-prima da publicação de datasets no Sprint 2).
 import { useEffect, useState } from 'react'
-import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2 } from 'lucide-react'
 import type { ConnectionInfo } from '@datahub/shared'
 import { api } from '@/lib/api'
 
 interface PhysicalObject { schema: string; name: string; kind: 'table' | 'view'; columns: number }
 
 export default function ConnectionsPage() {
+  const navigate = useNavigate()
   const [connections, setConnections] = useState<ConnectionInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [objects, setObjects] = useState<PhysicalObject[] | null>(null)
   const [objectsBusy, setObjectsBusy] = useState(false)
+  const [publishing, setPublishing] = useState<string | null>(null)
+
+  // Publica a tabela como Conjunto de Dados e leva para a edição do catálogo.
+  async function publish(connectionId: string, obj: PhysicalObject) {
+    const name = window.prompt(
+      `Nome amigável do conjunto (o usuário verá este nome, nunca "${obj.name}"):`,
+      obj.name.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+    )
+    if (!name) return
+    setPublishing(`${obj.schema}.${obj.name}`)
+    setError(null)
+    try {
+      const r = await api<{ slug: string }>('/api/v1/datasets', {
+        method: 'POST',
+        body: JSON.stringify({ connectionId, schema: obj.schema, table: obj.name, name }),
+      })
+      navigate(`/datasets/${r.slug}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Falha ao publicar o conjunto.')
+    } finally {
+      setPublishing(null)
+    }
+  }
 
   async function load() {
     setConnections(null)
@@ -98,6 +123,7 @@ export default function ConnectionsPage() {
                             <th className="px-3 py-2 font-medium">Nome</th>
                             <th className="px-3 py-2 font-medium">Tipo</th>
                             <th className="px-3 py-2 text-right font-medium">Colunas</th>
+                            <th className="px-3 py-2 text-right font-medium">Catálogo</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -107,6 +133,18 @@ export default function ConnectionsPage() {
                               <td className="px-3 py-1.5 font-mono text-xs">{o.name}</td>
                               <td className="px-3 py-1.5">{o.kind === 'view' ? 'view' : 'tabela'}</td>
                               <td className="px-3 py-1.5 text-right">{o.columns}</td>
+                              <td className="px-3 py-1.5 text-right">
+                                <button
+                                  onClick={() => publish(c.id, o)}
+                                  disabled={publishing !== null}
+                                  className="inline-flex items-center gap-1 rounded border border-zinc-200 px-2 py-1 text-[11px] hover:border-accent hover:text-accent disabled:opacity-50 dark:border-zinc-700"
+                                >
+                                  {publishing === `${o.schema}.${o.name}`
+                                    ? <Loader2 size={11} className="animate-spin" />
+                                    : <Upload size={11} />}
+                                  Publicar
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
