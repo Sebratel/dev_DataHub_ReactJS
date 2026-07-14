@@ -58,9 +58,19 @@ async function runSync(datasetId: string): Promise<string> {
   )).rows[0]
 
   const fields = (await db.query(
-    `select source_column, key from dataset_fields where dataset_id = $1 order by sort_order`,
+    `select source_column, key, type from dataset_fields where dataset_id = $1 order by sort_order`,
     [datasetId],
   )).rows
+  // Drivers devolvem BIGINT/NUMERIC como STRING (precisão) — sem coerção o
+  // Parquet nasceria VARCHAR e quebraria filtros/agregações numéricas.
+  const numericKeys = fields.filter((f) => f.type === 'number').map((f) => String(f.key))
+  function coerce(row: Record<string, unknown>): Record<string, unknown> {
+    for (const k of numericKeys) {
+      const v = row[k]
+      if (typeof v === 'string' && v !== '' && !Number.isNaN(Number(v))) row[k] = Number(v)
+    }
+    return row
+  }
   const q = def.kind === 'mysql'
     ? (s: string) => '`' + String(s).replace(/`/g, '') + '`'
     : (s: string) => '"' + String(s).replace(/"/g, '') + '"'
@@ -86,7 +96,7 @@ async function runSync(datasetId: string): Promise<string> {
         const where = newWatermark != null ? `where ${q(keyCol)} > ${def.kind === 'mysql' ? '?' : '$1'}` : ''
         const sql = `select ${cols} from ${from} ${where} order by ${q(keyCol)} limit ${batchSize}`
         const { rows } = await querySource(String(ds.connection_id), sql, newWatermark != null ? [newWatermark] : [])
-        for (const row of rows) await write(jsonLine(row))
+        for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length
         if (rows.length) {
           const last = rows[rows.length - 1][String(ds.incremental_key)]
@@ -101,7 +111,7 @@ async function runSync(datasetId: string): Promise<string> {
       for (let offset = 0; ; offset += batchSize) {
         const sql = `select ${cols} from ${from} limit ${batchSize} offset ${offset}`
         const { rows } = await querySource(String(ds.connection_id), sql)
-        for (const row of rows) await write(jsonLine(row))
+        for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length
         if (rows.length < batchSize) break
         await sleep(batchPauseMs)

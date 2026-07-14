@@ -118,6 +118,51 @@ export interface ConnectionInfo {
   error: string | null
 }
 
+// ── Métricas ──────────────────────────────────────────────────
+export interface Metric {
+  id: string
+  slug: string
+  name: string
+  description: string
+  datasetId: string
+  datasetSlug: string
+  datasetName: string
+  agg: Aggregation
+  fieldKey: string
+  filters: QueryFilter[]
+  format: 'number' | 'currency' | 'percent'
+  ownerEmail: string | null
+}
+
+// ── Dashboards ────────────────────────────────────────────────
+export type WidgetType = 'kpi' | 'line' | 'bar' | 'pie' | 'area' | 'table'
+
+export interface Widget {
+  id: string
+  title: string
+  type: WidgetType
+  datasetId: string
+  datasetSlug: string
+  dimension: string | null
+  metric: { metric: string } | { field: string; agg: Aggregation }
+  filters: QueryFilter[]
+  size: 'sm' | 'md' | 'lg'
+  sortOrder: number
+}
+
+export interface DashboardSummary {
+  id: string
+  name: string
+  description: string
+  ownerEmail: string
+  widgetCount: number
+  updatedAt: string
+}
+
+export interface DashboardDetail extends DashboardSummary {
+  widgets: Widget[]
+}
+
 // ── Explorador ────────────────────────────────────────────────
 // Estado salvo de uma visualização do Explorador.
 export interface ViewDefinition {

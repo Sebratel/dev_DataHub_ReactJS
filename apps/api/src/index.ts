@@ -12,6 +12,8 @@ import { syncRouter } from './modules/sync/syncRouter.js'
 import { queryRouter } from './modules/query/queryRouter.js'
 import { viewsRouter } from './modules/explorer/viewsRouter.js'
 import { exportRouter } from './modules/explorer/exportRouter.js'
+import { metricsRouter } from './modules/metrics/metricsRouter.js'
+import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
 import { startScheduler } from './modules/sync/scheduler.js'
 
 const app = express()
@@ -48,6 +50,10 @@ app.use('/api/v1/datasets', syncRouter)
 app.use('/api/v1/datasets', viewsRouter)
 app.use('/api/v1/datasets', exportRouter)
 app.use('/api/v1/datasets', datasetsRouter)
+
+// Biblioteca de métricas e dashboards.
+app.use('/api/v1/metrics', metricsRouter)
+app.use('/api/v1/dashboards', dashboardsRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
 

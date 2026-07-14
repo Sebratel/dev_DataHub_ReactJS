@@ -34,6 +34,15 @@ queryRouter.post('/:slug/query', requireAuth(), async (req, res) => {
     [ds.id],
   )).rows as { key: string; type: FieldType; sensitive: boolean }[]
 
+  // Métricas da biblioteca deste dataset — o compilador resolve {metric: slug}.
+  const metrics = (await db.query(
+    `select slug, agg, field_key, filters from metrics where dataset_id = $1`,
+    [ds.id],
+  )).rows.map((m) => ({
+    slug: String(m.slug), agg: String(m.agg), fieldKey: String(m.field_key),
+    filters: (m.filters ?? []) as import('@datahub/shared').QueryFilter[],
+  }))
+
   const admin = !!req.user?.roles.includes('admin')
   const started = Date.now()
   try {
@@ -41,11 +50,12 @@ queryRouter.post('/:slug/query', requireAuth(), async (req, res) => {
     const compiled = compileQuery({ ...def, dataset: String(ds.slug) }, fields, {
       admin,
       glob: parquetGlob(dir),
+      metrics,
     })
     const result = await duckQuery(compiled.sql, compiled.params)
     let total: number | undefined
     if (compiled.countSql) {
-      total = Number((await duckQuery(compiled.countSql, compiled.params)).rows[0]?.n ?? 0)
+      total = Number((await duckQuery(compiled.countSql, compiled.countParams)).rows[0]?.n ?? 0)
     }
     const typeByKey = new Map(fields.map((f) => [f.key, f.type]))
     const payload: QueryResult = {

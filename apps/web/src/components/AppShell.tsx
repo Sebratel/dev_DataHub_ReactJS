@@ -3,7 +3,7 @@
 import { NavLink, Outlet, Navigate } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, Plug, Settings,
-  Moon, Sun, LogOut, Database,
+  Moon, Sun, LogOut, Database, Ruler,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from '@/store/authStore'
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/', label: 'Início', icon: Home, end: true },
   { to: '/datasets', label: 'Conjuntos de Dados', icon: Boxes },
   { to: '/dashboards', label: 'Dashboards', icon: LayoutDashboard },
+  { to: '/metrics', label: 'Métricas', icon: Ruler },
   { to: '/ai', label: 'Assistente IA', icon: Sparkles },
   { to: '/integrations', label: 'Integrações', icon: Plug },
 ]
