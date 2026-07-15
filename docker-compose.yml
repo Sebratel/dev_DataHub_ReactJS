@@ -81,6 +81,13 @@ services:
       # Lake (GCS) e integrações — entram no Sprint 3.
       BUCKET_GCP_NAME: ${BUCKET_GCP_NAME:-}
       PATH_CREDENTIALS: ${PATH_CREDENTIALS:-}
+      # IA (chat com tools). Sem a chave, o resto do sistema funciona normal.
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
+    volumes:
+      # Lake persistente (Parquet) — sobrevive a redeploys.
+      - datahub-lake:/app/data/lake
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost:8790/api/health']
       interval: 30s
@@ -118,3 +125,5 @@ networks:
 
 volumes:
   datahub-db-data:
+  # Lake local (Parquet por tenant/dataset). O espelho GCS é durabilidade extra.
+  datahub-lake:

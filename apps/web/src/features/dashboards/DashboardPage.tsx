@@ -2,13 +2,14 @@
 // (HTML5 drag), redimensionar, adicionar e remover.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Share2 } from 'lucide-react'
 import clsx from 'clsx'
 import type { DashboardDetail, Metric, Widget } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import WidgetCard from './WidgetCard'
 import AddWidgetModal from './AddWidgetModal'
+import ShareDialog from './ShareDialog'
 
 export default function DashboardPage() {
   const { id } = useParams()
@@ -18,6 +19,7 @@ export default function DashboardPage() {
   const [metrics, setMetrics] = useState<Metric[]>([])
   const [error, setError] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [showShare, setShowShare] = useState(false)
   const dragFrom = useRef<number | null>(null)
 
   const load = useCallback(() => {
@@ -85,6 +87,10 @@ export default function DashboardPage() {
               className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover">
               <Plus size={15} /> Widget
             </button>
+            <button onClick={() => setShowShare(true)} title="Compartilhar"
+              className="rounded-lg border border-zinc-200 p-2 text-zinc-400 hover:text-accent dark:border-zinc-700">
+              <Share2 size={15} />
+            </button>
             <button onClick={deleteDashboard} title="Excluir dashboard"
               className="rounded-lg border border-zinc-200 p-2 text-zinc-400 hover:text-red-500 dark:border-zinc-700">
               <Trash2 size={15} />
@@ -126,6 +132,7 @@ export default function DashboardPage() {
       </div>
 
       {showAdd && <AddWidgetModal metrics={metrics} onClose={() => setShowAdd(false)} onCreate={addWidget} />}
+      {showShare && <ShareDialog dashboardId={dash.id} onClose={() => setShowShare(false)} />}
     </div>
   )
 }

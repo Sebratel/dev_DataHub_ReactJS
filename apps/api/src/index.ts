@@ -14,6 +14,8 @@ import { viewsRouter } from './modules/explorer/viewsRouter.js'
 import { exportRouter } from './modules/explorer/exportRouter.js'
 import { metricsRouter } from './modules/metrics/metricsRouter.js'
 import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
+import { aiRouter } from './modules/ai/aiRouter.js'
+import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { startScheduler } from './modules/sync/scheduler.js'
 
 const app = express()
@@ -54,6 +56,11 @@ app.use('/api/v1/datasets', datasetsRouter)
 // Biblioteca de métricas e dashboards.
 app.use('/api/v1/metrics', metricsRouter)
 app.use('/api/v1/dashboards', dashboardsRouter)
+
+// Chat IA e integrações.
+app.use('/api/v1/ai', aiRouter)
+app.use('/api/v1/credentials', credentialsRouter)
+app.use('/api/public/v1', publicRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
 

@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.111.0",
     "@datahub/shared": "*",
     "@duckdb/node-api": "^1.5.4-r.1",
     "@google-cloud/storage": "^7.21.0",

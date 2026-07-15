@@ -11,7 +11,8 @@ import ExplorerPage from '@/features/explorer/ExplorerPage'
 import MetricsPage from '@/features/metrics/MetricsPage'
 import DashboardsPage from '@/features/dashboards/DashboardsPage'
 import DashboardPage from '@/features/dashboards/DashboardPage'
-import PlaceholderPage from '@/components/PlaceholderPage'
+import AiPage from '@/features/ai/AiPage'
+import IntegrationsPage from '@/features/integrations/IntegrationsPage'
 import '@/styles/index.css'
 
 const router = createBrowserRouter([
@@ -27,8 +28,8 @@ const router = createBrowserRouter([
       { path: 'dashboards', element: <DashboardsPage /> },
       { path: 'dashboards/:id', element: <DashboardPage /> },
       { path: 'metrics', element: <MetricsPage /> },
-      { path: 'ai', element: <PlaceholderPage title="Assistente IA" sprint="Sprint 6" /> },
-      { path: 'integrations', element: <PlaceholderPage title="Integrações" sprint="Sprint 6" /> },
+      { path: 'ai', element: <AiPage /> },
+      { path: 'integrations', element: <IntegrationsPage /> },
       { path: 'admin/connections', element: <ConnectionsPage /> },
     ],
   },
