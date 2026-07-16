@@ -170,7 +170,7 @@ export default function AiPage() {
       {/* Conversas */}
       <aside className="hidden w-56 shrink-0 flex-col md:flex">
         <button onClick={() => void newConversation()}
-          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover">
+          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
           <Plus size={15} /> Nova conversa
         </button>
         <div className="mt-3 flex-1 space-y-1 overflow-y-auto">
@@ -195,7 +195,7 @@ export default function AiPage() {
         <div className="flex-1 overflow-y-auto pr-1">
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-white">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-zinc-950">
                 <Sparkles size={22} />
               </div>
               <h1 className="mt-4 text-xl font-semibold">Assistente de Dados</h1>
@@ -218,7 +218,7 @@ export default function AiPage() {
               <div key={m.id} className={clsx('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                 <div className={clsx('max-w-[85%] rounded-2xl px-4 py-2.5 text-sm',
                   m.role === 'user'
-                    ? 'bg-accent text-white'
+                    ? 'bg-accent text-zinc-950'
                     : 'border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900')}>
                   {m.progress && m.content === '' && (
                     <span className="flex flex-col gap-1 text-zinc-500">
@@ -260,7 +260,7 @@ export default function AiPage() {
             className="flex-1 resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-900"
           />
           <button onClick={() => void send()} disabled={busy || !input.trim()}
-            className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent text-white hover:bg-accent-hover disabled:opacity-50">
+            className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
           </button>
         </div>

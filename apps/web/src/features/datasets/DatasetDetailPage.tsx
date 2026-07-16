@@ -94,7 +94,7 @@ export default function DatasetDetailPage() {
           {dataset.lastSyncAt && (
             <Link
               to={`/datasets/${dataset.slug}/explore`}
-              className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover"
+              className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover"
             >
               <Compass size={14} /> Explorar
             </Link>

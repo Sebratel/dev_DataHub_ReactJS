@@ -86,7 +86,7 @@ export default function ShareDialog({ dashboardId, onClose }: { dashboardId: str
               <option value="edit">Editar</option>
             </select>
             <button onClick={() => void invite()} disabled={busy || !email.trim()}
-              className="rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover disabled:opacity-50">
+              className="rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
               {busy ? <Loader2 size={14} className="animate-spin" /> : 'Convidar'}
             </button>
           </div>

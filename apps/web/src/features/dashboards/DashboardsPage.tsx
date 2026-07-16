@@ -39,7 +39,7 @@ export default function DashboardsPage() {
         </div>
         {canCreate && (
           <button onClick={create}
-            className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover">
+            className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
             <Plus size={15} /> Novo dashboard
           </button>
         )}

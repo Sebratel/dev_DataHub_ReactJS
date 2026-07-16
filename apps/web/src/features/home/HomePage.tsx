@@ -77,7 +77,7 @@ export default function HomePage() {
           <Sparkles size={18} className="text-accent" />
           <span>
             <p className="text-sm font-medium">Assistente IA</p>
-            <p className="text-xs text-zinc-500">Pergunte em linguagem natural (em breve — Sprint 6).</p>
+            <p className="text-xs text-zinc-500">Pergunte em linguagem natural sobre os seus dados.</p>
           </span>
         </Link>
       </div>

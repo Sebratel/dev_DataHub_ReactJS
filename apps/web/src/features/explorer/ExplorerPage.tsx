@@ -339,7 +339,7 @@ export default function ExplorerPage() {
             )
           )}
           <button onClick={addFilter} disabled={!fField}
-            className="flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-sm text-white hover:bg-accent-hover disabled:opacity-50">
+            className="flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
             <Plus size={14} /> Adicionar
           </button>
         </div>

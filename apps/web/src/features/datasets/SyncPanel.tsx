@@ -118,7 +118,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
           <button
             onClick={syncNow}
             disabled={busy || polling}
-            className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover disabled:opacity-60"
+            className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-60"
           >
             {polling ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
             {polling ? 'Sincronizando…' : 'Sincronizar agora'}

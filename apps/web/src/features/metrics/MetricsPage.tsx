@@ -89,7 +89,7 @@ export default function MetricsPage() {
         </div>
         {canEdit && (
           <button onClick={() => setShowForm((v) => !v)}
-            className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover">
+            className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
             <Plus size={15} /> Nova métrica
           </button>
         )}
@@ -137,7 +137,7 @@ export default function MetricsPage() {
           </label>
           <div className="flex items-end">
             <button onClick={create} disabled={saving || !fName || !fDataset || !fField}
-              className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm text-white hover:bg-accent-hover disabled:opacity-50">
+              className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
               {saving && <Loader2 size={14} className="animate-spin" />} Criar métrica
             </button>
           </div>

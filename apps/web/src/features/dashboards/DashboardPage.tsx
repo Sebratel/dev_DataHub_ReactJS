@@ -84,7 +84,7 @@ export default function DashboardPage() {
         {editable && (
           <div className="flex shrink-0 gap-2">
             <button onClick={() => setShowAdd(true)}
-              className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-white hover:bg-accent-hover">
+              className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
               <Plus size={15} /> Widget
             </button>
             <button onClick={() => setShowShare(true)} title="Compartilhar"

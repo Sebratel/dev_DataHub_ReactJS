@@ -109,11 +109,11 @@ export default function AddWidgetModal({ metrics, onClose, onCreate }: Props) {
             <span className="mb-1 block text-xs text-zinc-500">Medida</span>
             <div className="mb-2 flex gap-2 text-xs">
               <button onClick={() => setMetricMode('adhoc')}
-                className={`rounded-full px-2.5 py-1 ${metricMode === 'adhoc' ? 'bg-accent text-white' : 'border border-zinc-200 dark:border-zinc-700'}`}>
+                className={`rounded-full px-2.5 py-1 ${metricMode === 'adhoc' ? 'bg-accent text-zinc-950' : 'border border-zinc-200 dark:border-zinc-700'}`}>
                 Agregação simples
               </button>
               <button onClick={() => setMetricMode('library')} disabled={!datasetMetrics.length}
-                className={`rounded-full px-2.5 py-1 disabled:opacity-40 ${metricMode === 'library' ? 'bg-accent text-white' : 'border border-zinc-200 dark:border-zinc-700'}`}>
+                className={`rounded-full px-2.5 py-1 disabled:opacity-40 ${metricMode === 'library' ? 'bg-accent text-zinc-950' : 'border border-zinc-200 dark:border-zinc-700'}`}>
                 Métrica da biblioteca {datasetMetrics.length ? `(${datasetMetrics.length})` : ''}
               </button>
             </div>
@@ -141,7 +141,7 @@ export default function AddWidgetModal({ metrics, onClose, onCreate }: Props) {
           </label>
           {error && <p className="text-sm text-red-500">{error}</p>}
           <button onClick={submit} disabled={!valid || saving}
-            className="mt-1 flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm text-white hover:bg-accent-hover disabled:opacity-50">
+            className="mt-1 flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
             {saving && <Loader2 size={14} className="animate-spin" />} Adicionar ao dashboard
           </button>
         </div>
