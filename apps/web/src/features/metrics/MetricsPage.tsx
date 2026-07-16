@@ -35,7 +35,8 @@ export default function MetricsPage() {
   }
   useEffect(() => {
     load()
-    api<{ datasets: DatasetSummary[] }>('/api/v1/datasets').then((r) => setDatasets(r.datasets)).catch(() => {})
+    api<{ datasets: DatasetSummary[] }>('/api/v1/datasets').then((r) => setDatasets(r.datasets))
+      .catch(() => setError('Não foi possível carregar os conjuntos de dados — verifique se a API está no ar.'))
   }, [])
 
   useEffect(() => {
