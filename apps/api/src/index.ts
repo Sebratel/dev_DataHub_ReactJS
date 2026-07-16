@@ -18,6 +18,16 @@ import { aiRouter } from './modules/ai/aiRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { startScheduler } from './modules/sync/scheduler.js'
 
+// Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
+// middleware de erro — sem isto, um único erro de SQL derruba a API inteira
+// (foi o que aconteceu com o 42702 do POST /metrics). Logamos e seguimos vivos.
+process.on('unhandledRejection', (err) => {
+  console.error('[api] rejeição não tratada (rota async?):', err)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[api] exceção não capturada:', err)
+})
+
 const app = express()
 app.use(express.json({ limit: '4mb' }))
 

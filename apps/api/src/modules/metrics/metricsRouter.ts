@@ -60,7 +60,7 @@ metricsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (req, 
 
   const base = slugify(String(name))
   const taken = new Set((await db.query(
-    `select slug from metrics m join tenants t on t.id = m.tenant_id where t.slug = $1`,
+    `select m.slug from metrics m join tenants t on t.id = m.tenant_id where t.slug = $1`,
     [req.user!.tenant],
   )).rows.map((r) => r.slug))
   let slug = base
