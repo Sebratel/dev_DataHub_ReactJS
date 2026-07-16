@@ -39,6 +39,8 @@ Mesmo fluxo do churn_mvp — stack por repositório:
    - `DATAHUB_DB_PASSWORD` (obrigatória — senha do banco de metadados)
    - Credenciais das fontes: `DB_ELLEVEN_*`, `DB_RADIUS_*`, `DB_MARIA_*`, `DB_AUTOISP_*`
    - Lake: `BUCKET_GCP_NAME`, `PATH_CREDENTIALS`
+   - IA (chat com tools): `ANTHROPIC_API_KEY` (sem ela o resto funciona normal;
+     opcionais `AI_PROVIDER`, `AI_MODEL`)
    - Opcional: `WEB_PORT` (padrão 8082), `ETL_HOUR` (padrão 3)
 4. Deploy. A stack sobe `datahub-db` → `api` (migrations automáticas) → `web` (nginx).
 5. No Google Cloud Console, adicione a URL pública do web em
