@@ -7,6 +7,7 @@ import HomePage from '@/features/home/HomePage'
 import ConnectionsPage from '@/features/admin/ConnectionsPage'
 import DatasetsPage from '@/features/datasets/DatasetsPage'
 import DatasetDetailPage from '@/features/datasets/DatasetDetailPage'
+import DerivedDatasetPage from '@/features/datasets/DerivedDatasetPage'
 import ExplorerPage from '@/features/explorer/ExplorerPage'
 import MetricsPage from '@/features/metrics/MetricsPage'
 import DashboardsPage from '@/features/dashboards/DashboardsPage'
@@ -23,6 +24,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <HomePage /> },
       { path: 'datasets', element: <DatasetsPage /> },
+      { path: 'datasets/derived/new', element: <DerivedDatasetPage /> },
       { path: 'datasets/:slug', element: <DatasetDetailPage /> },
       { path: 'datasets/:slug/explore', element: <ExplorerPage /> },
       { path: 'dashboards', element: <DashboardsPage /> },

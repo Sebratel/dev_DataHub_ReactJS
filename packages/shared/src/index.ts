@@ -49,6 +49,8 @@ export interface DatasetSummary {
   slug: string
   name: string
   description: string
+  // 'source' = ingerido de uma fonte; 'derived' = SQL sobre o lake (Sprint 7).
+  kind: 'source' | 'derived'
   tags: string[]
   ownerEmail: string | null
   fieldCount: number
@@ -74,6 +76,8 @@ export interface SyncRun {
 
 export interface DatasetDetail extends DatasetSummary {
   fields: AdminDatasetField[]
+  // SQL do conjunto derivado — presente apenas para editores/admins.
+  transformSql?: string | null
 }
 
 export interface AdminDatasetField {

@@ -3,6 +3,12 @@
 Centralizador de dados (lakehouse com conectores) + catálogo amigável + dashboards + IA.
 Arquitetura completa em [docs/01-ARQUITETURA-MVP.md](docs/01-ARQUITETURA-MVP.md).
 
+**Conjuntos derivados** (Sprint 7): editores escrevem SQL (DuckDB, somente
+SELECT) juntando/tratando conjuntos já ingeridos — referenciados pelo slug ou
+pelo apelido com underscore. O resultado é materializado como Parquet no lake
+(logo após a janela diária e sob demanda) e vira um conjunto normal: explorável,
+com métricas, dashboards e visível para a IA. Zero carga nas fontes.
+
 ## Estrutura
 
 ```

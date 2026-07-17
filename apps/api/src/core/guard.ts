@@ -9,7 +9,7 @@ const FORBIDDEN = [
 ]
 
 // Remove comentários e literais para a análise não disparar por texto quotado.
-function stripNoise(sql: string): string {
+export function stripNoise(sql: string): string {
   return sql
     .replace(/--[^\n]*/g, ' ')
     .replace(/\/\*[\s\S]*?\*\//g, ' ')

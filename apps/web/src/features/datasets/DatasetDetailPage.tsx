@@ -2,7 +2,7 @@
 // editam labels, ocultam campos, marcam sensíveis e pré-visualizam a amostra.
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check, Compass } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check, Compass, GitMerge, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import type { DatasetDetail, AdminDatasetField } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -17,6 +17,8 @@ const TYPE_LABEL: Record<string, string> = {
 export default function DatasetDetailPage() {
   const { slug } = useParams()
   const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
+  const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
+  const [materializing, setMaterializing] = useState(false)
   const [dataset, setDataset] = useState<DatasetDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<Record<string, unknown>[] | null>(null)
@@ -68,6 +70,19 @@ export default function DatasetDetailPage() {
   }
   if (!dataset) return <p className="text-sm text-zinc-500">Carregando…</p>
 
+  const derived = dataset.kind === 'derived'
+  async function materializeNow() {
+    if (!dataset) return
+    setMaterializing(true)
+    try {
+      await api(`/api/v1/datasets/derived/${dataset.id}/materialize`, { method: 'POST', body: '{}' })
+      setTimeout(() => { setMaterializing(false); load() }, 2500) // dá tempo da fila rodar
+    } catch (e) {
+      setMaterializing(false)
+      setError(e instanceof Error ? e.message : 'Falha ao materializar.')
+    }
+  }
+
   const visibleFields = dataset.fields.filter((f) => !f.hidden)
   const previewColumns = preview?.length ? Object.keys(preview[0]) : []
   const labelByKey = new Map(dataset.fields.map((f) => [f.key, f.label]))
@@ -79,11 +94,18 @@ export default function DatasetDetailPage() {
       </Link>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{dataset.name}</h1>
+          <h1 className="flex items-center gap-2.5 text-2xl font-semibold">
+            {dataset.name}
+            {derived && (
+              <span className="rounded-full bg-accent-soft px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-secondary dark:bg-zinc-800">
+                <GitMerge size={11} className="mr-1 inline" />Derivado
+              </span>
+            )}
+          </h1>
           <p className="mt-1 text-sm text-zinc-500">{dataset.description || 'Sem descrição.'}</p>
           <p className="mt-2 text-xs text-zinc-400">
             {visibleFields.length} campos · dono: {dataset.ownerEmail ?? '—'}
-            {isAdmin && dataset.source && (
+            {isAdmin && !derived && dataset.source && (
               <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] dark:bg-zinc-800">
                 {dataset.source.connectionId}: {dataset.source.schema}.{dataset.source.table}
               </span>
@@ -99,7 +121,25 @@ export default function DatasetDetailPage() {
               <Compass size={14} /> Explorar
             </Link>
           )}
-          {isAdmin && (
+          {derived && canEdit && (
+            <>
+              <button
+                onClick={materializeNow}
+                disabled={materializing}
+                className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-100 disabled:opacity-60 dark:border-zinc-700 dark:hover:bg-zinc-800"
+              >
+                {materializing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Atualizar agora
+              </button>
+              <Link
+                to={`/datasets/derived/new?slug=${dataset.slug}`}
+                className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+              >
+                <Pencil size={14} /> Editar SQL
+              </Link>
+            </>
+          )}
+          {isAdmin && !derived && (
             <button
               onClick={loadPreview}
               disabled={previewBusy}
@@ -185,8 +225,18 @@ export default function DatasetDetailPage() {
         </table>
       </div>
 
-      {/* Sincronização com o lake (admin) */}
-      {isAdmin && <SyncPanel dataset={dataset} onSynced={load} />}
+      {/* SQL do derivado (editores/admins) */}
+      {derived && dataset.transformSql != null && (
+        <>
+          <h2 className="mt-8 text-sm font-medium uppercase tracking-wider text-zinc-400">SQL da transformação</h2>
+          <pre className="mt-3 overflow-x-auto rounded-xl border border-zinc-200 bg-white p-4 font-mono text-xs leading-relaxed dark:border-zinc-800 dark:bg-zinc-950">
+            {dataset.transformSql}
+          </pre>
+        </>
+      )}
+
+      {/* Sincronização com o lake (admin; derivados usam "Atualizar agora") */}
+      {isAdmin && !derived && <SyncPanel dataset={dataset} onSynced={load} />}
 
       {/* Dados do lake — qualquer usuário, quando já sincronizado */}
       {dataset.lastSyncAt && <DataTable dataset={dataset} />}

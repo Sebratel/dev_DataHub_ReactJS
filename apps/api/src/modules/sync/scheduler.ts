@@ -16,8 +16,9 @@ function msUntilHour(hour: number): number {
 async function syncAll(reason: string): Promise<void> {
   if (!isDbAvailable()) return
   const rows = (await db.query(
+    // Derivados por último: quando materializam, as fontes já estão frescas.
     `select id, slug from datasets where sync_mode in ('snapshot', 'incremental')
-     order by connection_id, slug`,
+     order by (kind = 'derived'), connection_id, slug`,
   )).rows
   if (!rows.length) return
   console.log(`[scheduler] ${reason}: ${rows.length} dataset(s) na fila de sync.`)

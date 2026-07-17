@@ -50,7 +50,7 @@ function labelize(column: string): string {
 
 const DATASET_COLUMNS = `
   d.id, d.slug, d.name, d.description, d.tags, d.owner_email,
-  d.row_count, d.last_sync_at, d.updated_at,
+  d.row_count, d.last_sync_at, d.updated_at, d.kind, d.transform_sql,
   d.connection_id, d.schema_name, d.object_name,
   d.sync_mode, d.incremental_key,
   (select count(*) from dataset_fields f where f.dataset_id = d.id and not f.hidden) as field_count`
@@ -61,6 +61,7 @@ function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary
     slug: String(row.slug),
     name: String(row.name),
     description: String(row.description ?? ''),
+    kind: (row.kind === 'derived' ? 'derived' : 'source'),
     tags: (row.tags as string[]) ?? [],
     ownerEmail: (row.owner_email as string) ?? null,
     fieldCount: Number(row.field_count) || 0,
@@ -115,7 +116,13 @@ datasetsRouter.get('/:slug', async (req, res) => {
     hidden: !!f.hidden, sensitive: !!f.sensitive, sortOrder: Number(f.sort_order),
   }))
 
-  const detail: DatasetDetail = { ...toSummary(row, admin), fields }
+  // SQL do derivado: editores/admins veem (para poder editar).
+  const canEditSql = req.user!.roles.some((r) => r === 'admin' || r === 'editor')
+  const detail: DatasetDetail = {
+    ...toSummary(row, admin),
+    fields,
+    ...(row.kind === 'derived' && canEditSql ? { transformSql: (row.transform_sql as string) ?? null } : {}),
+  }
   res.json({ dataset: detail })
 })
 

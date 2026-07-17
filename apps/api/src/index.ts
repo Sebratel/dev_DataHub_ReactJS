@@ -12,6 +12,7 @@ import { syncRouter } from './modules/sync/syncRouter.js'
 import { queryRouter } from './modules/query/queryRouter.js'
 import { viewsRouter } from './modules/explorer/viewsRouter.js'
 import { exportRouter } from './modules/explorer/exportRouter.js'
+import { transformRouter } from './modules/transform/transformRouter.js'
 import { metricsRouter } from './modules/metrics/metricsRouter.js'
 import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
@@ -61,6 +62,7 @@ app.use('/api/v1/datasets', queryRouter)
 app.use('/api/v1/datasets', syncRouter)
 app.use('/api/v1/datasets', viewsRouter)
 app.use('/api/v1/datasets', exportRouter)
+app.use('/api/v1/datasets', transformRouter) // /derived — antes do genérico
 app.use('/api/v1/datasets', datasetsRouter)
 
 // Biblioteca de métricas e dashboards.

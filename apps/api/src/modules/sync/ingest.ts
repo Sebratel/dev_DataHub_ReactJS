@@ -15,6 +15,7 @@ import { getConnector } from '../../connectors/registry.js'
 import { querySource } from '../../connectors/pools.js'
 import { datasetDir, parquetGlob, clearParquet, dirBytes, uploadToGcs, listParquet } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
+import { materializeDerived } from '../transform/derive.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -45,6 +46,15 @@ async function runSync(datasetId: string): Promise<string> {
     [datasetId],
   )).rows[0]
   if (!ds) throw new Error('Dataset não encontrado.')
+
+  // Derivado: não toca em fonte nenhuma — materializa SQL sobre o lake.
+  if (ds.kind === 'derived') {
+    return materializeDerived({
+      id: String(ds.id), slug: String(ds.slug),
+      tenantSlug: String(ds.tenant_slug), transformSql: ds.transform_sql as string | null,
+    })
+  }
+
   const def = getConnector(String(ds.connection_id))
   if (!def) throw new Error(`Fonte desconhecida: ${ds.connection_id}`)
 

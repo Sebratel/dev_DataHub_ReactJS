@@ -1,11 +1,13 @@
 // Catálogo de Conjuntos de Dados — o usuário só vê nomes amigáveis.
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Boxes, Search } from 'lucide-react'
+import { Boxes, GitMerge, Search } from 'lucide-react'
 import type { DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
 
 export default function DatasetsPage() {
+  const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -24,8 +26,20 @@ export default function DatasetsPage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="text-2xl font-semibold">Conjuntos de Dados</h1>
-      <p className="mt-1 text-sm text-zinc-500">Dados publicados e prontos para explorar.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Conjuntos de Dados</h1>
+          <p className="mt-1 text-sm text-zinc-500">Dados publicados e prontos para explorar.</p>
+        </div>
+        {canEdit && (
+          <Link
+            to="/datasets/derived/new"
+            className="flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-accent-hover"
+          >
+            <GitMerge size={15} /> Novo derivado
+          </Link>
+        )}
+      </div>
 
       <div className="relative mt-6 max-w-sm">
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
@@ -57,10 +71,17 @@ export default function DatasetsPage() {
           >
             <div className="flex items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent dark:bg-zinc-800">
-                <Boxes size={17} />
+                {d.kind === 'derived' ? <GitMerge size={17} /> : <Boxes size={17} />}
               </div>
               <div className="min-w-0">
-                <h2 className="truncate font-medium group-hover:text-accent">{d.name}</h2>
+                <h2 className="flex items-center gap-2 truncate font-medium group-hover:text-accent">
+                  {d.name}
+                  {d.kind === 'derived' && (
+                    <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-secondary dark:bg-zinc-800">
+                      Derivado
+                    </span>
+                  )}
+                </h2>
                 <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">
                   {d.description || 'Sem descrição.'}
                 </p>
