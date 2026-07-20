@@ -260,13 +260,15 @@ accessRouter.post('/datasets/:slug/grants', requireManageable(async (req, res, d
     return res.status(400).json({ error: 'Time não encontrado neste tenant.' })
   }
   const exportFlag = canExport !== false // padrão: pode exportar
+  // Índices únicos PARCIAIS exigem inferência com o mesmo WHERE (não dá para
+  // usar ON CONFLICT ON CONSTRAINT com índice parcial).
   const target = hasTeam
-    ? { col: 'team_id', val: String(teamId), conflict: 'dataset_grants_uq_team' }
-    : { col: 'grantee_email', val: String(email).trim().toLowerCase(), conflict: 'dataset_grants_uq_email' }
+    ? { col: 'team_id', val: String(teamId), conflict: '(dataset_id, team_id) where team_id is not null' }
+    : { col: 'grantee_email', val: String(email).trim().toLowerCase(), conflict: '(dataset_id, grantee_email) where grantee_email is not null' }
   const row = (await db.query(
     `insert into dataset_grants (dataset_id, ${target.col}, can_export, created_by)
      values ($1, $2, $3, $4)
-     on conflict on constraint ${target.conflict}
+     on conflict ${target.conflict}
        do update set can_export = excluded.can_export
      returning id`,
     [ds.id, target.val, exportFlag, req.user!.email],

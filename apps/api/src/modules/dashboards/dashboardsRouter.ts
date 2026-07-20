@@ -36,21 +36,27 @@ function toWidget(row: Record<string, unknown>): Widget {
   }
 }
 
-// Dono, admin ou convidado com level 'edit' pode mexer no dashboard.
+// Dono, admin ou convidado (por e-mail OU por time) com level 'edit' pode mexer.
 async function canEdit(req: Request, dashboardId: string): Promise<boolean> {
   if (req.user!.roles.includes('admin')) return true
   const row = (await db.query('select owner_email from dashboards where id = $1', [dashboardId])).rows[0]
   if (row && row.owner_email === req.user!.email) return true
   const grant = (await db.query(
-    `select 1 from dashboard_grants where dashboard_id = $1 and grantee_email = $2 and level = 'edit'`,
+    `select 1 from dashboard_grants g
+      where g.dashboard_id = $1 and g.level = 'edit' and (
+        g.grantee_email = $2
+        or g.team_id in (select team_id from team_members where user_email = $2))`,
     [dashboardId, req.user!.email],
   )).rows[0]
   return !!grant
 }
 
-// Visível se: visibilidade 'tenant', OU dono, OU convidado, OU admin.
+// Visível se: visibilidade 'tenant', OU dono, OU admin, OU convidado por
+// e-mail, OU membro de um time com concessão.
 const VISIBLE_WHERE = `(d.visibility = 'tenant' or d.owner_email = $2 or $3
-  or exists (select 1 from dashboard_grants g where g.dashboard_id = d.id and g.grantee_email = $2))`
+  or exists (select 1 from dashboard_grants g where g.dashboard_id = d.id and g.grantee_email = $2)
+  or exists (select 1 from dashboard_grants g join team_members m on m.team_id = g.team_id
+             where g.dashboard_id = d.id and m.user_email = $2))`
 
 dashboardsRouter.get('/', requireAuth(), requireDb, async (req, res) => {
   const rows = (await db.query(
@@ -103,31 +109,59 @@ dashboardsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, async
   res.json({ ok: true })
 })
 
-// ── Compartilhamento ───────────────────────────────────────────
+// ── Compartilhamento (por TIME ou por PESSOA) ──────────────────
 dashboardsRouter.get('/:id/shares', requireAuth(), requireDb, async (req, res) => {
-  const rows = (await db.query(
-    `select d.visibility,
-            coalesce(json_agg(json_build_object('id', g.id, 'email', g.grantee_email, 'level', g.level))
-              filter (where g.id is not null), '[]') as grants
-       from dashboards d left join dashboard_grants g on g.dashboard_id = d.id
-      where d.id = $1 group by d.id`,
+  const dash = (await db.query('select id, visibility from dashboards where id = $1', [req.params.id])).rows[0]
+  if (!dash) return res.status(404).json({ error: 'Dashboard não encontrado.' })
+  const grants = (await db.query(
+    `select g.id, g.team_id, g.grantee_email, g.level, tm.name as team_name
+       from dashboard_grants g left join teams tm on tm.id = g.team_id
+      where g.dashboard_id = $1 order by g.created_at`,
     [req.params.id],
-  )).rows[0]
-  if (!rows) return res.status(404).json({ error: 'Dashboard não encontrado.' })
-  res.json({ visibility: rows.visibility, grants: rows.grants })
+  )).rows.map((g) => ({
+    id: String(g.id),
+    teamId: g.team_id ? String(g.team_id) : null,
+    teamName: g.team_name ?? null,
+    email: g.grantee_email ?? null,
+    level: g.level as 'view' | 'edit',
+  }))
+  const teams = (await db.query(
+    `select id, name from teams where tenant_id = (select id from tenants where slug = $1) order by name`,
+    [req.user!.tenant],
+  )).rows.map((t) => ({ id: String(t.id), name: String(t.name) }))
+  res.json({ visibility: dash.visibility, teams, grants })
 })
 
 dashboardsRouter.post('/:id/shares', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
   if (!(await canEdit(req, req.params.id))) return res.status(403).json({ error: 'Apenas o dono (ou admin) pode compartilhar.' })
-  const { email, level } = req.body ?? {}
-  if (!email || !/@/.test(String(email))) return res.status(400).json({ error: 'Informe o e-mail do convidado.' })
-  await db.query(
-    `insert into dashboard_grants (dashboard_id, grantee_email, level, created_by)
-     values ($1, $2, $3, $4)
-     on conflict (dashboard_id, grantee_email) do update set level = excluded.level`,
-    [req.params.id, String(email).toLowerCase().trim(), level === 'edit' ? 'edit' : 'view', req.user!.email],
-  )
-  await audit(req, 'dashboards.share', { type: 'dashboard', id: req.params.id }, { email, level })
+  const { teamId, email, level } = req.body ?? {}
+  const lvl = level === 'edit' ? 'edit' : 'view'
+  const hasTeam = !!teamId
+  const hasEmail = !!email
+  if (hasTeam === hasEmail) return res.status(400).json({ error: 'Informe exatamente um: teamId OU email.' })
+
+  if (hasTeam) {
+    const ok = (await db.query(
+      'select 1 from teams where id = $1 and tenant_id = (select id from tenants where slug = $2)',
+      [teamId, req.user!.tenant],
+    )).rows[0]
+    if (!ok) return res.status(400).json({ error: 'Time não encontrado neste tenant.' })
+    await db.query(
+      `insert into dashboard_grants (dashboard_id, team_id, level, created_by)
+       values ($1, $2, $3, $4)
+       on conflict (dashboard_id, team_id) where team_id is not null do update set level = excluded.level`,
+      [req.params.id, String(teamId), lvl, req.user!.email],
+    )
+  } else {
+    if (!/@/.test(String(email))) return res.status(400).json({ error: 'Informe um e-mail válido.' })
+    await db.query(
+      `insert into dashboard_grants (dashboard_id, grantee_email, level, created_by)
+       values ($1, $2, $3, $4)
+       on conflict (dashboard_id, grantee_email) do update set level = excluded.level`,
+      [req.params.id, String(email).toLowerCase().trim(), lvl, req.user!.email],
+    )
+  }
+  await audit(req, 'dashboards.share', { type: 'dashboard', id: req.params.id }, { teamId: teamId ?? null, email: email ?? null, level: lvl })
   res.status(201).json({ ok: true })
 })
 
