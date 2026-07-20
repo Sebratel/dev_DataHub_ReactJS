@@ -5,6 +5,7 @@ import type { Request, Response, NextFunction } from 'express'
 import type { Metric, Aggregation, QueryFilter } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
+import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 
 export const metricsRouter = Router()
 
@@ -40,9 +41,11 @@ const LIST_SQL = `
     join tenants t on t.id = m.tenant_id
    where t.slug = $1`
 
+// A métrica HERDA o acesso do seu conjunto: quem vê o conjunto, vê a métrica.
 metricsRouter.get('/', requireAuth(), requireDb, async (req, res) => {
   const rows = (await db.query(`${LIST_SQL} order by d.name, m.name`, [req.user!.tenant])).rows
-  res.json({ metrics: rows.map(toMetric) })
+  const allowed = await accessibleDatasetIds(req.user!)
+  res.json({ metrics: rows.filter((r) => allowed.has(String(r.dataset_id))).map(toMetric) })
 })
 
 metricsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
@@ -52,6 +55,10 @@ metricsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (req, 
   }
   if (!AGGS.has(agg)) return res.status(400).json({ error: `Agregação inválida: ${agg}` })
   if (format && !FORMATS.has(format)) return res.status(400).json({ error: `Formato inválido: ${format}` })
+  // Só cria métrica sobre um conjunto ao qual você tem acesso.
+  if (!(await canQuery(req.user!, String(datasetId)))) {
+    return res.status(403).json({ error: 'Você não tem acesso a este conjunto de dados.' })
+  }
   const field = (await db.query(
     `select 1 from dataset_fields where dataset_id = $1 and key = $2 and not hidden`,
     [datasetId, fieldKey],
