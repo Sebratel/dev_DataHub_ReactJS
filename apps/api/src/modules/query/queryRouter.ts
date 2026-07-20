@@ -4,6 +4,7 @@ import { Router } from 'express'
 import type { QueryDef, QueryResult, FieldType } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
+import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { canQuery } from '../../core/access.js'
 import { compileQuery } from './compile.js'
@@ -58,10 +59,11 @@ queryRouter.post('/:slug/query', requireAuth(), async (req, res) => {
       glob: parquetGlob(dir),
       metrics,
     })
-    const result = await duckQuery(compiled.sql, compiled.params)
+    const timeoutMs = config.duck.queryTimeoutMs
+    const result = await duckQuery(compiled.sql, compiled.params, { timeoutMs })
     let total: number | undefined
     if (compiled.countSql) {
-      total = Number((await duckQuery(compiled.countSql, compiled.countParams)).rows[0]?.n ?? 0)
+      total = Number((await duckQuery(compiled.countSql, compiled.countParams, { timeoutMs })).rows[0]?.n ?? 0)
     }
     const typeByKey = new Map(fields.map((f) => [f.key, f.type]))
     const payload: QueryResult = {

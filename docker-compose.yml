@@ -55,6 +55,10 @@ services:
       ETL_HOUR: ${ETL_HOUR:-3}
       SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-50000}
       SYNC_BATCH_PAUSE_MS: ${SYNC_BATCH_PAUSE_MS:-500}
+      # Motor de consulta (DuckDB) — limites de proteção.
+      DUCK_MEMORY_LIMIT: ${DUCK_MEMORY_LIMIT:-2GB}
+      DUCK_THREADS: ${DUCK_THREADS:-4}
+      DUCK_QUERY_TIMEOUT_MS: ${DUCK_QUERY_TIMEOUT_MS:-30000}
       # Fontes de dados (somente leitura — use usuário só-SELECT).
       DB_ELLEVEN_HOST: ${DB_ELLEVEN_HOST:-}
       DB_ELLEVEN_DATABASE: ${DB_ELLEVEN_DATABASE:-}

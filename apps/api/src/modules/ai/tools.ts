@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import type { QueryDef, SessionUser, FieldType } from '@datahub/shared'
 import { db } from '../../db/pool.js'
+import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 import { compileQuery } from '../query/compile.js'
@@ -151,7 +152,7 @@ async function executeQueryDef(def: QueryDef, user: SessionUser) {
     glob: parquetGlob(dir),
     metrics: metrics as never,
   })
-  return duckQuery(compiled.sql, compiled.params)
+  return duckQuery(compiled.sql, compiled.params, { timeoutMs: config.duck.queryTimeoutMs })
 }
 
 async function runQuery(def: QueryDef, user: SessionUser): Promise<ToolOutcome> {

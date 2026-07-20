@@ -5,6 +5,7 @@ import { Router } from 'express'
 import type { QueryDef, FieldType } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
+import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { canExport } from '../../core/access.js'
 import { compileQuery } from '../query/compile.js'
@@ -58,7 +59,7 @@ exportRouter.post('/:slug/export', requireAuth(), async (req, res) => {
       fields,
       { admin, glob: parquetGlob(dir) },
     )
-    const { columns, rows } = await duckQuery(compiled.sql, compiled.params)
+    const { columns, rows } = await duckQuery(compiled.sql, compiled.params, { timeoutMs: config.duck.queryTimeoutMs })
     const headers = columns.map((c) => labelByKey.get(c) ?? c)
     const filename = `${ds.slug}-${new Date().toISOString().slice(0, 10)}.${format}`
     await audit(req, 'datasets.export', { type: 'dataset', id: String(ds.slug) }, { format, rows: rows.length })

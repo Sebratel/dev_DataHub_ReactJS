@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { join } from 'node:path'
 import { db } from '../../db/pool.js'
+import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet, clearParquet, dirBytes, uploadToGcs } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { assertReadOnly, stripNoise } from '../../core/guard.js'
@@ -89,7 +90,7 @@ export async function previewDerived(
   const refs = await lakeRefs(tenantSlug)
   const wrapped = buildLakeSql(sql, refs)
   try {
-    const res = await duckQuery(`select * from (${wrapped}) as __p limit 50`)
+    const res = await duckQuery(`select * from (${wrapped}) as __p limit 50`, [], { timeoutMs: config.duck.queryTimeoutMs })
     return { columns: res.columns, rows: res.rows }
   } catch (e) {
     throw friendlyDuckError(e as Error, refs)

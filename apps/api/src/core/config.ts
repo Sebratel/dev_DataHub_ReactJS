@@ -30,6 +30,16 @@ export const config = {
     batchSize: Number(process.env.SYNC_BATCH_SIZE) || 50_000,
     batchPauseMs: Number(process.env.SYNC_BATCH_PAUSE_MS) || 500,
   },
+
+  // Motor de consulta (DuckDB). Limites protegem o servidor de uma consulta
+  // pesada de um time derrubar o hub para todos.
+  duck: {
+    memoryLimit: process.env.DUCK_MEMORY_LIMIT || '2GB',
+    threads: Math.max(1, Number(process.env.DUCK_THREADS) || 4),
+    // Timeout só nas consultas INTERATIVAS (explorador, preview, IA). A
+    // materialização/ingestão em background não usa timeout.
+    queryTimeoutMs: Number(process.env.DUCK_QUERY_TIMEOUT_MS) || 30_000,
+  },
 }
 
 export function requireEnv(keys: string[]): void {
