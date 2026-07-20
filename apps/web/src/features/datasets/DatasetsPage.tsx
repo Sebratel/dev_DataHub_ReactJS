@@ -93,6 +93,16 @@ export default function DatasetsPage() {
     // Oficiais primeiro (fonte de verdade da diretoria), depois por nome.
     .sort((a, b) => Number(b.official) - Number(a.official) || a.name.localeCompare(b.name))
 
+  // Estado vazio ciente do papel: viewer sem NENHUM acesso vê orientação clara
+  // (o acesso é fechado por padrão), não a mensagem de "nada publicado".
+  const emptyMessage = query
+    ? 'Nada encontrado para essa busca.'
+    : !canEdit && (datasets?.length ?? 0) === 0
+      ? 'Você ainda não tem acesso a nenhum conjunto de dados. Peça a um administrador para incluir você (ou o seu time) nos conjuntos de que precisa.'
+      : tab === 'derived'
+        ? (canEdit ? 'Nenhum derivado ainda. Crie um com “Novo derivado”.' : 'Nenhum conjunto derivado disponível para você.')
+        : (canEdit ? 'Nenhuma fonte publicada. Publique em Administração › Conexões.' : 'Nenhuma fonte disponível para você.')
+
   const TABS = [
     { k: 'source' as const, icon: Database, label: 'Fontes', hint: 'Ingeridas das origens', count: counts.source },
     { k: 'derived' as const, icon: GitMerge, label: 'Derivados', hint: 'SQL sobre o lake', count: counts.derived },
@@ -151,13 +161,7 @@ export default function DatasetsPage() {
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800">
             {tab === 'derived' ? <GitMerge size={22} /> : <Boxes size={22} />}
           </div>
-          <p className="text-sm text-zinc-500">
-            {query
-              ? 'Nada encontrado para essa busca.'
-              : tab === 'derived'
-                ? (canEdit ? 'Nenhum derivado ainda. Crie um com “Novo derivado”.' : 'Nenhum conjunto derivado disponível.')
-                : 'Nenhuma fonte publicada. Administradores publicam em Administração › Conexões.'}
-          </p>
+          <p className="max-w-md text-sm text-zinc-500">{emptyMessage}</p>
         </div>
       )}
 
