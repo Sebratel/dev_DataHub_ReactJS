@@ -66,14 +66,18 @@ export function buildLakeSql(userSql: string, refs: LakeRef[]): string {
   return `with ${ctes.join(',\n     ')}\nselect * from (\n${body}\n) as __derivado`
 }
 
-// Erro de "tabela não existe" do DuckDB → mensagem com o que ESTÁ disponível.
+// Erro de "tabela não existe" do DuckDB → mensagem que explica as 3 causas
+// possíveis e lista o que ESTÁ disponível (apelidos com underscore).
 function friendlyDuckError(e: Error, refs: LakeRef[]): Error {
   const m = /Table with name (\S+) does not exist/.exec(e.message)
   if (!m) return e
   const available = refs.map((r) => r.slug.replace(/-/g, '_')).join(', ')
   return new Error(
-    `O conjunto "${m[1]}" não existe ou ainda não foi sincronizado no lake. ` +
-    `Disponíveis: ${available || 'nenhum'}.`,
+    `O conjunto "${m[1]}" não está disponível no lake. ` +
+    'Verifique se: (1) o apelido está correto — use o slug com underscore; ' +
+    '(2) é um conjunto FONTE já sincronizado (derivados não podem ser referenciados nesta versão); ' +
+    '(3) a sincronização realmente rodou (metadado pode indicar sync sem os arquivos no lake — re-sincronize). ' +
+    `Disponíveis agora: ${available || 'nenhum'}.`,
   )
 }
 

@@ -6,13 +6,14 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check,
   Compass, GitMerge, RefreshCw, Shield, MoreVertical, Trash2, Database,
-  Rows3, Columns3, Clock, AlertTriangle,
+  Rows3, Columns3, Clock, AlertTriangle, BadgeCheck,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import type { DatasetDetail, AdminDatasetField } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import OfficialBadge from '@/components/OfficialBadge'
 import SyncPanel from './SyncPanel'
 import DataTable from './DataTable'
 import AccessDialog from './AccessDialog'
@@ -138,6 +139,19 @@ export default function DatasetDetailPage() {
     }
   }
 
+  async function toggleOfficial() {
+    if (!dataset) return
+    setMenuOpen(false)
+    try {
+      await api(`/api/v1/datasets/${dataset.id}`, {
+        method: 'PATCH', body: JSON.stringify({ official: !dataset.official }),
+      })
+      load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Falha ao alterar o selo oficial.')
+    }
+  }
+
   async function doDelete() {
     if (!dataset) return
     setDeleting(true)
@@ -178,6 +192,7 @@ export default function DatasetDetailPage() {
           <div className="min-w-0">
             <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
               <span className="truncate">{dataset.name}</span>
+              {dataset.official && <OfficialBadge size="md" />}
               <span className={clsx('shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
                 derived ? 'bg-accent-soft text-secondary dark:bg-zinc-800' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800')}>
                 {derived ? 'Derivado' : 'Fonte'}
@@ -225,6 +240,12 @@ export default function DatasetDetailPage() {
                     <button className={menuItem} onClick={() => { setShowEdit(true); setMenuOpen(false) }}>
                       <Pencil size={15} className="text-zinc-400" /> Editar nome e descrição
                     </button>
+                    {isAdmin && (
+                      <button className={menuItem} onClick={() => void toggleOfficial()}>
+                        <BadgeCheck size={15} className={dataset.official ? 'text-secondary' : 'text-zinc-400'} />
+                        {dataset.official ? 'Remover selo oficial' : 'Marcar como oficial'}
+                      </button>
+                    )}
                     {derived && canEdit && (
                       <>
                         <Link to={`/datasets/derived/new?slug=${dataset.slug}`} className={menuItem}>

@@ -50,7 +50,7 @@ function labelize(column: string): string {
 }
 
 const DATASET_COLUMNS = `
-  d.id, d.slug, d.name, d.description, d.tags, d.owner_email,
+  d.id, d.slug, d.name, d.description, d.tags, d.owner_email, d.official,
   d.row_count, d.last_sync_at, d.updated_at, d.kind, d.transform_sql,
   d.connection_id, d.schema_name, d.object_name,
   d.sync_mode, d.incremental_key,
@@ -63,6 +63,7 @@ function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary
     name: String(row.name),
     description: String(row.description ?? ''),
     kind: (row.kind === 'derived' ? 'derived' : 'source'),
+    official: !!row.official,
     tags: (row.tags as string[]) ?? [],
     ownerEmail: (row.owner_email as string) ?? null,
     fieldCount: Number(row.field_count) || 0,
@@ -196,19 +197,38 @@ datasetsRouter.post('/', requireAuth({ role: 'admin' }), async (req, res) => {
   }
 })
 
-datasetsRouter.patch('/:id', requireAuth({ role: 'admin' }), async (req, res) => {
-  const { name, description, tags } = req.body ?? {}
+// Edita metadados. Admin edita qualquer conjunto; o DONO edita os derivados
+// dele (nome/descrição/tags). O selo "oficial" é exclusivo de admin.
+datasetsRouter.patch('/:id', async (req, res) => {
+  const { name, description, tags, official } = req.body ?? {}
+  const admin = isAdmin(req)
+  const ds = (await db.query(
+    `select d.id, d.slug, d.kind, d.owner_email from datasets d
+       join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and d.id = $2`,
+    [req.user!.tenant, req.params.id],
+  )).rows[0]
+  if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+  const isDerivedOwner = ds.kind === 'derived' && ds.owner_email === req.user!.email
+  if (!admin && !isDerivedOwner) {
+    return res.status(403).json({ error: 'Você não pode editar este conjunto de dados.' })
+  }
+  if (official != null && !admin) {
+    return res.status(403).json({ error: 'Apenas administradores podem marcar um conjunto como oficial.' })
+  }
   const row = (await db.query(
     `update datasets set
        name = coalesce($2, name),
        description = coalesce($3, description),
        tags = coalesce($4, tags),
+       official = coalesce($5, official),
        updated_at = now()
      where id = $1 returning slug`,
-    [req.params.id, name ?? null, description ?? null, Array.isArray(tags) ? tags : null],
+    [ds.id, name ?? null, description ?? null, Array.isArray(tags) ? tags : null,
+     typeof official === 'boolean' ? official : null],
   )).rows[0]
-  if (!row) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
-  await audit(req, 'datasets.update', { type: 'dataset', id: row.slug })
+  await audit(req, 'datasets.update', { type: 'dataset', id: row.slug },
+    official != null ? { official } : undefined)
   res.json({ ok: true })
 })
 

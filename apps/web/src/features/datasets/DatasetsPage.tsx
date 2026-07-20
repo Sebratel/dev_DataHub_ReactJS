@@ -8,6 +8,7 @@ import clsx from 'clsx'
 import type { DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import OfficialBadge from '@/components/OfficialBadge'
 
 function relativeTime(iso: string | null): string {
   if (!iso) return 'Nunca sincronizado'
@@ -24,14 +25,20 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
   const fresh = !!d.lastSyncAt && Date.now() - new Date(d.lastSyncAt).getTime() < 26 * 3600_000
   return (
     <Link to={`/datasets/${d.slug}`}
-      className="hover-lift group flex flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-card hover:border-accent hover:shadow-card-md dark:border-zinc-800 dark:bg-zinc-900">
+      className={clsx('hover-lift group flex flex-col rounded-2xl border bg-white p-5 shadow-card hover:shadow-card-md dark:bg-zinc-900',
+        d.official
+          ? 'border-accent/40 ring-1 ring-accent/20 hover:border-accent'
+          : 'border-zinc-200 hover:border-accent dark:border-zinc-800')}>
       <div className="flex items-start gap-3">
         <div className={clsx('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
           derived ? 'bg-gradient-brand text-[#1a1a1a]' : 'bg-accent-soft text-accent dark:bg-zinc-800')}>
           {derived ? <GitMerge size={18} /> : <Database size={18} />}
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-semibold group-hover:text-accent">{d.name}</h2>
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="truncate font-semibold group-hover:text-accent">{d.name}</h2>
+            {d.official && <OfficialBadge />}
+          </div>
           <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{d.description || 'Sem descrição.'}</p>
         </div>
       </div>

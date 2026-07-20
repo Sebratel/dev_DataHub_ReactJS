@@ -51,6 +51,8 @@ export interface DatasetSummary {
   description: string
   // 'source' = ingerido de uma fonte; 'derived' = SQL sobre o lake (Sprint 7).
   kind: 'source' | 'derived'
+  // Selo "oficial" — chancelado pela diretoria como fonte de verdade (só admin marca).
+  official: boolean
   tags: string[]
   ownerEmail: string | null
   fieldCount: number
