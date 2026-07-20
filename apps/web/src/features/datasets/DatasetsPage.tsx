@@ -83,12 +83,15 @@ export default function DatasetsPage() {
     derived: datasets?.filter((d) => d.kind === 'derived').length ?? 0,
   }), [datasets])
 
-  const filtered = datasets?.filter((d) => {
-    if (d.kind !== tab) return false
-    const q = query.toLowerCase()
-    return !q || d.name.toLowerCase().includes(q) || d.description.toLowerCase().includes(q)
-      || d.tags.some((t) => t.toLowerCase().includes(q))
-  })
+  const filtered = datasets
+    ?.filter((d) => {
+      if (d.kind !== tab) return false
+      const q = query.toLowerCase()
+      return !q || d.name.toLowerCase().includes(q) || d.description.toLowerCase().includes(q)
+        || d.tags.some((t) => t.toLowerCase().includes(q))
+    })
+    // Oficiais primeiro (fonte de verdade da diretoria), depois por nome.
+    .sort((a, b) => Number(b.official) - Number(a.official) || a.name.localeCompare(b.name))
 
   const TABS = [
     { k: 'source' as const, icon: Database, label: 'Fontes', hint: 'Ingeridas das origens', count: counts.source },
