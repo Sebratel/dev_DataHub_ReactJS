@@ -5,6 +5,7 @@ import AppShell from '@/components/AppShell'
 import LoginPage from '@/features/auth/LoginPage'
 import HomePage from '@/features/home/HomePage'
 import ConnectionsPage from '@/features/admin/ConnectionsPage'
+import AccessPage from '@/features/admin/AccessPage'
 import DatasetsPage from '@/features/datasets/DatasetsPage'
 import DatasetDetailPage from '@/features/datasets/DatasetDetailPage'
 import DerivedDatasetPage from '@/features/datasets/DerivedDatasetPage'
@@ -33,6 +34,7 @@ const router = createBrowserRouter([
       { path: 'ai', element: <AiPage /> },
       { path: 'integrations', element: <IntegrationsPage /> },
       { path: 'admin/connections', element: <ConnectionsPage /> },
+      { path: 'admin/access', element: <AccessPage /> },
     ],
   },
 ])

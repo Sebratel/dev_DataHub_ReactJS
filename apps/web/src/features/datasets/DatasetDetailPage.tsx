@@ -2,13 +2,14 @@
 // editam labels, ocultam campos, marcam sensíveis e pré-visualizam a amostra.
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check, Compass, GitMerge, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check, Compass, GitMerge, RefreshCw, Shield } from 'lucide-react'
 import clsx from 'clsx'
 import type { DatasetDetail, AdminDatasetField } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import SyncPanel from './SyncPanel'
 import DataTable from './DataTable'
+import AccessDialog from './AccessDialog'
 
 const TYPE_LABEL: Record<string, string> = {
   text: 'Texto', number: 'Número', date: 'Data', bool: 'Sim/Não', json: 'Estruturado',
@@ -18,6 +19,8 @@ export default function DatasetDetailPage() {
   const { slug } = useParams()
   const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
   const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
+  const userEmail = useAuthStore((s) => s.user?.email ?? null)
+  const [showAccess, setShowAccess] = useState(false)
   const [materializing, setMaterializing] = useState(false)
   const [dataset, setDataset] = useState<DatasetDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -120,6 +123,14 @@ export default function DatasetDetailPage() {
             >
               <Compass size={14} /> Explorar
             </Link>
+          )}
+          {(isAdmin || (userEmail && dataset.ownerEmail === userEmail)) && (
+            <button
+              onClick={() => setShowAccess(true)}
+              className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              <Shield size={14} /> Acessos
+            </button>
           )}
           {derived && canEdit && (
             <>
@@ -240,6 +251,9 @@ export default function DatasetDetailPage() {
 
       {/* Dados do lake — qualquer usuário, quando já sincronizado */}
       {dataset.lastSyncAt && <DataTable dataset={dataset} />}
+
+      {/* Acessos (admin ou dono) */}
+      {showAccess && <AccessDialog slug={dataset.slug} name={dataset.name} onClose={() => setShowAccess(false)} />}
 
       {/* Preview ao vivo da fonte (admin) */}
       {preview && (

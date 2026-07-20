@@ -3,7 +3,7 @@
 // O usuário final só vê conceitos amigáveis (Conjuntos de Dados, Dashboards…).
 import { NavLink, Outlet, Navigate } from 'react-router-dom'
 import {
-  Home, Boxes, LayoutDashboard, Sparkles, Plug, Settings,
+  Home, Boxes, LayoutDashboard, Sparkles, Plug, Settings, ShieldCheck,
   Moon, Sun, LogOut, Ruler, Zap,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -76,6 +76,7 @@ export default function AppShell() {
                 Administração
               </div>
               <NavItem to="/admin/connections" label="Conexões" sublabel="Fontes de dados" icon={Settings} />
+              <NavItem to="/admin/access" label="Usuários e Acessos" sublabel="Papéis, times e permissões" icon={ShieldCheck} />
             </>
           )}
         </nav>

@@ -5,6 +5,7 @@ import type { QueryDef, QueryResult, FieldType } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth } from '../auth/middleware.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
+import { canQuery } from '../../core/access.js'
 import { compileQuery } from './compile.js'
 import { duckQuery } from './duck.js'
 
@@ -20,6 +21,11 @@ queryRouter.post('/:slug/query', requireAuth(), async (req, res) => {
     [req.user!.tenant, req.params.slug],
   )).rows[0]
   if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+
+  // Acesso: só admin, dono, conjunto aberto ao tenant, ou quem tem concessão.
+  if (!(await canQuery(req.user!, String(ds.id)))) {
+    return res.status(403).json({ error: 'Você não tem acesso a este conjunto de dados.' })
+  }
 
   const dir = datasetDir(String(ds.tenant_slug), String(ds.slug))
   if (!listParquet(dir).length) {

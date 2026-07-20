@@ -6,6 +6,7 @@ import type { QueryDef, FieldType } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
+import { canExport } from '../../core/access.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 
@@ -31,6 +32,11 @@ exportRouter.post('/:slug/export', requireAuth(), async (req, res) => {
     [req.user!.tenant, req.params.slug],
   )).rows[0]
   if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+
+  // Exportar exige acesso de leitura + permissão de export na concessão.
+  if (!(await canExport(req.user!, String(ds.id)))) {
+    return res.status(403).json({ error: 'Você não tem permissão para exportar este conjunto de dados.' })
+  }
 
   const dir = datasetDir(String(ds.tenant_slug), String(ds.slug))
   if (!listParquet(dir).length) {

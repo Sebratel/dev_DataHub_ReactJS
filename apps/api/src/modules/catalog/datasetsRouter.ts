@@ -14,6 +14,7 @@ import { db, isDbAvailable } from '../../db/pool.js'
 import { getConnector } from '../../connectors/registry.js'
 import { querySource, discoverColumns } from '../../connectors/pools.js'
 import { requireAuth, audit } from '../auth/middleware.js'
+import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 
 export const datasetsRouter = Router()
 
@@ -91,7 +92,10 @@ datasetsRouter.get('/', async (req, res) => {
      where t.slug = $1 order by d.name`,
     [req.user!.tenant],
   )).rows
-  res.json({ datasets: rows.map((r) => toSummary(r, isAdmin(req))) })
+  // Escopo de acesso: o usuário só vê os conjuntos a que tem acesso.
+  const allowed = await accessibleDatasetIds(req.user!)
+  const visible = rows.filter((r) => allowed.has(String(r.id)))
+  res.json({ datasets: visible.map((r) => toSummary(r, isAdmin(req))) })
 })
 
 datasetsRouter.get('/:slug', async (req, res) => {
@@ -102,6 +106,11 @@ datasetsRouter.get('/:slug', async (req, res) => {
     [req.user!.tenant, req.params.slug],
   )).rows[0]
   if (!row) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+
+  // Acesso ao detalhe: mesma regra da consulta.
+  if (!(await canQuery(req.user!, String(row.id)))) {
+    return res.status(403).json({ error: 'Você não tem acesso a este conjunto de dados.' })
+  }
 
   const admin = isAdmin(req)
   // Campos ocultos só vão para admins (para poderem reexibi-los na edição).

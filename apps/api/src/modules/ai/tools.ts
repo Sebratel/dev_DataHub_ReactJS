@@ -6,6 +6,7 @@
 import type { QueryDef, SessionUser, FieldType } from '@datahub/shared'
 import { db } from '../../db/pool.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
+import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 import type { AiToolDef } from './provider.js'
@@ -87,12 +88,13 @@ export async function executeTool(
 }
 
 async function searchDatasets(user: SessionUser): Promise<ToolOutcome> {
+  const allowed = await accessibleDatasetIds(user)
   const rows = (await db.query(
-    `select d.slug, d.name, d.description, d.row_count, d.last_sync_at
+    `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at
        from datasets d join tenants t on t.id = d.tenant_id
       where t.slug = $1 order by d.name`,
     [user.tenant],
-  )).rows
+  )).rows.filter((r) => allowed.has(String(r.id))) // só o que o usuário acessa
   const list = rows.map((r) => ({
     slug: r.slug, name: r.name, description: r.description,
     rows: r.row_count, sincronizado: !!r.last_sync_at,
@@ -108,6 +110,10 @@ async function loadDataset(slug: string, user: SessionUser) {
     [user.tenant, slug],
   )).rows[0]
   if (!ds) throw new Error(`Conjunto não encontrado: ${slug}`)
+  // A IA age como o usuário: sem acesso, o conjunto "não existe" para ela.
+  if (!(await canQuery(user, String(ds.id)))) {
+    throw new Error(`Conjunto não encontrado: ${slug}`)
+  }
   return ds
 }
 

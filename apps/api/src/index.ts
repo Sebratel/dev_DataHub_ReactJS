@@ -17,6 +17,7 @@ import { metricsRouter } from './modules/metrics/metricsRouter.js'
 import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
+import { accessRouter } from './modules/admin/accessRouter.js'
 import { startScheduler } from './modules/sync/scheduler.js'
 
 // Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
@@ -53,8 +54,9 @@ app.get('/api/v1/auth/me', requireAuth(), (req, res) => {
   res.json({ user: req.user })
 })
 
-// Admin: fontes de dados.
+// Admin: fontes de dados e controle de acesso (usuários, times, concessões).
 app.use('/api/v1/connections', connectionsRouter)
+app.use('/api/v1/admin', accessRouter)
 
 // Catálogo de conjuntos de dados. ORDEM IMPORTA: query e sync têm rotas mais
 // específicas (/:slug/query, /:id/sync) e vêm antes do router genérico.
