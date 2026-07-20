@@ -1,16 +1,69 @@
-// Catálogo de Conjuntos de Dados — o usuário só vê nomes amigáveis.
-import { useEffect, useState } from 'react'
+// Catálogo de Conjuntos de Dados — dividido entre FONTES (ingeridas) e
+// DERIVADOS (SQL sobre o lake). O usuário só vê nomes amigáveis e apenas os
+// conjuntos a que tem acesso (o backend já filtra).
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Boxes, GitMerge, Search } from 'lucide-react'
+import { Boxes, GitMerge, Database, Search, Plus } from 'lucide-react'
+import clsx from 'clsx'
 import type { DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return 'Nunca sincronizado'
+  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+  if (min < 60) return `sincronizado há ${Math.max(1, min)} min`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `sincronizado há ${h} h`
+  const d = Math.floor(h / 24)
+  return `sincronizado há ${d} dia${d > 1 ? 's' : ''}`
+}
+
+function DatasetCard({ d }: { d: DatasetSummary }) {
+  const derived = d.kind === 'derived'
+  const fresh = !!d.lastSyncAt && Date.now() - new Date(d.lastSyncAt).getTime() < 26 * 3600_000
+  return (
+    <Link to={`/datasets/${d.slug}`}
+      className="hover-lift group flex flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-card hover:border-accent hover:shadow-card-md dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex items-start gap-3">
+        <div className={clsx('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
+          derived ? 'bg-gradient-brand text-[#1a1a1a]' : 'bg-accent-soft text-accent dark:bg-zinc-800')}>
+          {derived ? <GitMerge size={18} /> : <Database size={18} />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate font-semibold group-hover:text-accent">{d.name}</h2>
+          <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{d.description || 'Sem descrição.'}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
+        <span className="font-medium tabular-nums">{d.fieldCount} campos</span>
+        {d.rowCount !== null && <span className="tabular-nums">· {d.rowCount.toLocaleString('pt-BR')} registros</span>}
+      </div>
+
+      {d.tags.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {d.tags.map((t) => (
+            <span key={t} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800">{t}</span>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center gap-1.5 border-t border-zinc-100 pt-3 text-[11px] text-zinc-400 dark:border-zinc-800">
+        <span className={clsx('h-1.5 w-1.5 rounded-full',
+          !d.lastSyncAt ? 'bg-zinc-300 dark:bg-zinc-600' : fresh ? 'bg-emerald-500' : 'bg-amber-500')} />
+        {relativeTime(d.lastSyncAt)}
+      </div>
+    </Link>
+  )
+}
 
 export default function DatasetsPage() {
   const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [tab, setTab] = useState<'source' | 'derived'>('source')
 
   useEffect(() => {
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
@@ -18,84 +71,88 @@ export default function DatasetsPage() {
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar o catálogo.'))
   }, [])
 
+  const counts = useMemo(() => ({
+    source: datasets?.filter((d) => d.kind === 'source').length ?? 0,
+    derived: datasets?.filter((d) => d.kind === 'derived').length ?? 0,
+  }), [datasets])
+
   const filtered = datasets?.filter((d) => {
+    if (d.kind !== tab) return false
     const q = query.toLowerCase()
     return !q || d.name.toLowerCase().includes(q) || d.description.toLowerCase().includes(q)
       || d.tags.some((t) => t.toLowerCase().includes(q))
   })
 
+  const TABS = [
+    { k: 'source' as const, icon: Database, label: 'Fontes', hint: 'Ingeridas das origens', count: counts.source },
+    { k: 'derived' as const, icon: GitMerge, label: 'Derivados', hint: 'SQL sobre o lake', count: counts.derived },
+  ]
+
   return (
     <div className="mx-auto max-w-5xl">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Conjuntos de Dados</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Conjuntos de Dados</h1>
           <p className="mt-1 text-sm text-zinc-500">Dados publicados e prontos para explorar.</p>
         </div>
         {canEdit && (
-          <Link
-            to="/datasets/derived/new"
-            className="flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-accent-hover"
-          >
-            <GitMerge size={15} /> Novo derivado
+          <Link to="/datasets/derived/new"
+            className="flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-zinc-950 shadow-card transition-colors hover:bg-accent-hover">
+            <Plus size={15} /> Novo derivado
           </Link>
         )}
       </div>
 
-      <div className="relative mt-6 max-w-sm">
+      {/* Abas Fontes × Derivados */}
+      <div className="mt-6 flex gap-2">
+        {TABS.map(({ k, icon: Icon, label, hint, count }) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={clsx('flex flex-1 items-center gap-3 rounded-xl border p-3 text-left transition-all sm:flex-none sm:min-w-[190px]',
+              tab === k
+                ? 'border-accent bg-accent-soft shadow-card dark:bg-zinc-800'
+                : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700')}>
+            <div className={clsx('flex h-9 w-9 items-center justify-center rounded-lg',
+              tab === k ? 'bg-white text-accent dark:bg-zinc-900' : 'bg-zinc-100 text-zinc-400 dark:bg-zinc-800')}>
+              <Icon size={17} />
+            </div>
+            <div className="min-w-0">
+              <p className="flex items-center gap-1.5 text-sm font-semibold">
+                {label}
+                <span className="rounded-full bg-zinc-200/70 px-1.5 text-[11px] font-medium text-zinc-500 dark:bg-zinc-700/60">{count}</span>
+              </p>
+              <p className="text-[11px] text-zinc-500">{hint}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className="relative mt-5 max-w-sm">
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar por nome, descrição ou tag…"
-          className="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-900"
-        />
+        <input value={query} onChange={(e) => setQuery(e.target.value)}
+          placeholder={`Buscar em ${tab === 'source' ? 'fontes' : 'derivados'}…`}
+          className="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-900" />
       </div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
       {datasets === null && !error && <p className="mt-6 text-sm text-zinc-500">Carregando catálogo…</p>}
 
       {filtered?.length === 0 && (
-        <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          {datasets?.length === 0
-            ? 'Nenhum conjunto publicado ainda. Administradores publicam em Administração › Conexões.'
-            : 'Nada encontrado para essa busca.'}
+        <div className="mt-8 flex flex-col items-center rounded-2xl border border-dashed border-zinc-300 p-12 text-center dark:border-zinc-700">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800">
+            {tab === 'derived' ? <GitMerge size={22} /> : <Boxes size={22} />}
+          </div>
+          <p className="text-sm text-zinc-500">
+            {query
+              ? 'Nada encontrado para essa busca.'
+              : tab === 'derived'
+                ? (canEdit ? 'Nenhum derivado ainda. Crie um com “Novo derivado”.' : 'Nenhum conjunto derivado disponível.')
+                : 'Nenhuma fonte publicada. Administradores publicam em Administração › Conexões.'}
+          </p>
         </div>
       )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        {filtered?.map((d) => (
-          <Link
-            key={d.id}
-            to={`/datasets/${d.slug}`}
-            className="group rounded-xl border border-zinc-200 bg-white p-5 transition hover:border-accent hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
-          >
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent dark:bg-zinc-800">
-                {d.kind === 'derived' ? <GitMerge size={17} /> : <Boxes size={17} />}
-              </div>
-              <div className="min-w-0">
-                <h2 className="flex items-center gap-2 truncate font-medium group-hover:text-accent">
-                  {d.name}
-                  {d.kind === 'derived' && (
-                    <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-secondary dark:bg-zinc-800">
-                      Derivado
-                    </span>
-                  )}
-                </h2>
-                <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">
-                  {d.description || 'Sem descrição.'}
-                </p>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-              <span>{d.fieldCount} campos</span>
-              {d.rowCount !== null && <span>· {d.rowCount.toLocaleString('pt-BR')} registros</span>}
-              {d.tags.map((t) => (
-                <span key={t} className="rounded-full bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800">{t}</span>
-              ))}
-            </div>
-          </Link>
-        ))}
+        {filtered?.map((d) => <DatasetCard key={d.id} d={d} />)}
       </div>
     </div>
   )
