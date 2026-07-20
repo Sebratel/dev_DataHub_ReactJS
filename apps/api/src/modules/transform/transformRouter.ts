@@ -9,7 +9,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { enqueueSync } from '../sync/ingest.js'
-import { validateTransformSql, previewDerived } from './derive.js'
+import { validateTransformSql, previewDerived, assertNoDerivedCycle } from './derive.js'
 
 export const transformRouter = Router()
 
@@ -92,6 +92,7 @@ transformRouter.patch('/derived/:id', ...editorOnly, async (req, res) => {
   if (sql != null) {
     try {
       await tryPreview(req.user!.tenant, String(sql))
+      await assertNoDerivedCycle(req.user!.tenant, ds.slug, String(sql)) // cadeias sem ciclo
     } catch (e) {
       return res.status(400).json({ error: (e as Error).message })
     }

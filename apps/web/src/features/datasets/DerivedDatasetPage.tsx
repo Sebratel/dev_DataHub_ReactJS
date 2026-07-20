@@ -39,17 +39,18 @@ export default function DerivedDatasetPage() {
   const [helperSlug, setHelperSlug] = useState<string | null>(null)
   const [helperFields, setHelperFields] = useState<string[]>([])
 
-  // Fontes do lake — sincronizadas primeiro; as não sincronizadas aparecem
-  // desabilitadas (é a causa nº1 de "conjunto não disponível" no SQL).
+  // Conjuntos do lake (fontes E derivados — cadeias derivado→derivado):
+  // sincronizados primeiro; os não sincronizados aparecem desabilitados. Exclui
+  // o próprio conjunto em edição (não pode referenciar a si mesmo).
   useEffect(() => {
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
       .then((r) => setDatasets(
         r.datasets
-          .filter((d) => d.kind === 'source')
+          .filter((d) => d.slug !== editSlug)
           .sort((a, b) => Number(!!b.lastSyncAt) - Number(!!a.lastSyncAt) || a.name.localeCompare(b.name)),
       ))
       .catch(() => {})
-  }, [])
+  }, [editSlug])
 
   useEffect(() => {
     if (!editSlug) return
@@ -221,7 +222,9 @@ export default function DerivedDatasetPage() {
                     className={clsx('flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left',
                       synced ? 'hover:bg-zinc-100 dark:hover:bg-zinc-800' : 'cursor-not-allowed opacity-60')}>
                     <span className={clsx('h-1.5 w-1.5 shrink-0 rounded-full', synced ? 'bg-emerald-500' : 'bg-amber-500')} />
-                    <Database size={13} className="shrink-0 text-zinc-400" />
+                    {d.kind === 'derived'
+                      ? <span title="Derivado"><GitMerge size={13} className="shrink-0 text-secondary" /></span>
+                      : <Database size={13} className="shrink-0 text-zinc-400" />}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-medium">{d.name}</span>
                       <span className="block truncate font-mono text-[10px] text-accent">{alias}</span>

@@ -4,6 +4,7 @@
 import { config } from '../../core/config.js'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { enqueueSync } from './ingest.js'
+import { orderDerived } from '../transform/derive.js'
 
 function msUntilHour(hour: number): number {
   const now = new Date()
@@ -16,13 +17,22 @@ function msUntilHour(hour: number): number {
 async function syncAll(reason: string): Promise<void> {
   if (!isDbAvailable()) return
   const rows = (await db.query(
-    // Derivados por último: quando materializam, as fontes já estão frescas.
-    `select id, slug from datasets where sync_mode in ('snapshot', 'incremental')
-     order by (kind = 'derived'), connection_id, slug`,
+    `select id, slug, kind, transform_sql from datasets
+      where sync_mode in ('snapshot', 'incremental')
+      order by connection_id, slug`,
   )).rows
   if (!rows.length) return
-  console.log(`[scheduler] ${reason}: ${rows.length} dataset(s) na fila de sync.`)
-  for (const r of rows) await enqueueSync(String(r.id))
+
+  // FONTES primeiro; depois DERIVADOS em ordem topológica (um derivado que
+  // referencia outro materializa DEPOIS dele — cadeias fonte→derivado→derivado).
+  const sources = rows.filter((r) => r.kind !== 'derived')
+  const deriveds = orderDerived(
+    rows.filter((r) => r.kind === 'derived')
+      .map((r) => ({ id: String(r.id), slug: String(r.slug), transformSql: r.transform_sql as string | null })),
+  )
+  const queue = [...sources.map((r) => String(r.id)), ...deriveds.map((d) => d.id)]
+  console.log(`[scheduler] ${reason}: ${queue.length} dataset(s) na fila (${sources.length} fonte(s), ${deriveds.length} derivado(s)).`)
+  for (const id of queue) await enqueueSync(id)
 }
 
 export function startScheduler(): void {

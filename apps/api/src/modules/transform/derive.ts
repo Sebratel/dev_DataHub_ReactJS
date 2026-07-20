@@ -35,20 +35,103 @@ export interface LakeRef {
   glob: string
 }
 
-// Conjuntos-FONTE do tenant que já têm Parquet no lake (derivados não entram:
-// evita cadeias com ordem de atualização imprevisível — v1 é fonte → derivado).
-export async function lakeRefs(tenantSlug: string): Promise<LakeRef[]> {
+// Conjuntos do tenant (FONTE ou DERIVADO) que já têm Parquet no lake e podem
+// ser referenciados. Derivados agora entram → cadeias (derivado sobre derivado);
+// a ordem de atualização é resolvida por ordenação topológica no scheduler.
+// `excludeSlug` evita um derivado referenciar a si mesmo (leria a versão antiga).
+export async function lakeRefs(tenantSlug: string, excludeSlug?: string): Promise<LakeRef[]> {
   const rows = (await db.query(
     `select d.slug from datasets d join tenants t on t.id = d.tenant_id
-      where t.slug = $1 and d.kind = 'source'`,
+      where t.slug = $1 and d.kind in ('source', 'derived')`,
     [tenantSlug],
   )).rows
   const refs: LakeRef[] = []
   for (const r of rows) {
-    const dir = datasetDir(tenantSlug, String(r.slug))
-    if (listParquet(dir).length) refs.push({ slug: String(r.slug), glob: parquetGlob(dir) })
+    const slug = String(r.slug)
+    if (excludeSlug && slug === excludeSlug) continue
+    const dir = datasetDir(tenantSlug, slug)
+    if (listParquet(dir).length) refs.push({ slug, glob: parquetGlob(dir) })
   }
   return refs
+}
+
+// ── Cadeias de derivados: dependências, ordenação e ciclos ─────
+// Slugs (dentre `candidates`) referenciados no SQL. Detecta o APELIDO com
+// underscore (sem aspas) e o SLUG entre aspas. Ignora comentários e literais.
+export function referencedSlugs(sql: string, candidates: string[]): string[] {
+  const clean = sql
+    .replace(/--[^\n]*/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/'(?:''|[^'])*'/g, "''")
+    .toLowerCase()
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const hits: string[] = []
+  for (const slug of candidates) {
+    const alias = slug.replace(/-/g, '_')
+    const aliasRe = new RegExp(`(?<![a-z0-9_])${esc(alias)}(?![a-z0-9_])`)
+    const quotedRe = new RegExp(`"${esc(slug)}"`)
+    if (aliasRe.test(clean) || quotedRe.test(clean)) hits.push(slug)
+  }
+  return hits
+}
+
+export interface DerivedNode { slug: string; transformSql: string | null }
+
+// Ordena derivados para materialização: quem referencia outro roda DEPOIS.
+// Resiliente — em ciclo, loga e mantém uma ordem parcial (não derruba o sync).
+export function orderDerived<T extends DerivedNode>(deriveds: T[]): T[] {
+  const bySlug = new Map(deriveds.map((d) => [d.slug, d]))
+  const slugs = deriveds.map((d) => d.slug)
+  const deps = new Map(deriveds.map((d) => [d.slug, referencedSlugs(d.transformSql ?? '', slugs).filter((s) => s !== d.slug)]))
+  const state = new Map<string, 1 | 2>()
+  const out: T[] = []
+  const visit = (slug: string) => {
+    const st = state.get(slug)
+    if (st === 2) return
+    if (st === 1) { console.warn(`[derive] ciclo de dependência envolvendo "${slug}" — ordem parcial.`); return }
+    state.set(slug, 1)
+    for (const dep of deps.get(slug) ?? []) if (bySlug.has(dep)) visit(dep)
+    state.set(slug, 2)
+    out.push(bySlug.get(slug)!)
+  }
+  for (const d of deriveds) visit(d.slug)
+  return out
+}
+
+function graphHasCycle(deps: Map<string, string[]>): boolean {
+  const state = new Map<string, 1 | 2>()
+  let cyclic = false
+  const visit = (s: string) => {
+    if (cyclic) return
+    state.set(s, 1)
+    for (const d of deps.get(s) ?? []) {
+      const st = state.get(d)
+      if (st === 1) { cyclic = true; return }
+      if (st === undefined) visit(d)
+    }
+    state.set(s, 2)
+  }
+  for (const s of deps.keys()) if (state.get(s) === undefined) visit(s)
+  return cyclic
+}
+
+// Bloqueia salvar um derivado cujo SQL crie dependência circular entre derivados.
+export async function assertNoDerivedCycle(tenantSlug: string, slug: string, newSql: string): Promise<void> {
+  const rows = (await db.query(
+    `select d.slug, d.transform_sql from datasets d join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and d.kind = 'derived'`,
+    [tenantSlug],
+  )).rows
+  const graph: DerivedNode[] = rows.map((r) => ({
+    slug: String(r.slug),
+    transformSql: String(r.slug) === slug ? newSql : (r.transform_sql as string | null),
+  }))
+  if (!graph.some((g) => g.slug === slug)) graph.push({ slug, transformSql: newSql })
+  const all = graph.map((g) => g.slug)
+  const deps = new Map(graph.map((g) => [g.slug, referencedSlugs(g.transformSql ?? '', all).filter((s) => s !== g.slug)]))
+  if (graphHasCycle(deps)) {
+    throw new Error('Este SQL cria uma dependência circular entre conjuntos derivados (eles passariam a se referenciar em ciclo).')
+  }
 }
 
 // Envolve o SQL do usuário com CTEs (um por conjunto do lake). O SQL vira uma
@@ -76,7 +159,7 @@ function friendlyDuckError(e: Error, refs: LakeRef[]): Error {
   return new Error(
     `O conjunto "${m[1]}" não está disponível no lake. ` +
     'Verifique se: (1) o apelido está correto — use o slug com underscore; ' +
-    '(2) é um conjunto FONTE já sincronizado (derivados não podem ser referenciados nesta versão); ' +
+    '(2) o conjunto (fonte OU derivado) já foi sincronizado/materializado; ' +
     '(3) a sincronização realmente rodou (metadado pode indicar sync sem os arquivos no lake — re-sincronize). ' +
     `Disponíveis agora: ${available || 'nenhum'}.`,
   )
@@ -148,7 +231,9 @@ export async function materializeDerived(ds: {
   try {
     if (!ds.transformSql) throw new Error('Conjunto derivado sem SQL definido.')
     validateTransformSql(ds.transformSql)
-    const refs = await lakeRefs(ds.tenantSlug)
+    // Exclui o próprio slug: um derivado não referencia a si mesmo (leria a
+    // versão anterior). Cadeias derivado→derivado usam os demais materializados.
+    const refs = await lakeRefs(ds.tenantSlug, ds.slug)
     const wrapped = buildLakeSql(ds.transformSql, refs)
 
     const partFs = join(dir, `part-${run.id}.parquet`)
