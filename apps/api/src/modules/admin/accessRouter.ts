@@ -35,6 +35,35 @@ function slugify(name: string): string {
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'time'
 }
 
+// ─── Auditoria (admin) ─────────────────────────────────────────
+// Lê audit_logs do tenant com filtros simples por ação (prefixo) e usuário.
+accessRouter.get('/audit', adminOnly, async (req, res) => {
+  const limit = Math.min(300, Math.max(1, Number(req.query.limit) || 100))
+  const action = String(req.query.action || '').trim()
+  const user = String(req.query.user || '').trim().toLowerCase()
+  const rows = (await db.query(
+    `select id, user_email, action, resource_type, resource_id, detail, ip, created_at
+       from audit_logs
+      where tenant_id = (select id from tenants where slug = $1)
+        and ($2 = '' or action like $2 || '%')
+        and ($3 = '' or lower(user_email) like '%' || $3 || '%')
+      order by created_at desc limit $4`,
+    [req.user!.tenant, action, user, limit],
+  )).rows
+  res.json({
+    logs: rows.map((r) => ({
+      id: String(r.id),
+      userEmail: r.user_email ?? null,
+      action: String(r.action),
+      resourceType: r.resource_type ?? null,
+      resourceId: r.resource_id ?? null,
+      detail: r.detail ?? null,
+      ip: r.ip ?? null,
+      createdAt: String(r.created_at),
+    })),
+  })
+})
+
 // ─── Usuários ──────────────────────────────────────────────────
 accessRouter.get('/users', adminOnly, async (req, res) => {
   const rows = (await db.query(

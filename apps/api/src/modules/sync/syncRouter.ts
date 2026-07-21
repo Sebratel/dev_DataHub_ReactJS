@@ -15,11 +15,14 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
 }
 const adminOnly = [requireAuth({ role: 'admin' }), requireDb]
 
-// Modo de sincronização e chave incremental do dataset.
+// Modo de sincronização, chave incremental e CADÊNCIA do dataset.
 syncRouter.patch('/:id/sync-config', ...adminOnly, async (req, res) => {
-  const { syncMode, incrementalKey } = req.body ?? {}
+  const { syncMode, incrementalKey, syncCadence } = req.body ?? {}
   if (!['live', 'snapshot', 'incremental'].includes(syncMode)) {
     return res.status(400).json({ error: 'syncMode deve ser live, snapshot ou incremental.' })
+  }
+  if (syncCadence != null && !['daily', 'hourly', 'manual'].includes(syncCadence)) {
+    return res.status(400).json({ error: 'syncCadence deve ser daily, hourly ou manual.' })
   }
   if (syncMode === 'incremental') {
     const field = (await db.query(
@@ -28,14 +31,22 @@ syncRouter.patch('/:id/sync-config', ...adminOnly, async (req, res) => {
     )).rows[0]
     if (!field) return res.status(400).json({ error: 'incrementalKey precisa ser um campo do dataset.' })
   }
+  const current = (await db.query('select sync_mode from datasets where id = $1', [req.params.id])).rows[0]
+  if (!current) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+  // Só zera o watermark quando o MODO muda (mudar só a cadência preserva o
+  // progresso incremental — não força recarga do zero).
+  const modeChanged = current.sync_mode !== syncMode
   const row = (await db.query(
-    // Trocar o modo zera o watermark — o próximo sync parte do início.
-    `update datasets set sync_mode = $2, incremental_key = $3, watermark = null, updated_at = now()
+    `update datasets set
+       sync_mode = $2, incremental_key = $3,
+       sync_cadence = coalesce($4, sync_cadence),
+       watermark = case when $5 then null else watermark end,
+       updated_at = now()
      where id = $1 returning slug`,
-    [req.params.id, syncMode, syncMode === 'incremental' ? incrementalKey : null],
+    [req.params.id, syncMode, syncMode === 'incremental' ? incrementalKey : null,
+     syncCadence ?? null, modeChanged],
   )).rows[0]
-  if (!row) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
-  await audit(req, 'datasets.sync-config', { type: 'dataset', id: row.slug }, { syncMode, incrementalKey })
+  await audit(req, 'datasets.sync-config', { type: 'dataset', id: row.slug }, { syncMode, incrementalKey, syncCadence })
   res.json({ ok: true })
 })
 

@@ -62,7 +62,11 @@ export interface DatasetSummary {
   // Origem física — presente APENAS para admins.
   source?: { connectionId: string; schema: string; table: string }
   // Configuração de sincronização — presente APENAS para admins.
-  sync?: { mode: 'live' | 'snapshot' | 'incremental'; incrementalKey: string | null }
+  sync?: {
+    mode: 'live' | 'snapshot' | 'incremental'
+    incrementalKey: string | null
+    cadence: 'daily' | 'hourly' | 'manual'
+  }
 }
 
 export interface SyncRun {

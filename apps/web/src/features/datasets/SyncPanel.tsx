@@ -12,6 +12,12 @@ const MODE_LABEL: Record<string, string> = {
   incremental: 'Incremental (só novidades, por watermark)',
 }
 
+const CADENCE_LABEL: Record<string, string> = {
+  daily: 'Diária (janela da madrugada)',
+  hourly: 'De hora em hora',
+  manual: 'Manual (só sob demanda)',
+}
+
 interface RawRun {
   id: string; mode: string; status: SyncRun['status']; rows: number; bytes: number
   error: string | null; started_at: string; finished_at: string | null
@@ -20,6 +26,7 @@ interface RawRun {
 export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetail; onSynced: () => void }) {
   const [mode, setMode] = useState(dataset.sync?.mode ?? 'live')
   const [incKey, setIncKey] = useState(dataset.sync?.incrementalKey ?? '')
+  const [cadence, setCadence] = useState(dataset.sync?.cadence ?? 'daily')
   const [runs, setRuns] = useState<RawRun[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,7 +61,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     try {
       await api(`/api/v1/datasets/${dataset.id}/sync-config`, {
         method: 'PATCH',
-        body: JSON.stringify({ syncMode: mode, incrementalKey: incKey || null }),
+        body: JSON.stringify({ syncMode: mode, incrementalKey: incKey || null, syncCadence: cadence }),
       })
       onSynced()
     } catch (e) {
@@ -104,6 +111,18 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
             >
               <option value="">— escolha —</option>
               {numericOrDateFields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+            </select>
+          </label>
+        )}
+        {mode !== 'live' && (
+          <label className="text-sm">
+            <span className="mb-1 block text-xs text-zinc-500">Cadência (com que frequência sincroniza sozinho)</span>
+            <select
+              value={cadence}
+              onChange={(e) => setCadence(e.target.value as typeof cadence)}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            >
+              {Object.entries(CADENCE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </label>
         )}

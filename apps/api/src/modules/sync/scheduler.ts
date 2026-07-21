@@ -1,48 +1,51 @@
-// Agendador diário: sincroniza todos os datasets (snapshot/incremental) na
-// janela de madrugada (ETL_HOUR), um por vez — mesma lógica do etl-scheduler
-// do churn_mvp. A fila sequencial do ingest garante zero concorrência.
+// Agendador: verifica DE HORA EM HORA quais conjuntos estão "vencidos" pela
+// cadência de cada um — 'hourly' toda hora, 'daily' só na janela ETL_HOUR,
+// 'manual' nunca. Fontes primeiro; derivados em ordem topológica (cadeias).
+// A fila sequencial do ingest garante zero concorrência.
 import { config } from '../../core/config.js'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { enqueueSync } from './ingest.js'
 import { orderDerived } from '../transform/derive.js'
 
-function msUntilHour(hour: number): number {
+function msUntilNextHour(): number {
   const now = new Date()
   const next = new Date(now)
-  next.setHours(hour, 0, 0, 0)
-  if (next <= now) next.setDate(next.getDate() + 1)
+  next.setHours(now.getHours() + 1, 0, 0, 0)
   return next.getTime() - now.getTime()
 }
 
-async function syncAll(reason: string): Promise<void> {
+async function tick(): Promise<void> {
   if (!isDbAvailable()) return
+  const hour = new Date().getHours()
   const rows = (await db.query(
-    `select id, slug, kind, transform_sql from datasets
-      where sync_mode in ('snapshot', 'incremental')
-      order by connection_id, slug`,
+    `select id, slug, kind, transform_sql, sync_cadence from datasets
+      where sync_mode in ('snapshot', 'incremental')`,
   )).rows
-  if (!rows.length) return
 
-  // FONTES primeiro; depois DERIVADOS em ordem topológica (um derivado que
-  // referencia outro materializa DEPOIS dele — cadeias fonte→derivado→derivado).
-  const sources = rows.filter((r) => r.kind !== 'derived')
+  // Vencidos nesta hora: hourly sempre; daily só na hora do ETL; manual nunca.
+  const due = rows.filter((r) =>
+    r.sync_cadence === 'hourly' || (r.sync_cadence === 'daily' && hour === config.sync.hour))
+  if (!due.length) return
+
+  // Fontes primeiro; depois derivados em ordem de dependência.
+  const sources = due.filter((r) => r.kind !== 'derived')
   const deriveds = orderDerived(
-    rows.filter((r) => r.kind === 'derived')
+    due.filter((r) => r.kind === 'derived')
       .map((r) => ({ id: String(r.id), slug: String(r.slug), transformSql: r.transform_sql as string | null })),
   )
   const queue = [...sources.map((r) => String(r.id)), ...deriveds.map((d) => d.id)]
-  console.log(`[scheduler] ${reason}: ${queue.length} dataset(s) na fila (${sources.length} fonte(s), ${deriveds.length} derivado(s)).`)
+  console.log(`[scheduler] ${hour}h: ${queue.length} conjunto(s) vencido(s) (${sources.length} fonte(s), ${deriveds.length} derivado(s)).`)
   for (const id of queue) await enqueueSync(id)
 }
 
 export function startScheduler(): void {
   const schedule = () => {
-    const ms = msUntilHour(config.sync.hour)
-    console.log(`[scheduler] próximo sync completo em ${(ms / 3_600_000).toFixed(1)} h (ETL_HOUR=${config.sync.hour}).`)
+    const ms = msUntilNextHour()
     setTimeout(async () => {
-      await syncAll('janela diária')
+      try { await tick() } catch (e) { console.error(`[scheduler] falha no tick: ${(e as Error).message}`) }
       schedule()
     }, ms)
   }
+  console.log(`[scheduler] verificação a cada hora cheia (janela diária ETL_HOUR=${config.sync.hour}h; cadência por conjunto). Próxima em ${Math.round(msUntilNextHour() / 60000)} min.`)
   schedule()
 }
