@@ -10,7 +10,7 @@ import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
-import { embedQuery, toVectorLiteral } from './embeddings.js'
+import { embedQuery, toVectorLiteral, embeddingsEnabled } from './embeddings.js'
 import type { AiToolDef } from './provider.js'
 
 export const AI_TOOLS: AiToolDef[] = [
@@ -101,20 +101,24 @@ export async function executeTool(
 async function searchDatasets(user: SessionUser, query?: string): Promise<ToolOutcome> {
   const allowed = await accessibleDatasetIds(user)
 
-  let rows: Record<string, unknown>[]
-  if (query && query.trim()) {
-    const vec = toVectorLiteral(await embedQuery(query.trim()))
-    rows = (await db.query(
-      `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at,
-              (d.embedding <=> $2::vector) as distance
-         from datasets d join tenants t on t.id = d.tenant_id
-        where t.slug = $1 and d.embedding is not null
-        order by d.embedding <=> $2::vector
-        limit 50`,
-      [user.tenant, vec],
-    )).rows
-  } else {
-    rows = []
+  let rows: Record<string, unknown>[] = []
+  if (query && query.trim() && embeddingsEnabled()) {
+    try {
+      const vec = toVectorLiteral(await embedQuery(query.trim()))
+      rows = (await db.query(
+        `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at,
+                (d.embedding <=> $2::vector) as distance
+           from datasets d join tenants t on t.id = d.tenant_id
+          where t.slug = $1 and d.embedding is not null
+          order by d.embedding <=> $2::vector
+          limit 50`,
+        [user.tenant, vec],
+      )).rows
+    } catch (e) {
+      // Vetorização indisponível → não quebra o chat; cai no fallback textual.
+      console.warn(`[ai] busca semântica falhou, usando fallback textual: ${(e as Error).message}`)
+      rows = []
+    }
   }
 
   // Fallback: sem query, ou nenhum dataset indexado ainda → lista alfabética.

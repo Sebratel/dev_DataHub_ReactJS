@@ -89,6 +89,11 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
+      # Busca semântica do catálogo (RAG). O runtime de embeddings (onnxruntime)
+      # NÃO roda na imagem Alpine (musl) — mantenha DESLIGADO em produção até a
+      # imagem migrar para base glibc. Desligado = busca textual (degradação
+      # graciosa). Em dev (API fora do Docker) o default do código é ligado.
+      EMBEDDINGS_ENABLED: ${EMBEDDINGS_ENABLED:-false}
     volumes:
       # Lake persistente (Parquet) — sobrevive a redeploys.
       - datahub-lake:/app/data/lake

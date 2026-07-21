@@ -9,23 +9,55 @@
 //   - "query: <pergunta>"   → ao vetorizar o que o usuário procura
 //   - "passage: <documento>"→ ao vetorizar o que está no catálogo
 // Sem os prefixos a qualidade cai. É uma pegadinha clássica de e5.
+//
+// ROBUSTEZ (importante): o runtime por baixo (onnxruntime-node) traz binários
+// nativos glibc — NÃO carregam em Alpine/musl. Por isso:
+//   1. NÃO importamos '@huggingface/transformers' no topo do módulo (senão uma
+//      falha derrubaria o boot da API inteira). Usamos import DINÂMICO, só
+//      quando de fato formos gerar um embedding.
+//   2. Se a carga falhar (ou EMBEDDINGS_ENABLED=false), auto-desabilitamos e a
+//      busca cai para textual. A API NUNCA quebra por causa de embeddings.
 // ─────────────────────────────────────────────────────────────────────────
-import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers'
 import { db } from '../../db/pool.js'
 
 export const EMBEDDING_DIM = 384
 const MODEL = 'Xenova/multilingual-e5-small'
 
-// O modelo é pesado para carregar (baixa ~120MB na 1ª vez e inicializa o
-// runtime ONNX). Carregamos UMA vez, sob demanda, e reaproveitamos. A Promise
-// é cacheada para que chamadas concorrentes não iniciem dois carregamentos.
-let extractorPromise: Promise<FeatureExtractionPipeline> | null = null
-function getExtractor(): Promise<FeatureExtractionPipeline> {
+// Desligado explicitamente por env, ou automaticamente se o runtime falhar.
+let disabled = process.env.EMBEDDINGS_ENABLED === 'false'
+
+// Tipo mínimo do pipeline (evita depender do tipo estático da lib, que só
+// existiria com o import estático que estamos justamente evitando).
+type Extractor = (
+  text: string,
+  opts: { pooling: 'mean'; normalize: boolean },
+) => Promise<{ data: Float32Array }>
+
+// Carrega o modelo UMA vez, sob demanda. A Promise é cacheada para chamadas
+// concorrentes não iniciarem dois carregamentos.
+let extractorPromise: Promise<Extractor> | null = null
+function getExtractor(): Promise<Extractor> {
+  if (disabled) {
+    return Promise.reject(new Error('embeddings desabilitado (EMBEDDINGS_ENABLED=false ou runtime indisponível)'))
+  }
   if (!extractorPromise) {
     console.log(`[embeddings] carregando modelo ${MODEL} (1ª vez pode baixar ~120MB)…`)
-    extractorPromise = pipeline('feature-extraction', MODEL)
+    extractorPromise = (async () => {
+      // Import DINÂMICO — o runtime nativo só é tocado aqui, nunca no boot.
+      const { pipeline } = await import('@huggingface/transformers')
+      return (await pipeline('feature-extraction', MODEL)) as unknown as Extractor
+    })().catch((e) => {
+      disabled = true // não tenta de novo nesta execução
+      extractorPromise = null
+      console.warn(`[embeddings] indisponível — busca semântica desligada, usando fallback textual. (${(e as Error).message})`)
+      throw e
+    })
   }
   return extractorPromise
+}
+
+export function embeddingsEnabled(): boolean {
+  return !disabled
 }
 
 // Texto → vetor de 384 números (já normalizado, pronto para distância cosseno).
@@ -34,7 +66,7 @@ async function embed(text: string, kind: 'query' | 'passage'): Promise<number[]>
   // pooling 'mean' = média dos tokens → 1 vetor por frase.
   // normalize true = vetor unitário → produto interno vira cosseno direto.
   const output = await extractor(`${kind}: ${text}`, { pooling: 'mean', normalize: true })
-  return Array.from(output.data as Float32Array)
+  return Array.from(output.data)
 }
 
 export const embedQuery = (text: string) => embed(text, 'query')
@@ -65,8 +97,9 @@ function buildDatasetDocument(ds: {
 
 // Re-indexa os datasets cujo embedding está FALTANDO ou DESATUALIZADO (o texto
 // mudou desde a última vez). Idempotente e barato: só recomputa o que mudou.
-// Chamado no boot e sob demanda (endpoint admin) e após criar/editar dataset.
+// NUNCA lança — se o runtime estiver indisponível, apenas não indexa nada.
 export async function reindexEmbeddings(datasetId?: string): Promise<number> {
+  if (disabled) return 0
   const rows = (await db.query(
     `select d.id, d.name, d.description, d.tags, d.embedding_text,
             (select string_agg(coalesce(f.label,'') || ' ' || coalesce(f.description,''), '. ')
@@ -82,7 +115,12 @@ export async function reindexEmbeddings(datasetId?: string): Promise<number> {
       name: r.name, description: r.description, tags: r.tags, fieldText: r.field_text,
     })
     if (doc === r.embedding_text) continue // já está fresco → pula
-    const vec = await embed(doc, 'passage')
+    let vec: number[]
+    try {
+      vec = await embed(doc, 'passage')
+    } catch {
+      break // runtime indisponível (disabled já foi setado) → aborta silenciosamente
+    }
     await db.query(
       `update datasets set embedding = $1::vector, embedding_text = $2, embedded_at = now()
         where id = $3`,
