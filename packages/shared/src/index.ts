@@ -66,6 +66,8 @@ export interface DatasetSummary {
     mode: 'live' | 'snapshot' | 'incremental'
     incrementalKey: string | null
     cadence: 'daily' | 'hourly' | 'manual'
+    // Piso da 1ª carga incremental (valor da chave). null = desde o início.
+    since: string | null
   }
 }
 

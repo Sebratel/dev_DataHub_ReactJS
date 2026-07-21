@@ -19,6 +19,15 @@ import { materializeDerived } from '../transform/derive.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+// Progresso ao vivo: grava o parcial em sync_runs.rows a cada lote. O painel de
+// sync já lê essa coluna a cada 2s, então o contador sobe na tela em vez de
+// ficar em 0 até o fim. Não-fatal: um erro aqui não derruba a sincronização.
+async function reportProgress(runId: string, rows: number): Promise<void> {
+  try {
+    await db.query(`update sync_runs set rows = $2 where id = $1`, [runId, rows])
+  } catch { /* progresso é best-effort */ }
+}
+
 // JSON.stringify seguro para valores vindos dos drivers (BigInt, Date).
 function jsonLine(row: Record<string, unknown>): string {
   return JSON.stringify(row, (_k, v) => {
@@ -100,18 +109,28 @@ async function runSync(datasetId: string): Promise<string> {
 
   try {
     if (mode === 'incremental') {
-      // Keyset por watermark: WHERE key > $wm ORDER BY key LIMIT n — nunca OFFSET.
+      // Keyset: WHERE key {>|>=} $bound ORDER BY key LIMIT n — nunca OFFSET.
       const keyCol = fields.find((f) => f.key === ds.incremental_key)?.source_column ?? ds.incremental_key
+      const ph = def.kind === 'mysql' ? '?' : '$1'
       for (;;) {
-        const where = newWatermark != null ? `where ${q(keyCol)} > ${def.kind === 'mysql' ? '?' : '$1'}` : ''
+        // Limite inferior: o watermark (>) manda; na PRIMEIRA carga (sem
+        // watermark), usa o piso sync_since (>=) se houver — é o "ponto de
+        // partida" que corta a tabela gigante já na origem.
+        const bound = newWatermark != null
+          ? { op: '>', val: newWatermark }
+          : ds.sync_since != null
+            ? { op: '>=', val: String(ds.sync_since) }
+            : null
+        const where = bound ? `where ${q(keyCol)} ${bound.op} ${ph}` : ''
         const sql = `select ${cols} from ${from} ${where} order by ${q(keyCol)} limit ${batchSize}`
-        const { rows } = await querySource(String(ds.connection_id), sql, newWatermark != null ? [newWatermark] : [])
+        const { rows } = await querySource(String(ds.connection_id), sql, bound ? [bound.val] : [])
         for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length
         if (rows.length) {
           const last = rows[rows.length - 1][String(ds.incremental_key)]
           newWatermark = last instanceof Date ? last.toISOString() : String(last)
         }
+        await reportProgress(run.id, total) // progresso ao vivo na tela
         if (rows.length < batchSize) break
         await sleep(batchPauseMs) // respiro para a fonte entre lotes
       }
@@ -123,6 +142,7 @@ async function runSync(datasetId: string): Promise<string> {
         const { rows } = await querySource(String(ds.connection_id), sql)
         for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length
+        await reportProgress(run.id, total)
         if (rows.length < batchSize) break
         await sleep(batchPauseMs)
       }

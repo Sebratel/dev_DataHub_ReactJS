@@ -61,7 +61,7 @@ const DATASET_COLUMNS = `
   d.id, d.slug, d.name, d.description, d.tags, d.owner_email, d.official,
   d.row_count, d.last_sync_at, d.updated_at, d.kind, d.transform_sql,
   d.connection_id, d.schema_name, d.object_name,
-  d.sync_mode, d.incremental_key, d.sync_cadence,
+  d.sync_mode, d.incremental_key, d.sync_cadence, d.sync_since,
   (select count(*) from dataset_fields f where f.dataset_id = d.id and not f.hidden) as field_count`
 
 function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary {
@@ -89,6 +89,7 @@ function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary
         mode: String(row.sync_mode) as 'live' | 'snapshot' | 'incremental',
         incrementalKey: (row.incremental_key as string) ?? null,
         cadence: String(row.sync_cadence ?? 'daily') as 'daily' | 'hourly' | 'manual',
+        since: (row.sync_since as string) ?? null,
       },
     } : {}),
   }

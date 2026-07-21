@@ -27,6 +27,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
   const [mode, setMode] = useState(dataset.sync?.mode ?? 'live')
   const [incKey, setIncKey] = useState(dataset.sync?.incrementalKey ?? '')
   const [cadence, setCadence] = useState(dataset.sync?.cadence ?? 'daily')
+  const [since, setSince] = useState(dataset.sync?.since ?? '')
   const [runs, setRuns] = useState<RawRun[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -61,7 +62,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     try {
       await api(`/api/v1/datasets/${dataset.id}/sync-config`, {
         method: 'PATCH',
-        body: JSON.stringify({ syncMode: mode, incrementalKey: incKey || null, syncCadence: cadence }),
+        body: JSON.stringify({ syncMode: mode, incrementalKey: incKey || null, syncCadence: cadence, syncSince: since || null }),
       })
       onSynced()
     } catch (e) {
@@ -112,6 +113,20 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
               <option value="">— escolha —</option>
               {numericOrDateFields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
             </select>
+          </label>
+        )}
+        {mode === 'incremental' && incKey && (
+          <label className="text-sm">
+            <span className="mb-1 block text-xs text-zinc-500">
+              Publicar a partir de <span className="text-zinc-400">(opcional — corta a 1ª carga)</span>
+            </span>
+            <input
+              type={dataset.fields.find((f) => f.key === incKey)?.type === 'date' ? 'date' : 'number'}
+              value={since}
+              onChange={(e) => setSince(e.target.value)}
+              placeholder="tudo desde o início"
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            />
           </label>
         )}
         {mode !== 'live' && (

@@ -17,7 +17,7 @@ const adminOnly = [requireAuth({ role: 'admin' }), requireDb]
 
 // Modo de sincronização, chave incremental e CADÊNCIA do dataset.
 syncRouter.patch('/:id/sync-config', ...adminOnly, async (req, res) => {
-  const { syncMode, incrementalKey, syncCadence } = req.body ?? {}
+  const { syncMode, incrementalKey, syncCadence, syncSince } = req.body ?? {}
   if (!['live', 'snapshot', 'incremental'].includes(syncMode)) {
     return res.status(400).json({ error: 'syncMode deve ser live, snapshot ou incremental.' })
   }
@@ -31,22 +31,29 @@ syncRouter.patch('/:id/sync-config', ...adminOnly, async (req, res) => {
     )).rows[0]
     if (!field) return res.status(400).json({ error: 'incrementalKey precisa ser um campo do dataset.' })
   }
-  const current = (await db.query('select sync_mode from datasets where id = $1', [req.params.id])).rows[0]
+  // "Ponto de partida": só faz sentido no incremental; nos demais modos, zera.
+  const since = syncMode === 'incremental' && syncSince != null && String(syncSince).trim() !== ''
+    ? String(syncSince).trim() : null
+  const current = (await db.query('select sync_mode, sync_since from datasets where id = $1', [req.params.id])).rows[0]
   if (!current) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
-  // Só zera o watermark quando o MODO muda (mudar só a cadência preserva o
-  // progresso incremental — não força recarga do zero).
+  // Zera o watermark (força recarga do zero) quando o MODO muda OU quando o piso
+  // muda — em ambos os casos, o que o dataset contém foi redefinido. Mudar só a
+  // cadência preserva o progresso incremental.
   const modeChanged = current.sync_mode !== syncMode
+  const sinceChanged = (current.sync_since ?? null) !== since
+  const resetWatermark = modeChanged || sinceChanged
   const row = (await db.query(
     `update datasets set
        sync_mode = $2, incremental_key = $3,
        sync_cadence = coalesce($4, sync_cadence),
-       watermark = case when $5 then null else watermark end,
+       sync_since = $5,
+       watermark = case when $6 then null else watermark end,
        updated_at = now()
      where id = $1 returning slug`,
     [req.params.id, syncMode, syncMode === 'incremental' ? incrementalKey : null,
-     syncCadence ?? null, modeChanged],
+     syncCadence ?? null, since, resetWatermark],
   )).rows[0]
-  await audit(req, 'datasets.sync-config', { type: 'dataset', id: row.slug }, { syncMode, incrementalKey, syncCadence })
+  await audit(req, 'datasets.sync-config', { type: 'dataset', id: row.slug }, { syncMode, incrementalKey, syncCadence, since })
   res.json({ ok: true })
 })
 
