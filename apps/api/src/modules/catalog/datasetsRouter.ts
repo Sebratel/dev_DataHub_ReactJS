@@ -15,8 +15,16 @@ import { getConnector } from '../../connectors/registry.js'
 import { querySource, discoverColumns } from '../../connectors/pools.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
+import { reindexEmbeddings } from '../ai/embeddings.js'
 
 export const datasetsRouter = Router()
+
+// (Re)indexa o embedding de um dataset em background, sem quebrar a resposta
+// HTTP se o modelo falhar. Chamado após publicar/editar metadados.
+function reindexInBackground(datasetId: string): void {
+  void reindexEmbeddings(datasetId).catch((e) =>
+    console.warn(`[embeddings] reindex falhou para ${datasetId}: ${(e as Error).message}`))
+}
 
 datasetsRouter.use(requireAuth(), (req, res, next) => {
   if (!isDbAvailable()) return res.status(503).json({ error: 'Banco de metadados indisponível.' })
@@ -185,6 +193,7 @@ datasetsRouter.post('/', requireAuth({ role: 'admin' }), async (req, res) => {
     }
     await client.query('commit')
     await audit(req, 'datasets.publish', { type: 'dataset', id: slug }, { connectionId, schema, table })
+    reindexInBackground(String(ds.id)) // catálogo semântico: novo dataset → novo embedding
     res.status(201).json({ id: ds.id, slug })
   } catch (e) {
     await client.query('rollback')
@@ -196,6 +205,14 @@ datasetsRouter.post('/', requireAuth({ role: 'admin' }), async (req, res) => {
   } finally {
     client.release()
   }
+})
+
+// Força a (re)indexação semântica de TODO o catálogo (só o que mudou é
+// recomputado). Útil após ajustes de rótulos/campos ou para popular a 1ª vez.
+datasetsRouter.post('/reindex-embeddings', requireAuth({ role: 'admin' }), async (req, res) => {
+  const updated = await reindexEmbeddings()
+  await audit(req, 'datasets.reindex-embeddings', { type: 'tenant', id: req.user!.tenant }, { updated })
+  res.json({ ok: true, updated })
 })
 
 // Edita metadados. Admin edita qualquer conjunto; o DONO edita os derivados
@@ -230,6 +247,7 @@ datasetsRouter.patch('/:id', async (req, res) => {
   )).rows[0]
   await audit(req, 'datasets.update', { type: 'dataset', id: row.slug },
     official != null ? { official } : undefined)
+  reindexInBackground(String(ds.id)) // nome/descrição/tags mudaram → embedding desatualizou
   res.json({ ok: true })
 })
 

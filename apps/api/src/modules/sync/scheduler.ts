@@ -6,6 +6,7 @@ import { config } from '../../core/config.js'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { enqueueSync } from './ingest.js'
 import { orderDerived } from '../transform/derive.js'
+import { reindexEmbeddings } from '../ai/embeddings.js'
 
 function msUntilNextHour(): number {
   const now = new Date()
@@ -16,6 +17,11 @@ function msUntilNextHour(): number {
 
 async function tick(): Promise<void> {
   if (!isDbAvailable()) return
+  // Mantém o catálogo semântico fresco: pega derivados cujos campos só existem
+  // após a materialização, e qualquer edição que tenha escapado. Só recomputa
+  // o que mudou; é barato e roda em background.
+  void reindexEmbeddings().catch((e) =>
+    console.warn(`[embeddings] reindex periódico falhou: ${(e as Error).message}`))
   const hour = new Date().getHours()
   const rows = (await db.query(
     `select id, slug, kind, transform_sql, sync_cadence from datasets

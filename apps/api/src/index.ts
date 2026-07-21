@@ -19,6 +19,7 @@ import { aiRouter } from './modules/ai/aiRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { accessRouter } from './modules/admin/accessRouter.js'
 import { startScheduler } from './modules/sync/scheduler.js'
+import { reindexEmbeddings } from './modules/ai/embeddings.js'
 
 // Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
 // middleware de erro — sem isto, um único erro de SQL derruba a API inteira
@@ -80,6 +81,12 @@ app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
 
 await runMigrations()
 startScheduler() // sync diário na madrugada (ETL_HOUR)
+// Catálogo semântico: indexa em background os datasets sem embedding (ou com
+// texto desatualizado). Não bloqueia o boot — na 1ª vez baixa o modelo (~120MB).
+if (isDbAvailable()) {
+  void reindexEmbeddings().catch((e) =>
+    console.warn(`[embeddings] indexação inicial falhou: ${(e as Error).message}`))
+}
 app.listen(config.apiPort, () => {
   console.log(`[api] Data Hub API em http://localhost:${config.apiPort}`)
 })

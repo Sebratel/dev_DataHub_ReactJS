@@ -102,7 +102,10 @@ services:
   # Banco de METADADOS do hub (catálogo, usuários, dashboards, auditoria).
   # Interno à stack — sem porta exposta no host em produção.
   datahub-db:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 = Postgres 16 + extensão vector já compilada
+    # (busca semântica do catálogo). Mesma major version do postgres:16-alpine
+    # anterior, então o volume datahub-db-data sobe sem migração de dados.
+    image: pgvector/pgvector:pg16
     container_name: datahub-db
     restart: unless-stopped
     networks:

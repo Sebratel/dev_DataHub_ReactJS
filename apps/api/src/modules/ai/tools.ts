@@ -10,13 +10,18 @@ import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
+import { embedQuery, toVectorLiteral } from './embeddings.js'
 import type { AiToolDef } from './provider.js'
 
 export const AI_TOOLS: AiToolDef[] = [
   {
     name: 'search_datasets',
-    description: 'Lista os conjuntos de dados disponíveis (nome, slug, descrição, nº de registros). Chame primeiro para descobrir onde estão os dados da pergunta.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'Busca conjuntos de dados por SIGNIFICADO (busca semântica). Passe em "query" a intenção do usuário em linguagem natural (ex.: "clientes que cancelaram", "faturamento por plano") — não precisa acertar o nome exato do conjunto. Retorna os mais relevantes (nome, slug, descrição, nº de registros). Sem query, lista todos. Chame primeiro para descobrir onde estão os dados da pergunta.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Intenção/tema em linguagem natural. Ex.: "clientes ativos por cidade".' } },
+      additionalProperties: false,
+    },
   },
   {
     name: 'get_dataset_schema',
@@ -77,7 +82,7 @@ export async function executeTool(
 ): Promise<ToolOutcome> {
   try {
     switch (name) {
-      case 'search_datasets': return await searchDatasets(user)
+      case 'search_datasets': return await searchDatasets(user, input.query ? String(input.query) : undefined)
       case 'get_dataset_schema': return await getSchema(String(input.slug ?? ''), user)
       case 'run_query': return await runQuery(input as unknown as QueryDef, user)
       case 'render_chart': return await renderChart(input, user)
@@ -88,18 +93,47 @@ export async function executeTool(
   }
 }
 
-async function searchDatasets(user: SessionUser): Promise<ToolOutcome> {
+// Busca semântica (RAG): se vier `query`, vetorizamos a intenção e ordenamos
+// os datasets pela DISTÂNCIA DE COSSENO (operador <=> do pgvector) — menor
+// distância = mais parecido. Filtramos pelo acesso do usuário e devolvemos o
+// topo. Sem query (ou sem embeddings ainda), caímos no comportamento antigo
+// (lista alfabética) — degradação graciosa, o chat nunca quebra.
+async function searchDatasets(user: SessionUser, query?: string): Promise<ToolOutcome> {
   const allowed = await accessibleDatasetIds(user)
-  const rows = (await db.query(
-    `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at
-       from datasets d join tenants t on t.id = d.tenant_id
-      where t.slug = $1 order by d.name`,
-    [user.tenant],
-  )).rows.filter((r) => allowed.has(String(r.id))) // só o que o usuário acessa
-  const list = rows.map((r) => ({
-    slug: r.slug, name: r.name, description: r.description,
-    rows: r.row_count, sincronizado: !!r.last_sync_at,
-  }))
+
+  let rows: Record<string, unknown>[]
+  if (query && query.trim()) {
+    const vec = toVectorLiteral(await embedQuery(query.trim()))
+    rows = (await db.query(
+      `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at,
+              (d.embedding <=> $2::vector) as distance
+         from datasets d join tenants t on t.id = d.tenant_id
+        where t.slug = $1 and d.embedding is not null
+        order by d.embedding <=> $2::vector
+        limit 50`,
+      [user.tenant, vec],
+    )).rows
+  } else {
+    rows = []
+  }
+
+  // Fallback: sem query, ou nenhum dataset indexado ainda → lista alfabética.
+  if (!rows.length) {
+    rows = (await db.query(
+      `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at
+         from datasets d join tenants t on t.id = d.tenant_id
+        where t.slug = $1 order by d.name`,
+      [user.tenant],
+    )).rows
+  }
+
+  const list = rows
+    .filter((r) => allowed.has(String(r.id))) // só o que o usuário acessa (após ordenar)
+    .slice(0, query ? 8 : 50)                 // busca → só os mais relevantes
+    .map((r) => ({
+      slug: r.slug, name: r.name, description: r.description,
+      rows: r.row_count, sincronizado: !!r.last_sync_at,
+    }))
   return { content: JSON.stringify(list) }
 }
 
