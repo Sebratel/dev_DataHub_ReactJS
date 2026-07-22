@@ -28,6 +28,18 @@ export function stagingDir(): string {
   return dir
 }
 
+// Remove JSONL de staging órfão (de uma carga anterior morta na marra — OOM,
+// restart — em que o cleanup do finally não rodou). Chamado no BOOT, quando não
+// há sync em andamento, então é sempre seguro. Impede acúmulo de dezenas de GB.
+export function cleanStaging(): number {
+  const dir = stagingDir()
+  let n = 0
+  for (const f of readdirSync(dir)) {
+    if (f.endsWith('.jsonl')) { unlinkSync(join(dir, f)); n++ }
+  }
+  return n
+}
+
 // Glob com barras normais — o DuckDB no Windows aceita e evita escape de \.
 export function parquetGlob(dir: string): string {
   return join(dir, '*.parquet').replace(/\\/g, '/')

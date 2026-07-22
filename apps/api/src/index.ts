@@ -20,6 +20,7 @@ import { credentialsRouter, publicRouter } from './modules/integrations/integrat
 import { accessRouter } from './modules/admin/accessRouter.js'
 import { startScheduler } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
+import { cleanStaging } from './core/lake.js'
 
 // Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
 // middleware de erro — sem isto, um único erro de SQL derruba a API inteira
@@ -80,6 +81,14 @@ app.use('/api/public/v1', publicRouter)
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
 
 await runMigrations()
+// Remove JSONL de staging órfão de uma carga anterior morta na marra (evita
+// acúmulo de dezenas de GB no volume do lake). No boot não há sync rodando.
+try {
+  const n = cleanStaging()
+  if (n) console.log(`[lake] staging: ${n} arquivo(s) órfão(s) removido(s).`)
+} catch (e) {
+  console.warn(`[lake] limpeza de staging falhou: ${(e as Error).message}`)
+}
 startScheduler() // sync diário na madrugada (ETL_HOUR)
 // Catálogo semântico: indexa em background os datasets sem embedding (ou com
 // texto desatualizado). Não bloqueia o boot — na 1ª vez baixa o modelo (~120MB).

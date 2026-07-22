@@ -4,6 +4,15 @@
 # nas "Environment variables" da stack — nada de segredo no git.
 #
 # Dev local: docker compose up -d datahub-db  (API e web via npm run dev:*)
+
+# Rotação de log padrão: cada container guarda no máx. ~150MB de log (3×50MB).
+# Sem isto, o json-file do Docker cresce sem limite e pode encher o disco.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '50m'
+    max-file: '3'
+
 services:
   web:
     build:
@@ -18,6 +27,7 @@ services:
     pull_policy: build
     container_name: datahub-web
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - datahub
     depends_on:
@@ -35,6 +45,7 @@ services:
     pull_policy: build
     container_name: datahub-api
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - datahub
     depends_on:
@@ -121,6 +132,7 @@ services:
     image: pgvector/pgvector:pg16
     container_name: datahub-db
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - datahub
     environment:
