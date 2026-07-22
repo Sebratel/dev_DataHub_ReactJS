@@ -8,12 +8,11 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { createWriteStream, unlinkSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { config } from '../../core/config.js'
 import { db } from '../../db/pool.js'
 import { getConnector } from '../../connectors/registry.js'
 import { querySource } from '../../connectors/pools.js'
-import { datasetDir, parquetGlob, clearParquet, dirBytes, uploadToGcs, listParquet } from '../../core/lake.js'
+import { datasetDir, parquetGlob, clearParquet, dirBytes, uploadToGcs, listParquet, stagingDir } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { materializeDerived } from '../transform/derive.js'
 
@@ -98,7 +97,8 @@ async function runSync(datasetId: string): Promise<string> {
   const from = `${q(ds.schema_name)}.${q(ds.object_name)}`
 
   const dir = datasetDir(String(ds.tenant_slug), String(ds.slug))
-  const jsonl = join(tmpdir(), `datahub-sync-${run.id}.jsonl`)
+  // Staging no volume do lake (disco real), não no /tmp do container.
+  const jsonl = join(stagingDir(), `datahub-sync-${run.id}.jsonl`)
   const stream = createWriteStream(jsonl, { encoding: 'utf8' })
   const write = (line: string) => new Promise<void>((res, rej) =>
     stream.write(line + '\n', (e) => (e ? rej(e) : res())))
@@ -135,10 +135,15 @@ async function runSync(datasetId: string): Promise<string> {
         await sleep(batchPauseMs) // respiro para a fonte entre lotes
       }
     } else {
-      // Snapshot completo, paginado com pausa. (Para tabelas muito grandes,
-      // configure incremental — OFFSET em páginas tardias pesa na fonte.)
+      // Snapshot paginado. OFFSET SEM ORDER BY pode reler/pular linhas e, com
+      // escritas concorrentes, NUNCA convergir — foi o que inflou para 77M e
+      // encheu o disco. Ordenamos pela 1ª coluna ordenável: estabiliza a
+      // paginação e garante que, ao passar do fim, o loop termine. (Tabela
+      // grande: prefira incremental — OFFSET tardio ainda pesa na fonte.)
+      const orderCol = fields.find((f) => ['number', 'date', 'text'].includes(String(f.type)))?.source_column
+      const orderBy = orderCol ? `order by ${q(orderCol)}` : ''
       for (let offset = 0; ; offset += batchSize) {
-        const sql = `select ${cols} from ${from} limit ${batchSize} offset ${offset}`
+        const sql = `select ${cols} from ${from} ${orderBy} limit ${batchSize} offset ${offset}`
         const { rows } = await querySource(String(ds.connection_id), sql)
         for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length

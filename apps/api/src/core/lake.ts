@@ -16,6 +16,18 @@ export function datasetDir(tenant: string, slug: string): string {
   return dir
 }
 
+// STAGING de ingestão: onde o JSONL temporário (que depois vira Parquet) é
+// escrito. Fica no MESMO volume do lake (disco real e grande), NÃO no /tmp do
+// container (pequeno) — foi o /tmp cheio que causou o ENOSPC numa carga grande.
+// Configurável por SYNC_STAGING_DIR.
+export function stagingDir(): string {
+  const dir = process.env.SYNC_STAGING_DIR
+    ? resolve(process.env.SYNC_STAGING_DIR)
+    : join(LAKE_ROOT, '.staging')
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
 // Glob com barras normais — o DuckDB no Windows aceita e evita escape de \.
 export function parquetGlob(dir: string): string {
   return join(dir, '*.parquet').replace(/\\/g, '/')

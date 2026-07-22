@@ -55,6 +55,10 @@ services:
       ETL_HOUR: ${ETL_HOUR:-3}
       SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-50000}
       SYNC_BATCH_PAUSE_MS: ${SYNC_BATCH_PAUSE_MS:-500}
+      # Staging da ingestão (JSONL temporário antes do Parquet). Vazio = usa
+      # <lake>/.staging, que fica no volume datahub-lake (disco real) e evita o
+      # ENOSPC do /tmp pequeno do container. Defina para mover a outro disco.
+      SYNC_STAGING_DIR: ${SYNC_STAGING_DIR:-}
       # Motor de consulta (DuckDB) — limites de proteção.
       DUCK_MEMORY_LIMIT: ${DUCK_MEMORY_LIMIT:-2GB}
       DUCK_THREADS: ${DUCK_THREADS:-4}
