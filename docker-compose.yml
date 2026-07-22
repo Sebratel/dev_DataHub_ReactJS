@@ -59,6 +59,10 @@ services:
       # <lake>/.staging, que fica no volume datahub-lake (disco real) e evita o
       # ENOSPC do /tmp pequeno do container. Defina para mover a outro disco.
       SYNC_STAGING_DIR: ${SYNC_STAGING_DIR:-}
+      # Disjuntor anti-fuga: aborta a carga se passar deste nº de linhas (0 =
+      # sem limite). Proteção contra uma sincronização descontrolada derrubar o
+      # servidor. Ajuste para a maior tabela + folga (ex.: 20000000).
+      SYNC_MAX_ROWS: ${SYNC_MAX_ROWS:-0}
       # Motor de consulta (DuckDB) — limites de proteção.
       DUCK_MEMORY_LIMIT: ${DUCK_MEMORY_LIMIT:-2GB}
       DUCK_THREADS: ${DUCK_THREADS:-4}

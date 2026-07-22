@@ -29,6 +29,10 @@ export const config = {
     hour: Math.min(23, Math.max(0, Number(process.env.ETL_HOUR ?? 3))),
     batchSize: Number(process.env.SYNC_BATCH_SIZE) || 50_000,
     batchPauseMs: Number(process.env.SYNC_BATCH_PAUSE_MS) || 500,
+    // Disjuntor anti-fuga: aborta a carga se passar deste nº de linhas. 0 = sem
+    // limite. Protege o servidor de uma sincronização descontrolada (ex.: OFFSET
+    // relendo linhas). Defina no .env/stack conforme a maior tabela + folga.
+    maxRows: Number(process.env.SYNC_MAX_ROWS) || 0,
   },
 
   // Motor de consulta (DuckDB). Limites protegem o servidor de uma consulta

@@ -105,7 +105,16 @@ async function runSync(datasetId: string): Promise<string> {
 
   let total = 0
   let newWatermark: string | null = ds.watermark ?? null
-  const { batchSize, batchPauseMs } = config.sync
+  const { batchSize, batchPauseMs, maxRows } = config.sync
+  // Disjuntor: aborta antes de a carga em fuga derrubar o servidor.
+  const guardRunaway = () => {
+    if (maxRows && total > maxRows) {
+      throw new Error(
+        `Sincronização abortada: excedeu ${maxRows.toLocaleString('pt-BR')} linhas (SYNC_MAX_ROWS). ` +
+        `Provável carga em fuga — use modo incremental com "Publicar a partir de".`,
+      )
+    }
+  }
 
   try {
     if (mode === 'incremental') {
@@ -130,6 +139,7 @@ async function runSync(datasetId: string): Promise<string> {
           const last = rows[rows.length - 1][String(ds.incremental_key)]
           newWatermark = last instanceof Date ? last.toISOString() : String(last)
         }
+        guardRunaway()
         await reportProgress(run.id, total) // progresso ao vivo na tela
         if (rows.length < batchSize) break
         await sleep(batchPauseMs) // respiro para a fonte entre lotes
@@ -147,6 +157,7 @@ async function runSync(datasetId: string): Promise<string> {
         const { rows } = await querySource(String(ds.connection_id), sql)
         for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length
+        guardRunaway()
         await reportProgress(run.id, total)
         if (rows.length < batchSize) break
         await sleep(batchPauseMs)
