@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
-import { enqueueSync } from './ingest.js'
+import { enqueueSync, requestCancel } from './ingest.js'
 
 export const syncRouter = Router()
 
@@ -67,6 +67,17 @@ syncRouter.post('/:id/sync', ...adminOnly, async (req, res) => {
   void enqueueSync(req.params.id) // roda em background; acompanhe pelos runs
   await audit(req, 'datasets.sync', { type: 'dataset', id: row.slug })
   res.status(202).json({ queued: true })
+})
+
+// Para (cancela) a sincronização em andamento deste conjunto. Cancelamento
+// cooperativo: a carga interrompe no próximo checkpoint entre lotes, descarta o
+// temporário e mantém os dados antigos. Só faz efeito se houver carga rodando.
+syncRouter.post('/:id/sync-cancel', ...adminOnly, async (req, res) => {
+  const row = (await db.query('select slug from datasets where id = $1', [req.params.id])).rows[0]
+  if (!row) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+  const cancelling = requestCancel(req.params.id)
+  await audit(req, 'datasets.sync-cancel', { type: 'dataset', id: row.slug }, { cancelling })
+  res.json({ ok: true, cancelling })
 })
 
 syncRouter.get('/:id/sync-runs', ...adminOnly, async (req, res) => {

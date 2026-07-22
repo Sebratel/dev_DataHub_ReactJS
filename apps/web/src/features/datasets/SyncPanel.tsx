@@ -1,7 +1,7 @@
 // Painel de sincronização (admin): modo, chave incremental, disparo manual e
 // histórico de execuções. O sync roda em fila no servidor; aqui só acompanhamos.
 import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, Play, Loader2 } from 'lucide-react'
+import { RefreshCw, Play, Loader2, Square } from 'lucide-react'
 import clsx from 'clsx'
 import type { DatasetDetail, SyncRun } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -86,6 +86,21 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     }
   }
 
+  async function cancelNow() {
+    setBusy(true)
+    setError(null)
+    try {
+      await api(`/api/v1/datasets/${dataset.id}/sync-cancel`, { method: 'POST' })
+      await loadRuns() // o run passa a 'cancelled' no próximo checkpoint entre lotes
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Falha ao parar a sincronização.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const isRunning = polling || runs.some((r) => r.status === 'running')
+
   const numericOrDateFields = dataset.fields.filter((f) => !f.hidden && (f.type === 'number' || f.type === 'date'))
 
   return (
@@ -158,6 +173,15 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
             {polling ? 'Sincronizando…' : 'Sincronizar agora'}
           </button>
         )}
+        {isRunning && (
+          <button
+            onClick={cancelNow}
+            disabled={busy}
+            className="flex items-center gap-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40"
+          >
+            <Square size={14} /> Parar
+          </button>
+        )}
         <button onClick={() => void loadRuns()} className="rounded-lg p-2 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" title="Atualizar histórico">
           <RefreshCw size={15} />
         </button>
@@ -183,8 +207,12 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
                 <td className={clsx('py-1.5 pr-4 font-medium',
                   r.status === 'done' && 'text-emerald-600',
                   r.status === 'error' && 'text-red-500',
-                  r.status === 'running' && 'text-amber-500')}>
-                  {r.status === 'done' ? 'concluído' : r.status === 'error' ? 'erro' : 'executando…'}
+                  r.status === 'running' && 'text-amber-500',
+                  r.status === 'cancelled' && 'text-zinc-500')}>
+                  {r.status === 'done' ? 'concluído'
+                    : r.status === 'error' ? 'erro'
+                    : r.status === 'cancelled' ? 'cancelado'
+                    : 'executando…'}
                 </td>
                 <td className="py-1.5 pr-4 text-right">{Number(r.rows).toLocaleString('pt-BR')}</td>
                 <td className="max-w-[260px] truncate py-1.5 text-red-500">{r.error ?? ''}</td>

@@ -74,7 +74,7 @@ export interface DatasetSummary {
 export interface SyncRun {
   id: string
   mode: string
-  status: 'running' | 'done' | 'error'
+  status: 'running' | 'done' | 'error' | 'cancelled'
   rows: number
   bytes: number
   error: string | null

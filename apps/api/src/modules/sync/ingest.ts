@@ -27,6 +27,21 @@ async function reportProgress(runId: string, rows: number): Promise<void> {
   } catch { /* progresso é best-effort */ }
 }
 
+// Cancelamento COOPERATIVO: a carga em andamento verifica este sinal entre os
+// lotes e para de forma limpa (descarta o temporário, mantém os dados antigos).
+// Só uma carga roda por vez (fila sequencial), então basta rastrear a atual.
+const cancelRequested = new Set<string>()
+let runningDatasetId: string | null = null
+class SyncCancelled extends Error {
+  constructor() { super('Sincronização cancelada pelo usuário.'); this.name = 'SyncCancelled' }
+}
+// Pede para parar. Retorna true se havia uma carga em andamento para o dataset.
+export function requestCancel(datasetId: string): boolean {
+  if (runningDatasetId !== datasetId) return false
+  cancelRequested.add(datasetId)
+  return true
+}
+
 // JSON.stringify seguro para valores vindos dos drivers (BigInt, Date).
 function jsonLine(row: Record<string, unknown>): string {
   return JSON.stringify(row, (_k, v) => {
@@ -115,6 +130,9 @@ async function runSync(datasetId: string): Promise<string> {
       )
     }
   }
+  // Checkpoint de cancelamento (entre lotes).
+  const checkCancel = () => { if (cancelRequested.has(datasetId)) throw new SyncCancelled() }
+  runningDatasetId = datasetId
 
   try {
     if (mode === 'incremental') {
@@ -140,6 +158,7 @@ async function runSync(datasetId: string): Promise<string> {
           newWatermark = last instanceof Date ? last.toISOString() : String(last)
         }
         guardRunaway()
+        checkCancel()
         await reportProgress(run.id, total) // progresso ao vivo na tela
         if (rows.length < batchSize) break
         await sleep(batchPauseMs) // respiro para a fonte entre lotes
@@ -158,6 +177,7 @@ async function runSync(datasetId: string): Promise<string> {
         for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length
         guardRunaway()
+        checkCancel()
         await reportProgress(run.id, total)
         if (rows.length < batchSize) break
         await sleep(batchPauseMs)
@@ -191,13 +211,21 @@ async function runSync(datasetId: string): Promise<string> {
     console.log(`[sync] ${ds.slug}: ${mode}, ${total} linha(s) novas, total no lake ${count}.`)
     return `ok: ${total} linha(s)`
   } catch (e) {
+    const cancelled = e instanceof SyncCancelled
     await db.query(
-      `update sync_runs set status = 'error', rows = $2, error = $3, finished_at = now() where id = $1`,
-      [run.id, total, (e as Error).message],
+      `update sync_runs set status = $2, rows = $3, error = $4, finished_at = now() where id = $1`,
+      [run.id, cancelled ? 'cancelled' : 'error', total, cancelled ? null : (e as Error).message],
     )
+    if (cancelled) {
+      // Temporário descartado no finally; Parquet antigo permanece intacto.
+      console.log(`[sync] ${ds.slug}: cancelado (${total} linha(s) lidas descartadas).`)
+      return 'cancelado'
+    }
     throw e
   } finally {
     stream.destroy()
     if (existsSync(jsonl)) unlinkSync(jsonl)
+    cancelRequested.delete(datasetId)
+    runningDatasetId = null
   }
 }
