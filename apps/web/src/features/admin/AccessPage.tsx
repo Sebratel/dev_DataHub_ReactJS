@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react'
 import { UsersRound, UserCog, Plus, Trash2, Loader2, X } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useConfirm } from '@/components/Dialogs'
 
 interface UserRow { email: string; name: string; picture: string | null; lastLoginAt: string | null; roles: string[] }
 interface TeamRow { id: string; slug: string; name: string; description: string; memberCount: number }
@@ -111,6 +112,7 @@ function UsersTab() {
 }
 
 function TeamsTab() {
+  const confirm = useConfirm()
   const [teams, setTeams] = useState<TeamRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
@@ -140,7 +142,11 @@ function TeamsTab() {
   }
 
   async function removeTeam(id: string) {
-    if (!window.confirm('Excluir este time? As concessões dele aos conjuntos serão removidas.')) return
+    if (!(await confirm({
+      title: 'Excluir time',
+      message: 'Excluir este time? As concessões dele aos conjuntos serão removidas.',
+      danger: true, confirmLabel: 'Excluir',
+    }))) return
     await api(`/api/v1/admin/teams/${id}`, { method: 'DELETE' }).catch(() => {})
     load()
   }

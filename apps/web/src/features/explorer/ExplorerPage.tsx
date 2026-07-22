@@ -16,6 +16,7 @@ import type {
 } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import { useConfirm, usePrompt } from '@/components/Dialogs'
 
 const OPS_BY_TYPE: Record<string, { op: FilterOp; label: string; noValue?: boolean }[]> = {
   text: [
@@ -38,6 +39,8 @@ const OPS_BY_TYPE: Record<string, { op: FilterOp; label: string; noValue?: boole
 const PAGE_SIZE = 50
 
 export default function ExplorerPage() {
+  const confirm = useConfirm()
+  const prompt = usePrompt()
   const { slug } = useParams()
   const user = useAuthStore((s) => s.user)
   const [dataset, setDataset] = useState<DatasetDetail | null>(null)
@@ -158,9 +161,13 @@ export default function ExplorerPage() {
 
   async function saveView() {
     if (!dataset) return
-    const name = window.prompt('Nome da visualização:')
+    const name = await prompt({ title: 'Salvar visualização', label: 'Nome da visualização', confirmLabel: 'Continuar' })
     if (!name) return
-    const shared = window.confirm('Compartilhar com toda a equipe? (Cancelar = só para você)')
+    const shared = await confirm({
+      title: 'Compartilhar visualização',
+      message: 'Compartilhar com toda a equipe?',
+      confirmLabel: 'Compartilhar com a equipe', cancelLabel: 'Só para mim',
+    })
     try {
       const r = await api<{ view: SavedView }>(`/api/v1/datasets/${dataset.id}/views`, {
         method: 'POST', body: JSON.stringify({ name, definition, shared }),
@@ -172,7 +179,8 @@ export default function ExplorerPage() {
   }
 
   async function deleteView(id: string) {
-    if (!dataset || !window.confirm('Excluir esta visualização?')) return
+    if (!dataset) return
+    if (!(await confirm({ title: 'Excluir visualização', message: 'Excluir esta visualização?', danger: true, confirmLabel: 'Excluir' }))) return
     try {
       await api(`/api/v1/datasets/${dataset.id}/views/${id}`, { method: 'DELETE' })
       setViews((v) => v.filter((x) => x.id !== id))

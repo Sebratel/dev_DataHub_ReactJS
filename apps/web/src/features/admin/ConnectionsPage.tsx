@@ -5,11 +5,13 @@ import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2 } from 'lucide-react'
 import type { ConnectionInfo } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { usePrompt } from '@/components/Dialogs'
 
 interface PhysicalObject { schema: string; name: string; kind: 'table' | 'view'; columns: number }
 
 export default function ConnectionsPage() {
   const navigate = useNavigate()
+  const prompt = usePrompt()
   const [connections, setConnections] = useState<ConnectionInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -19,10 +21,12 @@ export default function ConnectionsPage() {
 
   // Publica a tabela como Conjunto de Dados e leva para a edição do catálogo.
   async function publish(connectionId: string, obj: PhysicalObject) {
-    const name = window.prompt(
-      `Nome amigável do conjunto (o usuário verá este nome, nunca "${obj.name}"):`,
-      obj.name.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-    )
+    const name = await prompt({
+      title: 'Publicar conjunto',
+      label: `Nome amigável (o usuário verá este nome, nunca "${obj.name}")`,
+      initial: obj.name.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      confirmLabel: 'Publicar',
+    })
     if (!name) return
     setPublishing(`${obj.schema}.${obj.name}`)
     setError(null)

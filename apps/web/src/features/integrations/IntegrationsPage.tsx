@@ -5,6 +5,7 @@ import { Plug, Plus, Copy, Check, Trash2, Loader2 } from 'lucide-react'
 import type { DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import { useConfirm } from '@/components/Dialogs'
 
 interface Credential {
   id: string; name: string; dataset_slugs: string[]; owner_email: string
@@ -13,6 +14,7 @@ interface Credential {
 
 export default function IntegrationsPage() {
   const user = useAuthStore((s) => s.user)
+  const confirm = useConfirm()
   const canEdit = !!user?.roles.some((r) => r === 'admin' || r === 'editor')
   const [credentials, setCredentials] = useState<Credential[] | null>(null)
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
@@ -55,7 +57,11 @@ export default function IntegrationsPage() {
   }
 
   async function revoke(c: Credential) {
-    if (!window.confirm(`Revogar o token "${c.name}"? Integrações que o usam vão parar.`)) return
+    if (!(await confirm({
+      title: 'Revogar token',
+      message: `Revogar o token "${c.name}"? Integrações que o usam vão parar.`,
+      danger: true, confirmLabel: 'Revogar',
+    }))) return
     await api(`/api/v1/credentials/${c.id}`, { method: 'DELETE' }).catch(() => {})
     load()
   }

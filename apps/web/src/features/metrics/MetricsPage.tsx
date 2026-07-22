@@ -5,6 +5,7 @@ import { Ruler, Plus, Trash2, Loader2 } from 'lucide-react'
 import type { Metric, DatasetSummary, DatasetDetail, Aggregation } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import { useConfirm } from '@/components/Dialogs'
 
 const AGG_LABEL: Record<string, string> = {
   sum: 'Soma', avg: 'Média', min: 'Mínimo', max: 'Máximo',
@@ -14,6 +15,7 @@ const FORMAT_LABEL: Record<string, string> = { number: 'Número', currency: 'R$ 
 
 export default function MetricsPage() {
   const user = useAuthStore((s) => s.user)
+  const confirm = useConfirm()
   const canEdit = !!user?.roles.some((r) => r === 'admin' || r === 'editor')
   const [metrics, setMetrics] = useState<Metric[] | null>(null)
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
@@ -67,7 +69,11 @@ export default function MetricsPage() {
   }
 
   async function remove(m: Metric) {
-    if (!window.confirm(`Excluir a métrica "${m.name}"? Widgets que a usam vão quebrar.`)) return
+    if (!(await confirm({
+      title: 'Excluir métrica',
+      message: `Excluir a métrica "${m.name}"? Widgets que a usam vão quebrar.`,
+      danger: true, confirmLabel: 'Excluir',
+    }))) return
     try {
       await api(`/api/v1/metrics/${m.id}`, { method: 'DELETE' })
       load()

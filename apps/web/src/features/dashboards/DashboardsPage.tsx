@@ -5,9 +5,11 @@ import { LayoutDashboard, Plus } from 'lucide-react'
 import type { DashboardSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import { usePrompt } from '@/components/Dialogs'
 
 export default function DashboardsPage() {
   const navigate = useNavigate()
+  const prompt = usePrompt()
   const user = useAuthStore((s) => s.user)
   const canCreate = !!user?.roles.some((r) => r === 'admin' || r === 'editor')
   const [dashboards, setDashboards] = useState<DashboardSummary[] | null>(null)
@@ -20,7 +22,7 @@ export default function DashboardsPage() {
   }, [])
 
   async function create() {
-    const name = window.prompt('Nome do dashboard:')
+    const name = await prompt({ title: 'Novo dashboard', label: 'Nome do dashboard', placeholder: 'Ex.: Visão da diretoria', confirmLabel: 'Criar' })
     if (!name) return
     try {
       const r = await api<{ id: string }>('/api/v1/dashboards', { method: 'POST', body: JSON.stringify({ name }) })

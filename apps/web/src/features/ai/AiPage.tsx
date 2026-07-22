@@ -7,6 +7,7 @@ import clsx from 'clsx'
 import type { Widget, WidgetType, QueryFilter, Aggregation } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import { useConfirm } from '@/components/Dialogs'
 import WidgetCard from '@/features/dashboards/WidgetCard'
 
 interface Conversation { id: string; title: string }
@@ -40,6 +41,7 @@ function chartToWidget(c: ChartDef, i: number): Widget {
 
 export default function AiPage() {
   const user = useAuthStore((s) => s.user)
+  const confirm = useConfirm()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -85,7 +87,7 @@ export default function AiPage() {
   }
 
   async function removeConversation(id: string) {
-    if (!window.confirm('Excluir esta conversa?')) return
+    if (!(await confirm({ title: 'Excluir conversa', message: 'Excluir esta conversa?', danger: true, confirmLabel: 'Excluir' }))) return
     await api(`/api/v1/ai/conversations/${id}`, { method: 'DELETE' }).catch(() => {})
     setConversations((c) => c.filter((x) => x.id !== id))
     if (activeId === id) { setActiveId(null); setMessages([]) }

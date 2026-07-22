@@ -200,18 +200,35 @@ dashboardsRouter.post('/:id/widgets', requireAuth({ role: 'editor' }), requireDb
 
 dashboardsRouter.patch('/:id/widgets/:widgetId', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
   if (!(await canEdit(req, req.params.id))) return res.status(403).json({ error: 'Apenas o dono (ou admin) pode editar.' })
-  const { title, size, sortOrder } = req.body ?? {}
+  const { title, size, sortOrder, type, datasetId, dimension, metric, filters } = req.body ?? {}
+  // Edição de CONFIG (tipo/dataset/dimensão/métrica) só quando `type` é enviado;
+  // os PATCHes de resize/reorder/título continuam funcionando sem isso.
+  if (type !== undefined) {
+    if (!TYPES.has(type)) return res.status(400).json({ error: `Tipo inválido: ${type}` })
+    if (!datasetId || !metric) return res.status(400).json({ error: 'datasetId e metric são obrigatórios.' })
+    if (type !== 'kpi' && !dimension) return res.status(400).json({ error: 'Gráficos precisam de uma dimensão (campo do eixo).' })
+  }
   const row = (await db.query(
     `update widgets set
        title = coalesce($3, title),
        size = coalesce($4, size),
        sort_order = coalesce($5, sort_order),
+       type = coalesce($6, type),
+       dataset_id = coalesce($7, dataset_id),
+       dimension = case when $6::text is not null then $8 else dimension end,
+       metric = coalesce($9, metric),
+       filters = coalesce($10, filters),
        updated_at = now()
      where id = $2 and dashboard_id = $1 returning id`,
     [req.params.id, req.params.widgetId, title ?? null,
-     SIZES.has(size) ? size : null, Number.isInteger(sortOrder) ? sortOrder : null],
+     SIZES.has(size) ? size : null, Number.isInteger(sortOrder) ? sortOrder : null,
+     type ?? null, datasetId ?? null,
+     type ? (type === 'kpi' ? null : dimension) : null,
+     metric ? JSON.stringify(metric) : null,
+     filters ? JSON.stringify(filters) : null],
   )).rows[0]
   if (!row) return res.status(404).json({ error: 'Widget não encontrado.' })
+  await db.query('update dashboards set updated_at = now() where id = $1', [req.params.id])
   res.json({ ok: true })
 })
 

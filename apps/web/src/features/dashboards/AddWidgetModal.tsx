@@ -1,8 +1,9 @@
-// Modal de novo widget: dataset → tipo → dimensão → métrica (da biblioteca
-// ou ad-hoc: agregação + campo).
-import { useEffect, useState } from 'react'
+// Modal de widget — NOVO ou EDITAR: dataset → tipo → dimensão → métrica (da
+// biblioteca ou ad-hoc: agregação + campo). Ao receber `initial`, pré-preenche
+// os campos e o botão passa a salvar a edição.
+import { useEffect, useRef, useState } from 'react'
 import { X, Loader2 } from 'lucide-react'
-import type { DatasetSummary, DatasetDetail, Metric, WidgetType, Aggregation } from '@datahub/shared'
+import type { DatasetSummary, DatasetDetail, Metric, Widget, WidgetType, Aggregation } from '@datahub/shared'
 import { api } from '@/lib/api'
 
 const TYPE_LABEL: Record<WidgetType, string> = {
@@ -12,28 +13,36 @@ const AGG_LABEL: Record<string, string> = {
   count: 'Contagem', count_distinct: 'Contagem distinta', sum: 'Soma', avg: 'Média', min: 'Mínimo', max: 'Máximo',
 }
 
-interface Props {
-  metrics: Metric[]
-  onClose: () => void
-  onCreate: (w: {
-    title: string; type: WidgetType; datasetId: string; dimension: string | null
-    metric: { metric: string } | { field: string; agg: Aggregation }
-  }) => Promise<void>
+type WidgetInput = {
+  title: string; type: WidgetType; datasetId: string; dimension: string | null
+  metric: { metric: string } | { field: string; agg: Aggregation }
 }
 
-export default function AddWidgetModal({ metrics, onClose, onCreate }: Props) {
+interface Props {
+  metrics: Metric[]
+  initial?: Widget // presente = modo edição
+  onClose: () => void
+  onSubmit: (w: WidgetInput) => Promise<void>
+}
+
+export default function AddWidgetModal({ metrics, initial, onClose, onSubmit }: Props) {
+  const isEdit = !!initial
+  const initLib = !!initial && 'metric' in initial.metric
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [fields, setFields] = useState<DatasetDetail['fields']>([])
-  const [datasetId, setDatasetId] = useState('')
-  const [type, setType] = useState<WidgetType>('bar')
-  const [dimension, setDimension] = useState('')
-  const [metricMode, setMetricMode] = useState<'library' | 'adhoc'>('adhoc')
-  const [metricSlug, setMetricSlug] = useState('')
-  const [agg, setAgg] = useState<Aggregation>('count')
-  const [field, setField] = useState('')
-  const [title, setTitle] = useState('')
+  const [datasetId, setDatasetId] = useState(initial?.datasetId ?? '')
+  const [type, setType] = useState<WidgetType>(initial?.type ?? 'bar')
+  const [dimension, setDimension] = useState(initial?.dimension ?? '')
+  const [metricMode, setMetricMode] = useState<'library' | 'adhoc'>(initLib ? 'library' : 'adhoc')
+  const [metricSlug, setMetricSlug] = useState(initLib ? (initial!.metric as { metric: string }).metric : '')
+  const [agg, setAgg] = useState<Aggregation>(!initLib && initial ? (initial.metric as { agg: Aggregation }).agg : 'count')
+  const [field, setField] = useState(!initLib && initial ? (initial.metric as { field: string }).field : '')
+  const [title, setTitle] = useState(initial?.title ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // No modo edição, preserva dimensão/campo no PRIMEIRO carregamento do dataset
+  // inicial (o carregamento de campos, por padrão, os limparia).
+  const skipReset = useRef(isEdit)
 
   useEffect(() => {
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
@@ -42,11 +51,14 @@ export default function AddWidgetModal({ metrics, onClose, onCreate }: Props) {
   }, [])
 
   useEffect(() => {
-    setFields([]); setDimension(''); setField(''); setMetricSlug('')
     const slug = datasets.find((d) => d.id === datasetId)?.slug
-    if (!slug) return
+    if (!slug) { setFields([]); return }
     api<{ dataset: DatasetDetail }>(`/api/v1/datasets/${slug}`)
-      .then((r) => setFields(r.dataset.fields.filter((f) => !f.hidden && !f.sensitive)))
+      .then((r) => {
+        setFields(r.dataset.fields.filter((f) => !f.hidden && !f.sensitive))
+        if (skipReset.current) skipReset.current = false // preserva valores iniciais
+        else { setDimension(''); setField(''); setMetricSlug('') }
+      })
       .catch(() => {})
   }, [datasetId, datasets])
 
@@ -56,7 +68,7 @@ export default function AddWidgetModal({ metrics, onClose, onCreate }: Props) {
     setSaving(true)
     setError(null)
     try {
-      await onCreate({
+      await onSubmit({
         title: title.trim(),
         type,
         datasetId,
@@ -65,7 +77,7 @@ export default function AddWidgetModal({ metrics, onClose, onCreate }: Props) {
       })
       onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao criar widget.')
+      setError(e instanceof Error ? e.message : 'Falha ao salvar o widget.')
       setSaving(false)
     }
   }
@@ -79,7 +91,7 @@ export default function AddWidgetModal({ metrics, onClose, onCreate }: Props) {
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-semibold">Novo widget</h2>
+          <h2 className="font-semibold">{isEdit ? 'Editar widget' : 'Novo widget'}</h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"><X size={17} /></button>
         </div>
         <div className="grid gap-3">
@@ -142,7 +154,7 @@ export default function AddWidgetModal({ metrics, onClose, onCreate }: Props) {
           {error && <p className="text-sm text-red-500">{error}</p>}
           <button onClick={submit} disabled={!valid || saving}
             className="mt-1 flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
-            {saving && <Loader2 size={14} className="animate-spin" />} Adicionar ao dashboard
+            {saving && <Loader2 size={14} className="animate-spin" />} {isEdit ? 'Salvar alterações' : 'Adicionar ao dashboard'}
           </button>
         </div>
       </div>

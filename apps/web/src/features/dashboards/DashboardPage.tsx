@@ -2,7 +2,7 @@
 // (HTML5 drag), redimensionar, adicionar e remover.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, Share2 } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Share2, Pencil } from 'lucide-react'
 import clsx from 'clsx'
 import type { DashboardDetail, Metric, Widget } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -10,16 +10,23 @@ import { useAuthStore } from '@/store/authStore'
 import WidgetCard from './WidgetCard'
 import AddWidgetModal from './AddWidgetModal'
 import ShareDialog from './ShareDialog'
+import EditDashboardDialog from './EditDashboardDialog'
+import { useConfirm } from '@/components/Dialogs'
+
+type WidgetInput = Parameters<Parameters<typeof AddWidgetModal>[0]['onSubmit']>[0]
 
 export default function DashboardPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
+  const confirm = useConfirm()
   const [dash, setDash] = useState<DashboardDetail | null>(null)
   const [metrics, setMetrics] = useState<Metric[]>([])
   const [error, setError] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [showShare, setShowShare] = useState(false)
+  const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
+  const [showEditDash, setShowEditDash] = useState(false)
   const dragFrom = useRef<number | null>(null)
 
   const load = useCallback(() => {
@@ -36,8 +43,14 @@ export default function DashboardPage() {
   const editable = !!user && (user.roles.includes('admin') ||
     (user.roles.includes('editor') && dash?.ownerEmail === user.email) || dash?.ownerEmail === user.email)
 
-  async function addWidget(w: Parameters<Parameters<typeof AddWidgetModal>[0]['onCreate']>[0]) {
+  async function addWidget(w: WidgetInput) {
     await api(`/api/v1/dashboards/${id}/widgets`, { method: 'POST', body: JSON.stringify(w) })
+    load()
+  }
+
+  async function editWidget(w: WidgetInput) {
+    if (!editingWidget) return
+    await api(`/api/v1/dashboards/${id}/widgets/${editingWidget.id}`, { method: 'PATCH', body: JSON.stringify(w) })
     load()
   }
 
@@ -63,7 +76,11 @@ export default function DashboardPage() {
   }
 
   async function deleteDashboard() {
-    if (!window.confirm(`Excluir o dashboard "${dash?.name}"?`)) return
+    if (!(await confirm({
+      title: 'Excluir dashboard',
+      message: `Excluir o dashboard "${dash?.name}"? Esta ação não pode ser desfeita.`,
+      danger: true, confirmLabel: 'Excluir',
+    }))) return
     await api(`/api/v1/dashboards/${id}`, { method: 'DELETE' })
     navigate('/dashboards')
   }
@@ -86,6 +103,10 @@ export default function DashboardPage() {
             <button onClick={() => setShowAdd(true)}
               className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
               <Plus size={15} /> Widget
+            </button>
+            <button onClick={() => setShowEditDash(true)} title="Editar nome e descrição"
+              className="rounded-lg border border-zinc-200 p-2 text-zinc-400 hover:text-accent dark:border-zinc-700">
+              <Pencil size={15} />
             </button>
             <button onClick={() => setShowShare(true)} title="Compartilhar"
               className="rounded-lg border border-zinc-200 p-2 text-zinc-400 hover:text-accent dark:border-zinc-700">
@@ -122,6 +143,7 @@ export default function DashboardPage() {
               editable={editable}
               onDelete={() => void deleteWidget(w.id)}
               onResize={(size) => void resizeWidget(w.id, size)}
+              onEdit={editable ? () => setEditingWidget(w) : undefined}
               dragHandleProps={{
                 draggable: true,
                 onDragStart: () => { dragFrom.current = i },
@@ -131,7 +153,24 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {showAdd && <AddWidgetModal metrics={metrics} onClose={() => setShowAdd(false)} onCreate={addWidget} />}
+      {showAdd && <AddWidgetModal metrics={metrics} onClose={() => setShowAdd(false)} onSubmit={addWidget} />}
+      {editingWidget && (
+        <AddWidgetModal
+          metrics={metrics}
+          initial={editingWidget}
+          onClose={() => setEditingWidget(null)}
+          onSubmit={editWidget}
+        />
+      )}
+      {showEditDash && (
+        <EditDashboardDialog
+          dashboardId={dash.id}
+          initialName={dash.name}
+          initialDescription={dash.description ?? ''}
+          onClose={() => setShowEditDash(false)}
+          onSaved={load}
+        />
+      )}
       {showShare && <ShareDialog dashboardId={dash.id} onClose={() => setShowShare(false)} />}
     </div>
   )

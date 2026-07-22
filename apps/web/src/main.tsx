@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import AppShell from '@/components/AppShell'
+import { DialogProvider } from '@/components/Dialogs'
 import LoginPage from '@/features/auth/LoginPage'
 import HomePage from '@/features/home/HomePage'
 import ConnectionsPage from '@/features/admin/ConnectionsPage'
@@ -43,6 +44,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <DialogProvider>
+      <RouterProvider router={router} />
+    </DialogProvider>
   </React.StrictMode>,
 )

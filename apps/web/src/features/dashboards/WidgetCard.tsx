@@ -8,7 +8,7 @@ import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, AreaChart, Area,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
-import { GripVertical, Loader2, Maximize2, Minimize2, Trash2 } from 'lucide-react'
+import { GripVertical, Loader2, Maximize2, Minimize2, Pencil, Trash2 } from 'lucide-react'
 import type { Widget, QueryDef, QueryResult, Metric } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { palette, vizTokens, formatValue } from '@/lib/viz'
@@ -44,10 +44,11 @@ interface Props {
   editable: boolean
   onDelete: () => void
   onResize: (size: Widget['size']) => void
+  onEdit?: () => void
   dragHandleProps?: Record<string, unknown>
 }
 
-export default function WidgetCard({ widget, metrics, editable, onDelete, onResize, dragHandleProps }: Props) {
+export default function WidgetCard({ widget, metrics, editable, onDelete, onResize, onEdit, dragHandleProps }: Props) {
   const theme = useThemeStore((s) => s.theme)
   const colors = palette(theme)
   const tokens = vizTokens(theme)
@@ -176,6 +177,11 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
         <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{widget.title || metricDef?.name || 'Widget'}</h3>
         {editable && (
           <span className="flex gap-1">
+            {onEdit && (
+              <button onClick={onEdit} className="rounded p-1 text-zinc-300 hover:text-accent dark:text-zinc-600" title="Editar widget">
+                <Pencil size={13} />
+              </button>
+            )}
             <button
               onClick={() => onResize(widget.size === 'lg' ? 'md' : 'lg')}
               className="rounded p-1 text-zinc-300 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-300"
