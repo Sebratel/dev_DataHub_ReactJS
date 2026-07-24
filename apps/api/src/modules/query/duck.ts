@@ -35,6 +35,25 @@ export interface DuckOptions {
   timeoutMs?: number // só nas consultas interativas; ausente = sem limite (background)
 }
 
+// ── Limitador de concorrência (semáforo FIFO) ──────────────────────────────
+// No máximo `maxConcurrency` consultas executam ao mesmo tempo; o excedente
+// espera na fila. Protege o servidor de um pico (dashboard com muitos widgets,
+// vários usuários) sem derrubar nada — só serializa o excesso. O sync roda uma
+// por vez em background, então ocupa no máximo um slot.
+const MAX_CONCURRENCY = config.duck.maxConcurrency
+let active = 0
+const waiters: Array<() => void> = []
+
+function acquireSlot(): Promise<void> {
+  if (active < MAX_CONCURRENCY) { active++; return Promise.resolve() }
+  return new Promise<void>((resolve) => waiters.push(resolve))
+}
+function releaseSlot(): void {
+  const next = waiters.shift()
+  if (next) next() // passa o slot adiante sem zerar o contador
+  else active--
+}
+
 // Traduz erros do motor para mensagens acionáveis ao usuário.
 function friendlyEngineError(e: Error): Error {
   const msg = e.message || ''
@@ -50,41 +69,48 @@ function friendlyEngineError(e: Error): Error {
 export async function duckQuery(
   sql: string, params: unknown[] = [], opts: DuckOptions = {},
 ): Promise<DuckResult> {
-  const conn: DuckDBConnection = await (await getInstance()).connect()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let timedOut = false
+  // Espera um slot: o timeout da consulta só começa a contar quando ela de fato
+  // executa (abaixo), não enquanto aguarda na fila.
+  await acquireSlot()
   try {
-    const run = conn.runAndReadAll(sql, params as never[])
-    let reader
-    if (opts.timeoutMs && opts.timeoutMs > 0) {
-      const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          timedOut = true
-          try { conn.interrupt() } catch { /* conexão pode já ter encerrado */ }
-          reject(new Error(
-            `A consulta excedeu o tempo limite de ${Math.round(opts.timeoutMs! / 1000)}s e foi cancelada. ` +
-            'Refine com filtros ou reduza o intervalo de dados.',
-          ))
-        }, opts.timeoutMs)
-      })
-      try {
-        reader = await Promise.race([run, timeout])
-      } catch (e) {
-        // Se estourou o tempo, espera o run abortar antes de fechar a conexão.
-        if (timedOut) await run.catch(() => { /* rejeição esperada do interrupt */ })
-        throw e
+    const conn: DuckDBConnection = await (await getInstance()).connect()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    try {
+      const run = conn.runAndReadAll(sql, params as never[])
+      let reader
+      if (opts.timeoutMs && opts.timeoutMs > 0) {
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            try { conn.interrupt() } catch { /* conexão pode já ter encerrado */ }
+            reject(new Error(
+              `A consulta excedeu o tempo limite de ${Math.round(opts.timeoutMs! / 1000)}s e foi cancelada. ` +
+              'Refine com filtros ou reduza o intervalo de dados.',
+            ))
+          }, opts.timeoutMs)
+        })
+        try {
+          reader = await Promise.race([run, timeout])
+        } catch (e) {
+          // Se estourou o tempo, espera o run abortar antes de fechar a conexão.
+          if (timedOut) await run.catch(() => { /* rejeição esperada do interrupt */ })
+          throw e
+        }
+      } else {
+        reader = await run
       }
-    } else {
-      reader = await run
+      return {
+        columns: reader.columnNames(),
+        rows: reader.getRowObjectsJson() as Record<string, unknown>[],
+      }
+    } catch (e) {
+      throw friendlyEngineError(e as Error)
+    } finally {
+      if (timer) clearTimeout(timer)
+      conn.closeSync()
     }
-    return {
-      columns: reader.columnNames(),
-      rows: reader.getRowObjectsJson() as Record<string, unknown>[],
-    }
-  } catch (e) {
-    throw friendlyEngineError(e as Error)
   } finally {
-    if (timer) clearTimeout(timer)
-    conn.closeSync()
+    releaseSlot()
   }
 }

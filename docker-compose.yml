@@ -78,6 +78,8 @@ services:
       DUCK_MEMORY_LIMIT: ${DUCK_MEMORY_LIMIT:-2GB}
       DUCK_THREADS: ${DUCK_THREADS:-4}
       DUCK_QUERY_TIMEOUT_MS: ${DUCK_QUERY_TIMEOUT_MS:-30000}
+      # Máx. de consultas simultâneas no motor (o excedente espera em fila).
+      DUCK_MAX_CONCURRENCY: ${DUCK_MAX_CONCURRENCY:-6}
       # Fontes de dados (somente leitura — use usuário só-SELECT).
       DB_ELLEVEN_HOST: ${DB_ELLEVEN_HOST:-}
       DB_ELLEVEN_DATABASE: ${DB_ELLEVEN_DATABASE:-}

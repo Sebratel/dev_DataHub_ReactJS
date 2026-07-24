@@ -43,6 +43,9 @@ export const config = {
     // Timeout só nas consultas INTERATIVAS (explorador, preview, IA). A
     // materialização/ingestão em background não usa timeout.
     queryTimeoutMs: Number(process.env.DUCK_QUERY_TIMEOUT_MS) || 30_000,
+    // Máx. de consultas SIMULTÂNEAS no motor; o excedente espera em fila. Evita
+    // que um dashboard com muitos widgets (ou vários usuários) dê pico de carga.
+    maxConcurrency: Math.max(1, Number(process.env.DUCK_MAX_CONCURRENCY) || 6),
   },
 }
 
