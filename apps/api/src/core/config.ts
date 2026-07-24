@@ -24,6 +24,12 @@ export const config = {
     password: process.env.DATAHUB_DB_PASSWORD || 'datahub-dev',
   },
 
+  // Fontes de dados: teto de execução por consulta na ORIGEM (Postgres e MySQL/
+  // MariaDB). Protege os bancos de produção de uma consulta lenta pendurar.
+  sources: {
+    statementTimeoutMs: Number(process.env.SOURCE_STATEMENT_TIMEOUT_MS) || 120_000,
+  },
+
   // Ingestão — controles de carga (docs §9.1).
   sync: {
     hour: Math.min(23, Math.max(0, Number(process.env.ETL_HOUR ?? 3))),

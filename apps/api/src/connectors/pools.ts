@@ -5,6 +5,7 @@ import pg from 'pg'
 import mysql from 'mysql2/promise'
 import { CONNECTORS, getConnector, isConfigured, type ConnectorDef } from './registry.js'
 import { assertReadOnly } from '../core/guard.js'
+import { config } from '../core/config.js'
 
 const { Pool } = pg
 
@@ -34,7 +35,7 @@ function getPgPool(def: ConnectorDef): pg.Pool {
     ssl: env(def, 'SSL') === 'true' ? { rejectUnauthorized: false } : false,
     max: 3,
     connectionTimeoutMillis: 15_000,
-    statement_timeout: 120_000,
+    statement_timeout: config.sources.statementTimeoutMs,
   })
   pgPools.set(def.id, pool)
   return pool
@@ -54,6 +55,20 @@ function getMysqlPool(def: ConnectorDef): mysql.Pool {
     connectTimeout: 15_000,
     dateStrings: true,
   })
+  // Teto de execução por consulta NO SERVIDOR de origem (o MySQL não tem
+  // statement_timeout como o Postgres). MySQL usa max_execution_time (ms, só
+  // SELECT); MariaDB usa max_statement_time (segundos). Setamos as duas em cada
+  // nova conexão e ignoramos o erro da variável que não existir no servidor.
+  const ms = config.sources.statementTimeoutMs
+  const sec = Math.max(1, Math.ceil(ms / 1000))
+  type RawConn = { query: (sql: string, cb: (err: unknown) => void) => void }
+  ;(pool as unknown as { on(ev: 'connection', cb: (c: RawConn) => void): void }).on(
+    'connection',
+    (conn) => {
+      conn.query(`set session max_execution_time = ${ms}`, () => { /* MySQL; ignora se não existir */ })
+      conn.query(`set session max_statement_time = ${sec}`, () => { /* MariaDB; ignora se não existir */ })
+    },
+  )
   mysqlPools.set(def.id, pool)
   return pool
 }
