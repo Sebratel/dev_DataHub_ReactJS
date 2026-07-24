@@ -44,7 +44,10 @@ function getExtractor(): Promise<Extractor> {
     console.log(`[embeddings] carregando modelo ${MODEL} (1ª vez pode baixar ~120MB)…`)
     extractorPromise = (async () => {
       // Import DINÂMICO — o runtime nativo só é tocado aqui, nunca no boot.
-      const { pipeline } = await import('@huggingface/transformers')
+      const { pipeline, env } = await import('@huggingface/transformers')
+      // Cache do modelo num diretório persistente (volume) para não rebaixar
+      // ~120MB a cada redeploy. Sem a var, usa o default da lib.
+      if (process.env.EMBEDDINGS_CACHE_DIR) env.cacheDir = process.env.EMBEDDINGS_CACHE_DIR
       return (await pipeline('feature-extraction', MODEL)) as unknown as Extractor
     })().catch((e) => {
       disabled = true // não tenta de novo nesta execução

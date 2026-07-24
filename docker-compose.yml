@@ -113,14 +113,17 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
-      # Busca semântica do catálogo (RAG). O runtime de embeddings (onnxruntime)
-      # NÃO roda na imagem Alpine (musl) — mantenha DESLIGADO em produção até a
-      # imagem migrar para base glibc. Desligado = busca textual (degradação
-      # graciosa). Em dev (API fora do Docker) o default do código é ligado.
-      EMBEDDINGS_ENABLED: ${EMBEDDINGS_ENABLED:-false}
+      # Busca semântica do catálogo (RAG). A imagem agora é glibc (bookworm-slim),
+      # então o runtime de embeddings roda. No 1º boot baixa o modelo (~120MB,
+      # precisa de saída para a internet) e cacheia no volume datahub-models. Se
+      # falhar, degrada para busca textual (não derruba nada).
+      EMBEDDINGS_ENABLED: ${EMBEDDINGS_ENABLED:-true}
+      EMBEDDINGS_CACHE_DIR: ${EMBEDDINGS_CACHE_DIR:-/app/.models}
     volumes:
       # Lake persistente (Parquet) — sobrevive a redeploys.
       - datahub-lake:/app/data/lake
+      # Cache do modelo de embeddings (~120MB) — evita rebaixar a cada redeploy.
+      - datahub-models:/app/.models
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost:8790/api/health']
       interval: 30s
@@ -164,3 +167,5 @@ volumes:
   datahub-db-data:
   # Lake local (Parquet por tenant/dataset). O espelho GCS é durabilidade extra.
   datahub-lake:
+  # Cache do modelo de embeddings (transformers.js) — persiste entre redeploys.
+  datahub-models:

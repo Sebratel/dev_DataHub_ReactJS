@@ -3,14 +3,18 @@
 # API do Data Hub (apps/api). Roda sob tsx (sem build step), como no churn_mvp.
 # Credenciais entram por variáveis de ambiente da stack — nunca na imagem.
 # ─────────────────────────────────────────────────────────────
-# ATENÇÃO: base Alpine (musl). O runtime de embeddings (onnxruntime-node, usado
-# por @huggingface/transformers) traz binários nativos glibc e NÃO carrega aqui
-# — por isso a busca semântica (RAG) fica desligada em produção via
-# EMBEDDINGS_ENABLED=false (ver docker-compose.yml). O carregamento é lazy e
-# isolado, então isso não afeta o boot. Para HABILITAR o RAG em produção, migrar
-# esta base para glibc (ex.: node:22-bookworm-slim) + cache do modelo em volume.
-FROM node:22-alpine
+# Base GLIBC (não Alpine/musl): o runtime de embeddings (onnxruntime-node, usado
+# por @huggingface/transformers para a busca semântica/RAG) traz binários nativos
+# glibc e NÃO roda em musl. bookworm-slim resolve isso. O modelo (~120MB) é
+# baixado no 1º uso e cacheado no volume datahub-models (ver docker-compose.yml).
+FROM node:22-bookworm-slim
 WORKDIR /app
+
+# libgomp1: dependência de runtime do onnxruntime-node (OpenMP).
+# wget: usado pelo HEALTHCHECK (não vem no slim por padrão).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends libgomp1 wget \
+  && rm -rf /var/lib/apt/lists/*
 
 # Manifests do monorepo primeiro (cache de camada do npm ci).
 COPY package.json package-lock.json ./
