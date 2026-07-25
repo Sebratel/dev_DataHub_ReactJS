@@ -153,9 +153,21 @@ async function runSync(datasetId: string): Promise<string> {
         const { rows } = await querySource(String(ds.connection_id), sql, bound ? [bound.val] : [])
         for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length
+        const prevWatermark = newWatermark
         if (rows.length) {
           const last = rows[rows.length - 1][String(ds.incremental_key)]
           newWatermark = last instanceof Date ? last.toISOString() : String(last)
+        }
+        // Trava anti-loop: um lote CHEIO cujo watermark NÃO avançou significa que
+        // a chave não está progredindo (valor repetido/nulo/não extraído) e a
+        // carga releria as MESMAS linhas para sempre (foi o que bateu 86,7M e
+        // encheu o disco). Aborta com erro claro em vez de fugir.
+        if (rows.length === batchSize && newWatermark === prevWatermark) {
+          throw new Error(
+            `Sincronização incremental não convergiu: a chave "${ds.incremental_key}" não avançou entre lotes ` +
+            `(valor "${newWatermark}" repetido em um lote cheio). A chave precisa ser CRESCENTE e única o ` +
+            `suficiente — verifique o campo escolhido ou use uma chave única (ex.: id).`,
+          )
         }
         guardRunaway()
         checkCancel()
