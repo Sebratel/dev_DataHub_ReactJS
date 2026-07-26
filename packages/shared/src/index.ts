@@ -128,9 +128,11 @@ export interface ConnectionInfo {
   status: 'ok' | 'error' | 'unknown'
   latencyMs: number | null
   error: string | null
-  // true = conexão GERENCIADA (cadastrada na tela, editável/removível);
-  // false = fixa do .env. Detalhes de host/porta/etc. para editar (sem senha).
+  // managed = tem config no banco (gerenciada ou sobreposição de nativa).
+  // native = existe uma versão fixa no .env com este id (editar sobrepõe;
+  // excluir a sobreposição reverte para o .env). Detalhe sem senha p/ editar.
   managed: boolean
+  native: boolean
   detail?: { host: string; port: number; database: string; username: string; ssl: boolean }
 }
 

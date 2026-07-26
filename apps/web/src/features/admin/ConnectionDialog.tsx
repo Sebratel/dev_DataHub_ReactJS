@@ -103,7 +103,11 @@ export default function ConnectionDialog({ existing, onClose, onSaved }: Props) 
           </label>
           <label className="text-sm">
             <span className="mb-1 block text-xs text-zinc-500">
-              Senha {isEdit && <span className="text-zinc-400">(em branco = mantém a atual)</span>}
+              Senha {isEdit && (
+                <span className="text-zinc-400">
+                  (em branco = {existing?.native && !existing?.managed ? 'usa a senha do .env' : 'mantém a atual'})
+                </span>
+              )}
             </span>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inp} placeholder={isEdit ? '••••••••' : ''} autoComplete="new-password" />
           </label>

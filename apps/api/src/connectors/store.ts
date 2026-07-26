@@ -4,7 +4,7 @@
 // é invalidada para reconectar com os novos parâmetros.
 import { db, isDbAvailable } from '../db/pool.js'
 import { decryptSecret, encryptSecret, hasSecret } from '../core/crypto.js'
-import { setDynamicConnectors, RESERVED_IDS, type ConnectorDef } from './registry.js'
+import { setDynamicConnectors, RESERVED_IDS, envPassword, type ConnectorDef } from './registry.js'
 import { resetPool } from './pools.js'
 
 export interface ConnectionInput {
@@ -68,15 +68,32 @@ export async function createConnection(input: ConnectionInput, byEmail: string):
   return id
 }
 
-export async function updateConnection(id: string, input: ConnectionInput): Promise<void> {
-  const cur = (await db.query('select 1 from source_connections where id = $1', [id])).rows[0]
-  if (!cur) throw new Error('Conexão gerenciada não encontrada.')
-  const pwd = input.password ? encryptSecret(input.password) : null // branco = mantém
-  await db.query(
-    `update source_connections set name=$2, kind=$3, host=$4, port=$5, "database"=$6, username=$7,
-       password_enc = coalesce($8, password_enc), ssl=$9, updated_at=now() where id=$1`,
-    [id, input.name, input.kind, input.host, input.port, input.database, input.username, pwd, input.ssl],
-  )
+// Upsert: edita uma gerenciada existente OU cria a SOBREPOSIÇÃO de uma nativa.
+// Senha em branco: mantém a atual (se já existe) ou semeia a do .env (1ª
+// personalização de uma nativa). Só pede senha se não há nenhuma para reusar.
+export async function updateConnection(id: string, input: ConnectionInput, byEmail: string): Promise<void> {
+  const exists = !!(await db.query('select 1 from source_connections where id = $1', [id])).rows[0]
+  let pwdEnc: string | null
+  if (input.password) pwdEnc = encryptSecret(input.password)
+  else if (exists) pwdEnc = null // coalesce mantém a atual
+  else {
+    const seed = envPassword(id) // personalizando uma nativa: reaproveita a senha do .env
+    if (!seed) throw new Error('Informe a senha (não há senha do .env para reaproveitar).')
+    pwdEnc = encryptSecret(seed)
+  }
+  if (exists) {
+    await db.query(
+      `update source_connections set name=$2, kind=$3, host=$4, port=$5, "database"=$6, username=$7,
+         password_enc = coalesce($8, password_enc), ssl=$9, updated_at=now() where id=$1`,
+      [id, input.name, input.kind, input.host, input.port, input.database, input.username, pwdEnc, input.ssl],
+    )
+  } else {
+    await db.query(
+      `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id, input.name, input.kind, input.host, input.port, input.database, input.username, pwdEnc, input.ssl, byEmail],
+    )
+  }
   resetPool(id)
   await reloadConnections()
 }

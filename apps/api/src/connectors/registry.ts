@@ -49,12 +49,35 @@ export function setDynamicConnectors(defs: ConnectorDef[]): void {
   for (const d of defs) dynamic.set(d.id, { ...d, managed: true })
 }
 
+// Uma conexão GERENCIADA com o mesmo id SOBREPÕE a nativa (.env). Assim dá para
+// "personalizar" uma fonte fixa pela tela; excluir a sobreposição volta ao .env.
 export function allConnectors(): ConnectorDef[] {
-  return [...CONNECTORS, ...dynamic.values()]
+  const byId = new Map<string, ConnectorDef>()
+  for (const c of CONNECTORS) byId.set(c.id, c)
+  for (const [id, d] of dynamic) byId.set(id, d) // dynamic sobrepõe
+  return [...byId.values()]
 }
 
 export function getConnector(id: string): ConnectorDef | undefined {
-  return CONNECTORS.find((c) => c.id === id) ?? dynamic.get(id)
+  return dynamic.get(id) ?? CONNECTORS.find((c) => c.id === id) // dynamic tem prioridade
+}
+
+// Detalhe (sem senha) de uma fonte fixa a partir do .env — para a tela
+// pré-preencher o formulário de edição. undefined se não configurada.
+export function envDetail(def: ConnectorDef): { host: string; port: number; database: string; username: string; ssl: boolean } | undefined {
+  if (!def.envPrefix) return undefined
+  const g = (s: string) => process.env[`${def.envPrefix}_${s}`]
+  if (!g('HOST')) return undefined
+  return {
+    host: g('HOST')!, port: Number(g('PORT')) || (def.kind === 'mysql' ? 3306 : 5432),
+    database: g('DATABASE') ?? '', username: g('USER') ?? '', ssl: g('SSL') === 'true',
+  }
+}
+
+// Senha do .env de uma fonte fixa (para semear ao personalizar pela 1ª vez).
+export function envPassword(id: string): string | undefined {
+  const def = CONNECTORS.find((c) => c.id === id)
+  return def?.envPrefix ? process.env[`${def.envPrefix}_PASSWORD`] : undefined
 }
 
 // Uma fonte está "configurada" quando dá para conectar: gerenciada tem config;

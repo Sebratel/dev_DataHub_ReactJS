@@ -74,10 +74,13 @@ export default function ConnectionsPage() {
   }
 
   async function remove(c: ConnectionInfo) {
+    const reverting = c.native && c.managed
     if (!(await confirm({
-      title: 'Excluir conexão',
-      message: `Excluir a conexão "${c.name}"? Conjuntos que dependem dela deixarão de sincronizar.`,
-      danger: true, confirmLabel: 'Excluir',
+      title: reverting ? 'Reverter para o .env' : 'Excluir conexão',
+      message: reverting
+        ? `Remover a personalização de "${c.name}" e voltar às credenciais do .env?`
+        : `Excluir a conexão "${c.name}"? Conjuntos que dependem dela deixarão de sincronizar.`,
+      danger: true, confirmLabel: reverting ? 'Reverter' : 'Excluir',
     }))) return
     try {
       await api(`/api/v1/connections/${c.id}`, { method: 'DELETE' })
@@ -132,13 +135,15 @@ export default function ConnectionsPage() {
               <div className="flex-1">
                 <p className="flex items-center gap-2 font-medium">
                   {c.name}
-                  {c.managed
+                  {!c.native
                     ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-secondary dark:bg-zinc-800">gerenciada</span>
-                    : <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800">.env</span>}
+                    : c.managed
+                      ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-secondary dark:bg-zinc-800">personalizada</span>
+                      : <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800">.env</span>}
                 </p>
                 <p className="text-xs text-zinc-500">
                   {c.kind}
-                  {c.managed && c.detail ? ` · ${c.detail.host}:${c.detail.port}/${c.detail.database}` : ` · ${c.envPrefix}_*`}
+                  {c.detail ? ` · ${c.detail.host}:${c.detail.port}/${c.detail.database}` : (c.envPrefix ? ` · ${c.envPrefix}_*` : '')}
                   {c.latencyMs !== null && c.status === 'ok' && ` · ${c.latencyMs} ms`}
                 </p>
               </div>
@@ -151,17 +156,15 @@ export default function ConnectionsPage() {
                     <Table2 size={13} /> Ver tabelas
                   </button>
                 )}
+                <button onClick={() => setDialog(c)} title={c.native ? 'Personalizar (sobrepõe o .env)' : 'Editar conexão'}
+                  className="rounded-lg border border-zinc-200 p-1.5 text-zinc-400 hover:text-accent dark:border-zinc-700">
+                  <Pencil size={14} />
+                </button>
                 {c.managed && (
-                  <>
-                    <button onClick={() => setDialog(c)} title="Editar conexão"
-                      className="rounded-lg border border-zinc-200 p-1.5 text-zinc-400 hover:text-accent dark:border-zinc-700">
-                      <Pencil size={14} />
-                    </button>
-                    <button onClick={() => void remove(c)} title="Excluir conexão"
-                      className="rounded-lg border border-zinc-200 p-1.5 text-zinc-400 hover:text-red-500 dark:border-zinc-700">
-                      <Trash2 size={14} />
-                    </button>
-                  </>
+                  <button onClick={() => void remove(c)} title={c.native ? 'Reverter para o .env' : 'Excluir conexão'}
+                    className="rounded-lg border border-zinc-200 p-1.5 text-zinc-400 hover:text-red-500 dark:border-zinc-700">
+                    <Trash2 size={14} />
+                  </button>
                 )}
               </div>
             </div>
