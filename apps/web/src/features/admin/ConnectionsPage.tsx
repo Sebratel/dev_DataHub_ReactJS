@@ -2,16 +2,19 @@
 // (matéria-prima da publicação de datasets no Sprint 2).
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2 } from 'lucide-react'
+import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2, Plus, Pencil, Trash2 } from 'lucide-react'
 import type { ConnectionInfo } from '@datahub/shared'
 import { api } from '@/lib/api'
-import { usePrompt } from '@/components/Dialogs'
+import { usePrompt, useConfirm } from '@/components/Dialogs'
+import ConnectionDialog from './ConnectionDialog'
 
 interface PhysicalObject { schema: string; name: string; kind: 'table' | 'view'; columns: number }
 
 export default function ConnectionsPage() {
   const navigate = useNavigate()
   const prompt = usePrompt()
+  const confirm = useConfirm()
+  const [dialog, setDialog] = useState<'new' | ConnectionInfo | null>(null)
   const [connections, setConnections] = useState<ConnectionInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -70,21 +73,50 @@ export default function ConnectionsPage() {
     }
   }
 
+  async function remove(c: ConnectionInfo) {
+    if (!(await confirm({
+      title: 'Excluir conexão',
+      message: `Excluir a conexão "${c.name}"? Conjuntos que dependem dela deixarão de sincronizar.`,
+      danger: true, confirmLabel: 'Excluir',
+    }))) return
+    try {
+      await api(`/api/v1/connections/${c.id}`, { method: 'DELETE' })
+      void load()
+    } catch (e) {
+      // 409 = há datasets usando; oferece forçar.
+      const msg = e instanceof Error ? e.message : 'Falha ao excluir.'
+      if (/force=true/.test(msg) && await confirm({ title: 'Excluir mesmo assim?', message: msg, danger: true, confirmLabel: 'Excluir assim mesmo' })) {
+        await api(`/api/v1/connections/${c.id}?force=true`, { method: 'DELETE' }).then(load).catch((e2) =>
+          setError(e2 instanceof Error ? e2.message : 'Falha ao excluir.'))
+      } else {
+        setError(msg)
+      }
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Conexões</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Fontes de dados do hub. Credenciais ficam no servidor (.env) — nunca aqui.
+            Fontes de dados do hub. As fixas vêm do servidor (.env); as gerenciadas você cadastra aqui (senha criptografada, nunca exibida).
           </p>
         </div>
-        <button
-          onClick={load}
-          className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-        >
-          <RefreshCw size={14} /> Atualizar
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setDialog('new')}
+            className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-accent-hover"
+          >
+            <Plus size={15} /> Nova conexão
+          </button>
+          <button
+            onClick={load}
+            className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            <RefreshCw size={14} /> Atualizar
+          </button>
+        </div>
       </div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
@@ -98,19 +130,40 @@ export default function ConnectionsPage() {
               {c.status === 'error' && <XCircle size={18} className="text-red-500" />}
               {c.status === 'unknown' && <CircleDashed size={18} className="text-zinc-400" />}
               <div className="flex-1">
-                <p className="font-medium">{c.name}</p>
+                <p className="flex items-center gap-2 font-medium">
+                  {c.name}
+                  {c.managed
+                    ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-secondary dark:bg-zinc-800">gerenciada</span>
+                    : <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800">.env</span>}
+                </p>
                 <p className="text-xs text-zinc-500">
-                  {c.kind} · {c.envPrefix}_* {c.latencyMs !== null && c.status === 'ok' && `· ${c.latencyMs} ms`}
+                  {c.kind}
+                  {c.managed && c.detail ? ` · ${c.detail.host}:${c.detail.port}/${c.detail.database}` : ` · ${c.envPrefix}_*`}
+                  {c.latencyMs !== null && c.status === 'ok' && ` · ${c.latencyMs} ms`}
                 </p>
               </div>
-              {c.status === 'ok' && (
-                <button
-                  onClick={() => openObjects(c.id)}
-                  className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-                >
-                  <Table2 size={13} /> Ver tabelas
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {c.status === 'ok' && (
+                  <button
+                    onClick={() => openObjects(c.id)}
+                    className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                  >
+                    <Table2 size={13} /> Ver tabelas
+                  </button>
+                )}
+                {c.managed && (
+                  <>
+                    <button onClick={() => setDialog(c)} title="Editar conexão"
+                      className="rounded-lg border border-zinc-200 p-1.5 text-zinc-400 hover:text-accent dark:border-zinc-700">
+                      <Pencil size={14} />
+                    </button>
+                    <button onClick={() => void remove(c)} title="Excluir conexão"
+                      className="rounded-lg border border-zinc-200 p-1.5 text-zinc-400 hover:text-red-500 dark:border-zinc-700">
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             {c.error && <p className="mt-2 text-xs text-red-500">{c.error}</p>}
             {selected === c.id && (
@@ -161,6 +214,14 @@ export default function ConnectionsPage() {
           </div>
         ))}
       </div>
+
+      {dialog && (
+        <ConnectionDialog
+          existing={dialog === 'new' ? null : dialog}
+          onClose={() => setDialog(null)}
+          onSaved={load}
+        />
+      )}
     </div>
   )
 }

@@ -56,6 +56,10 @@ services:
       ALLOWED_DOMAIN: ${ALLOWED_DOMAIN:-sebratel.com.br}
       # CSV de e-mails com papel admin garantido no primeiro login.
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # Segredo para CRIPTOGRAFAR senhas de conexões gerenciadas (cadastradas na
+      # tela). Sem ele, o cadastro self-service de conexões fica indisponível.
+      # Use um valor longo e aleatório; trocá-lo invalida as senhas já salvas.
+      CONNECTIONS_SECRET: ${CONNECTIONS_SECRET:-}
       # Banco de metadados — resolve o serviço da stack pelo nome, porta interna.
       DATAHUB_DB_HOST: datahub-db
       DATAHUB_DB_PORT: 5432

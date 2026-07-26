@@ -123,11 +123,15 @@ export interface ConnectionInfo {
   id: string
   name: string
   kind: 'postgres' | 'mysql' | 'soap' | 'gcs'
-  envPrefix: string
+  envPrefix: string | null
   configured: boolean
   status: 'ok' | 'error' | 'unknown'
   latencyMs: number | null
   error: string | null
+  // true = conexão GERENCIADA (cadastrada na tela, editável/removível);
+  // false = fixa do .env. Detalhes de host/porta/etc. para editar (sem senha).
+  managed: boolean
+  detail?: { host: string; port: number; database: string; username: string; ssl: boolean }
 }
 
 // ── Métricas ──────────────────────────────────────────────────

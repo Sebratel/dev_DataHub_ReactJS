@@ -21,6 +21,7 @@ import { accessRouter } from './modules/admin/accessRouter.js'
 import { startScheduler } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging } from './core/lake.js'
+import { reloadConnections } from './connectors/store.js'
 
 // Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
 // middleware de erro — sem isto, um único erro de SQL derruba a API inteira
@@ -88,6 +89,11 @@ try {
   if (n) console.log(`[lake] staging: ${n} arquivo(s) órfão(s) removido(s).`)
 } catch (e) {
   console.warn(`[lake] limpeza de staging falhou: ${(e as Error).message}`)
+}
+// Carrega as conexões GERENCIADAS (cadastradas na tela) para o registry.
+if (isDbAvailable()) {
+  await reloadConnections().catch((e) =>
+    console.warn(`[connections] carga inicial falhou: ${(e as Error).message}`))
 }
 startScheduler() // sync diário na madrugada (ETL_HOUR)
 // Catálogo semântico: indexa em background os datasets sem embedding (ou com

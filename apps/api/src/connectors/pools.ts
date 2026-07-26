@@ -18,21 +18,42 @@ function env(def: ConnectorDef, suffix: string): string | undefined {
 
 function requireConfigured(def: ConnectorDef): void {
   if (!isConfigured(def)) {
-    throw new Error(`Fonte "${def.id}" sem credenciais no .env (${def.envPrefix}_*).`)
+    throw new Error(`Fonte "${def.id}" sem credenciais (${def.envPrefix ? def.envPrefix + '_*' : 'conexão gerenciada'}).`)
   }
+}
+
+// Resolve os parâmetros de conexão: fontes GERENCIADAS trazem `config` (senha já
+// descriptografada em memória); fontes FIXAS leem do .env pelo prefixo.
+function resolveConfig(def: ConnectorDef, defaultPort: number) {
+  if (def.config) {
+    return {
+      host: def.config.host, port: def.config.port || defaultPort,
+      database: def.config.database, user: def.config.user,
+      password: def.config.password, ssl: def.config.ssl,
+    }
+  }
+  return {
+    host: env(def, 'HOST'), port: Number(env(def, 'PORT')) || defaultPort,
+    database: env(def, 'DATABASE'), user: env(def, 'USER'),
+    password: env(def, 'PASSWORD'), ssl: env(def, 'SSL') === 'true',
+  }
+}
+
+// Encerra e descarta a pool em cache (ex.: após editar/excluir a conexão) para
+// que a próxima consulta reconecte com os novos parâmetros.
+export function resetPool(id: string): void {
+  const pg = pgPools.get(id); if (pg) { pgPools.delete(id); void pg.end().catch(() => {}) }
+  const my = mysqlPools.get(id); if (my) { mysqlPools.delete(id); void my.end().catch(() => {}) }
 }
 
 function getPgPool(def: ConnectorDef): pg.Pool {
   let pool = pgPools.get(def.id)
   if (pool) return pool
   requireConfigured(def)
+  const c = resolveConfig(def, 5432)
   pool = new Pool({
-    host: env(def, 'HOST'),
-    port: Number(env(def, 'PORT')) || 5432,
-    database: env(def, 'DATABASE'),
-    user: env(def, 'USER'),
-    password: env(def, 'PASSWORD'),
-    ssl: env(def, 'SSL') === 'true' ? { rejectUnauthorized: false } : false,
+    host: c.host, port: c.port, database: c.database, user: c.user, password: c.password,
+    ssl: c.ssl ? { rejectUnauthorized: false } : false,
     max: 3,
     connectionTimeoutMillis: 15_000,
     statement_timeout: config.sources.statementTimeoutMs,
@@ -45,12 +66,14 @@ function getMysqlPool(def: ConnectorDef): mysql.Pool {
   let pool = mysqlPools.get(def.id)
   if (pool) return pool
   requireConfigured(def)
+  const c = resolveConfig(def, 3306)
   pool = mysql.createPool({
-    host: env(def, 'HOST'),
-    port: Number(env(def, 'PORT')) || 3306,
-    database: env(def, 'DATABASE'),
-    user: env(def, 'USER'),
-    password: env(def, 'PASSWORD'),
+    host: c.host,
+    port: c.port,
+    database: c.database,
+    user: c.user,
+    password: c.password,
+    ssl: c.ssl ? { rejectUnauthorized: false } : undefined,
     connectionLimit: 3,
     connectTimeout: 15_000,
     dateStrings: true,
@@ -92,6 +115,37 @@ export async function querySource(
     return { rows: rows as Record<string, unknown>[] }
   }
   throw new Error(`Fonte "${connectorId}" (${def.kind}) não suporta SQL.`)
+}
+
+// Testa PARÂMETROS avulsos (antes de salvar) com uma conexão descartável.
+export async function testParams(input: {
+  kind: 'postgres' | 'mysql'; host: string; port: number; database: string
+  user: string; password: string; ssl: boolean
+}): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+  const started = Date.now()
+  try {
+    if (input.kind === 'postgres') {
+      const client = new pg.Client({
+        host: input.host, port: input.port, database: input.database,
+        user: input.user, password: input.password,
+        ssl: input.ssl ? { rejectUnauthorized: false } : false,
+        connectionTimeoutMillis: 10_000, statement_timeout: 10_000,
+      })
+      await client.connect()
+      try { await client.query('select 1') } finally { await client.end() }
+    } else {
+      const conn = await mysql.createConnection({
+        host: input.host, port: input.port, database: input.database,
+        user: input.user, password: input.password,
+        ssl: input.ssl ? { rejectUnauthorized: false } : undefined,
+        connectTimeout: 10_000,
+      })
+      try { await conn.query('select 1') } finally { await conn.end() }
+    }
+    return { ok: true, latencyMs: Date.now() - started }
+  } catch (e) {
+    return { ok: false, latencyMs: Date.now() - started, error: (e as Error).message }
+  }
 }
 
 // Ping barato (SELECT 1) para a tela de conexões do admin.
