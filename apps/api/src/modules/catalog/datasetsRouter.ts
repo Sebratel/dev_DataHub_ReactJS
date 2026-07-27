@@ -40,7 +40,10 @@ function mapType(dataType: string): FieldType {
   const dt = dataType.toLowerCase()
   if (/int|numeric|decimal|double|real|float|money/.test(dt)) return 'number'
   if (/bool/.test(dt)) return 'bool'
-  if (/date|time/.test(dt)) return 'date'
+  if (/timestamp|datetime|date/.test(dt)) return 'date'
+  // MySQL/MariaDB TIME é DURAÇÃO (pode ser negativa / passar de 24h) — não é
+  // hora do dia. Tratamos como texto para não quebrar a conversão p/ Parquet.
+  if (/time/.test(dt)) return 'text'
   if (/json/.test(dt)) return 'json'
   return 'text'
 }

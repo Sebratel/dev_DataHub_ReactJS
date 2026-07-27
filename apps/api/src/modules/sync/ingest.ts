@@ -200,9 +200,27 @@ async function runSync(datasetId: string): Promise<string> {
     // JSONL → Parquet (zstd). Snapshot substitui as partes; incremental acrescenta.
     if (total > 0) {
       const part = join(dir, `part-${run.id}.parquet`).replace(/\\/g, '/')
-      await duckQuery(
-        `copy (select * from read_json_auto('${jsonl.replace(/\\/g, '/')}')) to '${part}' (format parquet, compression zstd)`,
-      )
+      // Schema DECLARADO (não auto-inferido): lemos cada coluna com um tipo
+      // seguro e convertemos com try_cast (NULL em vez de erro). Sem isto, o
+      // read_json_auto adivinha o tipo e ESTOURA em valores fora do padrão —
+      // ex.: coluna MySQL TIME com duração negativa ("-00:00:14"). Datas viram
+      // texto e depois try_cast p/ TIMESTAMP; texto/duração ficam preservados.
+      const sqlit = (s: string) => `'${String(s).replace(/'/g, "''")}'`
+      const ident = (s: string) => `"${String(s).replace(/"/g, '""')}"`
+      const readType = (t: string) =>
+        t === 'number' ? 'DOUBLE' : t === 'bool' ? 'BOOLEAN' : t === 'json' ? 'JSON' : 'VARCHAR'
+      const cols = (fields as { key: string; type: string }[])
+        .map((f) => `${sqlit(f.key)}: '${readType(f.type)}'`).join(', ')
+      const selectList = (fields as { key: string; type: string }[]).map((f) => {
+        const k = ident(f.key)
+        if (f.type === 'date') return `try_cast(${k} as TIMESTAMP) as ${k}` // datas/timestamps; TIME/duração vira NULL
+        if (f.type === 'json') return `cast(${k} as VARCHAR) as ${k}`
+        return k
+      }).join(', ')
+      const src = fields.length
+        ? `read_json(${sqlit(jsonl.replace(/\\/g, '/'))}, columns={${cols}}, format='newline_delimited')`
+        : `read_json_auto('${jsonl.replace(/\\/g, '/')}')` // sem campos: fallback improvável
+      await duckQuery(`copy (select ${selectList || '*'} from ${src}) to '${part}' (format parquet, compression zstd)`)
       if (replaceParts) clearParquet(dir, join(dir, `part-${run.id}.parquet`))
       await uploadToGcs(part, String(ds.tenant_slug), String(ds.slug))
     }
