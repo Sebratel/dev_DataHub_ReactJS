@@ -2,11 +2,12 @@
 // (matéria-prima da publicação de datasets no Sprint 2).
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2, Plus, Pencil, Trash2 } from 'lucide-react'
+import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2, Plus, Pencil, Trash2, Globe } from 'lucide-react'
 import type { ConnectionInfo } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { usePrompt, useConfirm } from '@/components/Dialogs'
 import ConnectionDialog from './ConnectionDialog'
+import ApiDatasetDialog from './ApiDatasetDialog'
 
 interface PhysicalObject { schema: string; name: string; kind: 'table' | 'view'; columns: number }
 
@@ -15,6 +16,7 @@ export default function ConnectionsPage() {
   const prompt = usePrompt()
   const confirm = useConfirm()
   const [dialog, setDialog] = useState<'new' | ConnectionInfo | null>(null)
+  const [apiFor, setApiFor] = useState<ConnectionInfo | null>(null)
   const [connections, setConnections] = useState<ConnectionInfo[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -148,14 +150,21 @@ export default function ConnectionsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {c.status === 'ok' && (
+                {c.status === 'ok' && (c.kind === 'http' ? (
+                  <button
+                    onClick={() => setApiFor(c)}
+                    className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                  >
+                    <Globe size={13} /> Publicar API
+                  </button>
+                ) : (
                   <button
                     onClick={() => openObjects(c.id)}
                     className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
                   >
                     <Table2 size={13} /> Ver tabelas
                   </button>
-                )}
+                ))}
                 <button onClick={() => setDialog(c)} title={c.native ? 'Personalizar (sobrepõe o .env)' : 'Editar conexão'}
                   className="rounded-lg border border-zinc-200 p-1.5 text-zinc-400 hover:text-accent dark:border-zinc-700">
                   <Pencil size={14} />
@@ -225,6 +234,7 @@ export default function ConnectionsPage() {
           onSaved={load}
         />
       )}
+      {apiFor && <ApiDatasetDialog connection={apiFor} onClose={() => setApiFor(null)} />}
     </div>
   )
 }

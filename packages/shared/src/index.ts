@@ -134,6 +134,8 @@ export interface ConnectionInfo {
   managed: boolean
   native: boolean
   detail?: { host: string; port: number; database: string; username: string; ssl: boolean }
+  // Para conexões HTTP (sem o token): base e header de auth, p/ editar/publicar.
+  http?: { baseUrl: string; authHeader: string | null; authScheme: string | null }
 }
 
 // ── Métricas ──────────────────────────────────────────────────

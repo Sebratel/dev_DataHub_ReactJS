@@ -54,9 +54,12 @@ connectionsRouter.get('/', async (_req, res) => {
       const detail = def.config
         ? { host: def.config.host, port: def.config.port, database: def.config.database, username: def.config.user, ssl: def.config.ssl }
         : envDetail(def)
+      const http = def.http
+        ? { baseUrl: def.http.baseUrl, authHeader: def.http.authHeader ?? null, authScheme: def.http.authScheme ?? null }
+        : undefined
       const base = {
         id: def.id, name: def.name, kind: def.kind, envPrefix: def.envPrefix ?? null,
-        managed: !!def.managed, native: RESERVED_IDS.has(def.id), configured, detail,
+        managed: !!def.managed, native: RESERVED_IDS.has(def.id), configured, detail, http,
       }
       if (!configured) return { ...base, status: 'unknown' as const, latencyMs: null, error: null }
       const check = await checkConnection(def.id)
