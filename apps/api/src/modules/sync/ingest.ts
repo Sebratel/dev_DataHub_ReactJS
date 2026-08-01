@@ -12,7 +12,7 @@ import { config } from '../../core/config.js'
 import { db } from '../../db/pool.js'
 import { getConnector } from '../../connectors/registry.js'
 import { querySource } from '../../connectors/pools.js'
-import { fetchHttpPages, type HttpEndpoint, type HttpPagination } from '../../connectors/httpSource.js'
+import { fetchHttpPages, type HttpEndpoint, type HttpPagination, type PageMetric } from '../../connectors/httpSource.js'
 import { datasetDir, parquetGlob, clearParquet, dirBytes, uploadToGcs, listParquet, stagingDir } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { materializeDerived } from '../transform/derive.js'
@@ -26,6 +26,24 @@ async function reportProgress(runId: string, rows: number): Promise<void> {
   try {
     await db.query(`update sync_runs set rows = $2 where id = $1`, [runId, rows])
   } catch { /* progresso é best-effort */ }
+}
+
+// Grava as métricas de chamada da API (Fase 2 — observabilidade). Best-effort:
+// falha aqui não afeta a sincronização. endpoint = caminho estável (p/ agrupar).
+async function flushApiMetrics(slug: string, connectionId: string, endpoint: string, metrics: PageMetric[]): Promise<void> {
+  if (!metrics.length) return
+  try {
+    for (const m of metrics) {
+      await db.query(
+        `insert into api_call_metrics (dataset_slug, connection_id, endpoint, status, ok, duration_ms, rows, bytes, error)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [slug, connectionId, endpoint, m.status, m.status >= 200 && m.status < 400, m.ms, m.rows, m.bytes,
+         m.status >= 400 ? `HTTP ${m.status}` : null],
+      )
+    }
+  } catch (e) {
+    console.warn(`[api-metrics] falha ao gravar métricas de ${slug}: ${(e as Error).message}`)
+  }
 }
 
 // Cancelamento COOPERATIVO: a carga em andamento verifica este sinal entre os
@@ -120,6 +138,7 @@ async function runSync(datasetId: string): Promise<string> {
     stream.write(line + '\n', (e) => (e ? rej(e) : res())))
 
   let total = 0
+  const apiMetrics: PageMetric[] = [] // fontes http: latência/status por chamada
   let newWatermark: string | null = ds.watermark ?? null
   const { batchSize, batchPauseMs, maxRows } = config.sync
   // Disjuntor: aborta antes de a carga em fuga derrubar o servidor.
@@ -148,7 +167,7 @@ async function runSync(datasetId: string): Promise<string> {
         auth: { header: def.http?.authHeader, scheme: def.http?.authScheme, token: def.http?.token },
         pagination: (sc.pagination as HttpPagination | undefined) ?? { style: 'none' },
       }
-      for await (const batch of fetchHttpPages(ep, { pauseMs: batchPauseMs, timeoutMs: config.sources.statementTimeoutMs })) {
+      for await (const batch of fetchHttpPages(ep, { pauseMs: batchPauseMs, timeoutMs: config.sources.statementTimeoutMs }, (m) => apiMetrics.push(m))) {
         for (const row of batch) await write(jsonLine(coerce(row)))
         total += batch.length
         guardRunaway()
@@ -277,5 +296,10 @@ async function runSync(datasetId: string): Promise<string> {
     if (existsSync(jsonl)) unlinkSync(jsonl)
     cancelRequested.delete(datasetId)
     runningDatasetId = null
+    // Observabilidade: grava as métricas das chamadas HTTP (mesmo se a carga
+    // falhou/foi cancelada — a última chamada, inclusive com erro, é registrada).
+    if (def.kind === 'http') {
+      await flushApiMetrics(String(ds.slug), String(ds.connection_id), String(ds.object_name), apiMetrics)
+    }
   }
 }
