@@ -69,6 +69,24 @@ function authHeaders(auth?: HttpAuth): Record<string, string> {
   return h
 }
 
+// Testa alcance de uma API (GET na baseUrl). "ok" = respondeu algo HTTP (mesmo
+// 4xx = alcançável); erro só em falha de rede/timeout/DNS.
+export async function testHttp(
+  baseUrl: string, auth?: HttpAuth, timeoutMs = 10_000,
+): Promise<{ ok: boolean; status?: number; latencyMs: number; error?: string }> {
+  const started = Date.now()
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(baseUrl, { headers: authHeaders(auth), signal: ctrl.signal })
+    return { ok: true, status: res.status, latencyMs: Date.now() - started }
+  } catch (e) {
+    return { ok: false, latencyMs: Date.now() - started, error: (e as Error).message }
+  } finally {
+    clearTimeout(t)
+  }
+}
+
 // Uma "medida" por página, para observabilidade (Fase 2).
 export interface PageMetric { url: string; status: number; ms: number; rows: number; bytes: number }
 

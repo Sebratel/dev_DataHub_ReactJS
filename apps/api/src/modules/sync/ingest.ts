@@ -12,6 +12,7 @@ import { config } from '../../core/config.js'
 import { db } from '../../db/pool.js'
 import { getConnector } from '../../connectors/registry.js'
 import { querySource } from '../../connectors/pools.js'
+import { fetchHttpPages, type HttpEndpoint, type HttpPagination } from '../../connectors/httpSource.js'
 import { datasetDir, parquetGlob, clearParquet, dirBytes, uploadToGcs, listParquet, stagingDir } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { materializeDerived } from '../transform/derive.js'
@@ -135,7 +136,26 @@ async function runSync(datasetId: string): Promise<string> {
   runningDatasetId = datasetId
 
   try {
-    if (mode === 'incremental') {
+    if (def.kind === 'http') {
+      // Fonte HTTP (API GET): pagina e escreve cada lote no MESMO JSONL. Reusa
+      // disjuntor, cancelamento e progresso. Trata-se como recarga completa.
+      const sc = (ds.source_config ?? {}) as Record<string, unknown>
+      const ep: HttpEndpoint = {
+        baseUrl: def.http?.baseUrl ?? '',
+        path: String(sc.path ?? ''),
+        query: (sc.query as Record<string, string> | undefined) ?? undefined,
+        recordsPath: sc.recordsPath ? String(sc.recordsPath) : undefined,
+        auth: { header: def.http?.authHeader, scheme: def.http?.authScheme, token: def.http?.token },
+        pagination: (sc.pagination as HttpPagination | undefined) ?? { style: 'none' },
+      }
+      for await (const batch of fetchHttpPages(ep, { pauseMs: batchPauseMs, timeoutMs: config.sources.statementTimeoutMs })) {
+        for (const row of batch) await write(jsonLine(coerce(row)))
+        total += batch.length
+        guardRunaway()
+        checkCancel()
+        await reportProgress(run.id, total)
+      }
+    } else if (mode === 'incremental') {
       // Keyset: WHERE key {>|>=} $bound ORDER BY key LIMIT n — nunca OFFSET.
       const keyCol = fields.find((f) => f.key === ds.incremental_key)?.source_column ?? ds.incremental_key
       const ph = def.kind === 'mysql' ? '?' : '$1'

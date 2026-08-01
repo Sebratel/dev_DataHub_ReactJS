@@ -6,6 +6,7 @@ import { Router } from 'express'
 import type { ConnectionInfo } from '@datahub/shared'
 import { allConnectors, getConnector, isConfigured, envDetail, RESERVED_IDS, type ConnectorKind } from '../../connectors/registry.js'
 import { checkConnection, discoverObjects, discoverColumns, testParams } from '../../connectors/pools.js'
+import { testHttp } from '../../connectors/httpSource.js'
 import { createConnection, updateConnection, deleteConnection, datasetsUsing, type ConnectionInput } from '../../connectors/store.js'
 import { hasSecret } from '../../core/crypto.js'
 import { requireAuth, audit } from '../auth/middleware.js'
@@ -14,19 +15,30 @@ export const connectionsRouter = Router()
 
 connectionsRouter.use(requireAuth({ role: 'admin' }))
 
-// Valida e normaliza o corpo de uma conexão gerenciada.
+// Valida e normaliza o corpo de uma conexão gerenciada (SQL ou HTTP).
 function parseInput(body: unknown): ConnectionInput {
   const b = (body ?? {}) as Record<string, unknown>
   const kind = String(b.kind) as ConnectorKind
-  if (kind !== 'postgres' && kind !== 'mysql') throw new Error('Tipo deve ser postgres ou mysql.')
+  if (kind !== 'postgres' && kind !== 'mysql' && kind !== 'http') {
+    throw new Error('Tipo deve ser postgres, mysql ou http.')
+  }
   const name = String(b.name ?? '').trim()
+  if (!name) throw new Error('Informe o nome.')
+  if (kind === 'http') {
+    const baseUrl = String(b.baseUrl ?? '').trim()
+    if (!/^https?:\/\//i.test(baseUrl)) throw new Error('Informe uma baseUrl válida (http:// ou https://).')
+    return {
+      name, kind: 'http', ssl: b.ssl === true, baseUrl,
+      authHeader: b.authHeader ? String(b.authHeader).trim() : undefined,
+      authScheme: b.authScheme ? String(b.authScheme).trim() : undefined,
+      token: b.token ? String(b.token) : undefined,
+    }
+  }
   const host = String(b.host ?? '').trim()
   const database = String(b.database ?? '').trim()
   const username = String(b.username ?? '').trim()
   const port = Number(b.port) || (kind === 'mysql' ? 3306 : 5432)
-  if (!name || !host || !database || !username) {
-    throw new Error('Preencha nome, host, banco e usuário.')
-  }
+  if (!host || !database || !username) throw new Error('Preencha host, banco e usuário.')
   return {
     name, kind, host, port, database, username,
     password: b.password ? String(b.password) : undefined,
@@ -58,10 +70,14 @@ connectionsRouter.get('/', async (_req, res) => {
 connectionsRouter.post('/test', async (req, res) => {
   try {
     const input = parseInput(req.body)
+    if (input.kind === 'http') {
+      const r = await testHttp(input.baseUrl!, { header: input.authHeader, scheme: input.authScheme, token: input.token })
+      return res.json({ ok: r.ok, latencyMs: r.latencyMs, status: r.status, error: r.ok ? undefined : r.error })
+    }
     if (!input.password) return res.status(400).json({ error: 'Informe a senha para testar.' })
     const r = await testParams({
-      kind: input.kind, host: input.host, port: input.port, database: input.database,
-      user: input.username, password: input.password, ssl: input.ssl,
+      kind: input.kind, host: input.host!, port: input.port!, database: input.database!,
+      user: input.username!, password: input.password, ssl: input.ssl,
     })
     res.json(r)
   } catch (e) {

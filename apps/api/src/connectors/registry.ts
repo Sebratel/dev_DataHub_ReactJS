@@ -7,7 +7,7 @@
 // Credencial NUNCA vai para o frontend.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type ConnectorKind = 'postgres' | 'mysql' | 'soap' | 'gcs'
+export type ConnectorKind = 'postgres' | 'mysql' | 'http' | 'soap' | 'gcs'
 
 export interface ConnectorConfig {
   host: string
@@ -18,13 +18,22 @@ export interface ConnectorConfig {
   ssl: boolean
 }
 
+// Config de uma fonte HTTP (API GET). token já descriptografado em memória.
+export interface HttpConnConfig {
+  baseUrl: string
+  authHeader?: string // ex.: 'Authorization' | 'x-api-key'
+  authScheme?: string // ex.: 'Bearer'; vazio = valor cru
+  token?: string
+}
+
 export interface ConnectorDef {
   id: string
   name: string
   kind: ConnectorKind
-  envPrefix?: string        // fontes FIXAS (.env)
-  config?: ConnectorConfig  // fontes GERENCIADAS (banco, descriptografada em memória)
-  managed?: boolean         // true = veio da tela (editável/removível)
+  envPrefix?: string          // fontes FIXAS (.env)
+  config?: ConnectorConfig    // fontes SQL GERENCIADAS (banco, descriptografada)
+  http?: HttpConnConfig       // fontes HTTP GERENCIADAS
+  managed?: boolean           // true = veio da tela (editável/removível)
 }
 
 export const CONNECTORS: ConnectorDef[] = [
@@ -83,6 +92,7 @@ export function envPassword(id: string): string | undefined {
 // Uma fonte está "configurada" quando dá para conectar: gerenciada tem config;
 // fixa precisa das 4 variáveis mínimas no .env.
 export function isConfigured(def: ConnectorDef): boolean {
+  if (def.kind === 'http') return !!def.http?.baseUrl
   if (def.config) return true
   if (!def.envPrefix) return false
   return ['HOST', 'DATABASE', 'USER', 'PASSWORD']

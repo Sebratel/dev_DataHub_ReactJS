@@ -122,7 +122,7 @@ export interface DatasetField {
 export interface ConnectionInfo {
   id: string
   name: string
-  kind: 'postgres' | 'mysql' | 'soap' | 'gcs'
+  kind: 'postgres' | 'mysql' | 'http' | 'soap' | 'gcs'
   envPrefix: string | null
   configured: boolean
   status: 'ok' | 'error' | 'unknown'

@@ -13,6 +13,7 @@ import type { DatasetSummary, DatasetDetail, AdminDatasetField, FieldType } from
 import { db, isDbAvailable } from '../../db/pool.js'
 import { getConnector } from '../../connectors/registry.js'
 import { querySource, discoverColumns } from '../../connectors/pools.js'
+import { sampleHttp, inferFields, type HttpEndpoint } from '../../connectors/httpSource.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
@@ -204,6 +205,73 @@ datasetsRouter.post('/', requireAuth({ role: 'admin' }), async (req, res) => {
     const msg = (e as Error).message
     if (msg.includes('datasets_tenant_id_connection_id_schema_name_object_name_key')) {
       return res.status(409).json({ error: 'Esta tabela já foi publicada como conjunto de dados.' })
+    }
+    res.status(500).json({ error: msg })
+  } finally {
+    client.release()
+  }
+})
+
+// Publica um dataset a partir de uma API (conexão HTTP). Puxa uma amostra,
+// infere os campos e cria o conjunto com o endpoint/paginação em source_config.
+datasetsRouter.post('/http', requireAuth({ role: 'admin' }), async (req, res) => {
+  const { connectionId, name, path, query, recordsPath, pagination, description } = req.body ?? {}
+  const def = getConnector(String(connectionId))
+  if (!def || def.kind !== 'http') return res.status(400).json({ error: 'Selecione uma conexão HTTP válida.' })
+  if (!path) return res.status(400).json({ error: 'Informe o caminho do endpoint (ex.: /clientes).' })
+
+  const ep: HttpEndpoint = {
+    baseUrl: def.http?.baseUrl ?? '',
+    path: String(path),
+    query: query && typeof query === 'object' ? (query as Record<string, string>) : undefined,
+    recordsPath: recordsPath ? String(recordsPath) : undefined,
+    auth: { header: def.http?.authHeader, scheme: def.http?.authScheme, token: def.http?.token },
+    pagination: pagination ?? { style: 'none' },
+  }
+  let sample
+  try {
+    sample = await sampleHttp(ep, { timeoutMs: 15_000 })
+  } catch (e) {
+    return res.status(400).json({ error: `Falha ao consultar a API: ${(e as Error).message}` })
+  }
+  if (!sample.length) return res.status(400).json({ error: 'A API não retornou registros — confira o caminho e o "recordsPath".' })
+  const fields = inferFields(sample)
+  const displayName = String(name || 'API')
+  const sourceConfig = JSON.stringify({
+    path: String(path), query: ep.query ?? null, recordsPath: ep.recordsPath ?? null, pagination: ep.pagination,
+  })
+
+  const client = await db.connect()
+  try {
+    await client.query('begin')
+    const tenant = (await client.query('select id from tenants where slug = $1', [req.user!.tenant])).rows[0]
+    const base = slugify(displayName)
+    const taken = new Set((await client.query('select slug from datasets where tenant_id = $1', [tenant.id])).rows.map((r) => r.slug))
+    let slug = base
+    for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
+
+    const ds = (await client.query(
+      `insert into datasets (tenant_id, connection_id, schema_name, object_name, slug, name, description,
+                             owner_email, sync_mode, source_config)
+       values ($1, $2, 'api', $3, $4, $5, $6, $7, 'snapshot', $8) returning id`,
+      [tenant.id, connectionId, String(path), slug, displayName, String(description || ''), req.user!.email, sourceConfig],
+    )).rows[0]
+    for (const [i, f] of fields.entries()) {
+      await client.query(
+        `insert into dataset_fields (dataset_id, source_column, key, label, type, sort_order)
+         values ($1, $2, $3, $4, $5, $6)`,
+        [ds.id, f.key, f.key, labelize(f.key), f.type, i],
+      )
+    }
+    await client.query('commit')
+    await audit(req, 'datasets.publish.http', { type: 'dataset', id: slug }, { connectionId, path })
+    reindexInBackground(String(ds.id))
+    res.status(201).json({ id: ds.id, slug, fields: fields.length })
+  } catch (e) {
+    await client.query('rollback')
+    const msg = (e as Error).message
+    if (msg.includes('datasets_tenant_id_connection_id_schema_name_object_name_key')) {
+      return res.status(409).json({ error: 'Este endpoint já foi publicado como conjunto de dados.' })
     }
     res.status(500).json({ error: msg })
   } finally {

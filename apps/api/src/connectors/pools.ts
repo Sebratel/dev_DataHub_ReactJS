@@ -6,6 +6,7 @@ import mysql from 'mysql2/promise'
 import { CONNECTORS, getConnector, isConfigured, type ConnectorDef } from './registry.js'
 import { assertReadOnly } from '../core/guard.js'
 import { config } from '../core/config.js'
+import { testHttp } from './httpSource.js'
 
 const { Pool } = pg
 
@@ -150,6 +151,13 @@ export async function testParams(input: {
 
 // Ping barato (SELECT 1) para a tela de conexões do admin.
 export async function checkConnection(connectorId: string): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+  const def = getConnector(connectorId)
+  if (def?.kind === 'http') {
+    const r = await testHttp(def.http?.baseUrl ?? '', {
+      header: def.http?.authHeader, scheme: def.http?.authScheme, token: def.http?.token,
+    })
+    return { ok: r.ok, latencyMs: r.latencyMs, error: r.ok ? undefined : r.error }
+  }
   const started = Date.now()
   try {
     await querySource(connectorId, 'select 1 as ok')

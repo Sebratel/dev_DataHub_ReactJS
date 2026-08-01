@@ -9,13 +9,19 @@ import { resetPool } from './pools.js'
 
 export interface ConnectionInput {
   name: string
-  kind: 'postgres' | 'mysql'
-  host: string
-  port: number
-  database: string
-  username: string
-  password?: string // ausente no update = mantém a atual
+  kind: 'postgres' | 'mysql' | 'http'
   ssl: boolean
+  // SQL (postgres/mysql)
+  host?: string
+  port?: number
+  database?: string
+  username?: string
+  password?: string // ausente no update = mantém a atual
+  // HTTP (API GET)
+  baseUrl?: string
+  authHeader?: string
+  authScheme?: string
+  token?: string // ausente no update = mantém o atual
 }
 
 function slugify(name: string): string {
@@ -30,13 +36,24 @@ export async function reloadConnections(): Promise<void> {
   const defs: ConnectorDef[] = []
   for (const r of rows) {
     try {
-      defs.push({
-        id: r.id, name: r.name, kind: r.kind, managed: true,
-        config: {
-          host: r.host, port: r.port, database: r.database,
-          user: r.username, password: decryptSecret(r.password_enc), ssl: r.ssl,
-        },
-      })
+      if (r.kind === 'http') {
+        const cfg = (r.config ?? {}) as { baseUrl?: string; authHeader?: string; authScheme?: string }
+        defs.push({
+          id: r.id, name: r.name, kind: 'http', managed: true,
+          http: {
+            baseUrl: cfg.baseUrl ?? '', authHeader: cfg.authHeader || undefined, authScheme: cfg.authScheme || undefined,
+            token: r.password_enc ? decryptSecret(r.password_enc) : undefined,
+          },
+        })
+      } else {
+        defs.push({
+          id: r.id, name: r.name, kind: r.kind, managed: true,
+          config: {
+            host: r.host, port: r.port, database: r.database,
+            user: r.username, password: decryptSecret(r.password_enc), ssl: r.ssl,
+          },
+        })
+      }
     } catch (e) {
       console.warn(`[connections] falha ao carregar "${r.id}": ${(e as Error).message}`)
     }
@@ -55,14 +72,34 @@ async function uniqueId(base: string): Promise<string> {
   }
 }
 
+// Colunas específicas por tipo: SQL usa host/porta/etc.; HTTP usa config jsonb
+// (baseUrl/header) e o "secret" é o token. Retorna também o segredo em claro.
+function rowValues(input: ConnectionInput): {
+  host: string | null; port: number | null; database: string | null; username: string | null
+  config: string | null; secret?: string
+} {
+  if (input.kind === 'http') {
+    return {
+      host: null, port: null, database: null, username: null,
+      config: JSON.stringify({ baseUrl: input.baseUrl, authHeader: input.authHeader || null, authScheme: input.authScheme || null }),
+      secret: input.token,
+    }
+  }
+  return {
+    host: input.host ?? '', port: input.port ?? 0, database: input.database ?? '', username: input.username ?? '',
+    config: null, secret: input.password,
+  }
+}
+
 export async function createConnection(input: ConnectionInput, byEmail: string): Promise<string> {
-  if (!input.password) throw new Error('Senha obrigatória para criar uma conexão.')
+  const v = rowValues(input)
+  if (input.kind !== 'http' && !v.secret) throw new Error('Senha obrigatória para criar uma conexão de banco.')
   const id = await uniqueId(slugify(input.name))
   await db.query(
-    `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, created_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [id, input.name, input.kind, input.host, input.port, input.database, input.username,
-     encryptSecret(input.password), input.ssl, byEmail],
+    `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, config, created_by)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [id, input.name, input.kind, v.host, v.port, v.database, v.username,
+     v.secret ? encryptSecret(v.secret) : null, input.ssl, v.config, byEmail],
   )
   await reloadConnections()
   return id
@@ -73,9 +110,11 @@ export async function createConnection(input: ConnectionInput, byEmail: string):
 // personalização de uma nativa). Só pede senha se não há nenhuma para reusar.
 export async function updateConnection(id: string, input: ConnectionInput, byEmail: string): Promise<void> {
   const exists = !!(await db.query('select 1 from source_connections where id = $1', [id])).rows[0]
+  const v = rowValues(input)
   let pwdEnc: string | null
-  if (input.password) pwdEnc = encryptSecret(input.password)
-  else if (exists) pwdEnc = null // coalesce mantém a atual
+  if (v.secret) pwdEnc = encryptSecret(v.secret)
+  else if (exists) pwdEnc = null // coalesce mantém o atual
+  else if (input.kind === 'http') pwdEnc = null // http pode não ter token
   else {
     const seed = envPassword(id) // personalizando uma nativa: reaproveita a senha do .env
     if (!seed) throw new Error('Informe a senha (não há senha do .env para reaproveitar).')
@@ -84,14 +123,14 @@ export async function updateConnection(id: string, input: ConnectionInput, byEma
   if (exists) {
     await db.query(
       `update source_connections set name=$2, kind=$3, host=$4, port=$5, "database"=$6, username=$7,
-         password_enc = coalesce($8, password_enc), ssl=$9, updated_at=now() where id=$1`,
-      [id, input.name, input.kind, input.host, input.port, input.database, input.username, pwdEnc, input.ssl],
+         password_enc = coalesce($8, password_enc), ssl=$9, config=$10, updated_at=now() where id=$1`,
+      [id, input.name, input.kind, v.host, v.port, v.database, v.username, pwdEnc, input.ssl, v.config],
     )
   } else {
     await db.query(
-      `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, created_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [id, input.name, input.kind, input.host, input.port, input.database, input.username, pwdEnc, input.ssl, byEmail],
+      `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, config, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [id, input.name, input.kind, v.host, v.port, v.database, v.username, pwdEnc, input.ssl, v.config, byEmail],
     )
   }
   resetPool(id)
