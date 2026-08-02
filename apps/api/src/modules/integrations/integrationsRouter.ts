@@ -65,6 +65,28 @@ credentialsRouter.delete('/:id', requireAuth({ role: 'editor' }), requireDb, asy
 // ─── API pública (token) ───────────────────────────────────────
 export const publicRouter = Router()
 
+// Monitoramento automático: TODA chamada da API pública (as APIs que os devs
+// pegam em Integrações) é registrada em api_call_metrics → painel "Saúde das
+// APIs". Best-effort: nunca atrapalha a resposta. O handler enriquece via
+// res.locals (consumidor/token, dataset, nº de linhas).
+function monitorPublicApi(req: Request, res: Response, next: NextFunction): void {
+  const started = Date.now()
+  res.on('finish', () => {
+    const status = res.statusCode
+    const bytes = Number(res.getHeader('content-length')) || 0
+    const locals = res.locals as { consumer?: string; dataSlug?: string; rows?: number }
+    void db.query(
+      `insert into api_call_metrics (dataset_slug, connection_id, endpoint, status, ok, duration_ms, rows, bytes, error, check_type)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'public')`,
+      [locals.dataSlug ?? null, locals.consumer ?? null, (req.originalUrl || '').split('?')[0],
+       status, status < 400, Date.now() - started, locals.rows ?? null, bytes,
+       status >= 400 ? `HTTP ${status}` : null],
+    ).catch(() => { /* métrica é best-effort */ })
+  })
+  next()
+}
+publicRouter.use(monitorPublicApi)
+
 publicRouter.get('/datasets/:slug/rows', async (req, res) => {
   if (!isDbAvailable()) return res.status(503).json({ error: 'Serviço indisponível.' })
   const token = String(req.query.token ?? req.headers['x-api-token'] ?? '')
@@ -79,6 +101,7 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
   if (cred.expires_at && new Date(cred.expires_at) < new Date()) {
     return res.status(401).json({ error: 'Token expirado.' })
   }
+  res.locals.consumer = cred.name // quem chamou (p/ o monitoramento)
   const slugs = (cred.dataset_slugs as string[]) ?? []
   if (slugs.length && !slugs.includes(req.params.slug)) {
     return res.status(403).json({ error: 'Este token não tem acesso a este conjunto de dados.' })
@@ -90,6 +113,7 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
     [cred.tenant_slug, req.params.slug],
   )).rows[0]
   if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+  res.locals.dataSlug = ds.slug
   const dir = datasetDir(String(cred.tenant_slug), String(ds.slug))
   if (!listParquet(dir).length) return res.status(409).json({ error: 'Conjunto ainda não sincronizado.' })
 
@@ -109,6 +133,7 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
       admin: false, glob: parquetGlob(dir),
     })
     const { columns, rows } = await duckQuery(compiled.sql, compiled.params)
+    res.locals.rows = rows.length
     const total = Number((await duckQuery(compiled.countSql!, compiled.countParams)).rows[0]?.n ?? 0)
     await db.query(`update api_credentials set last_used_at = now() where id = $1`, [cred.id])
 
