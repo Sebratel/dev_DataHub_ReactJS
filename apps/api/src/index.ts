@@ -17,6 +17,7 @@ import { metricsRouter } from './modules/metrics/metricsRouter.js'
 import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
+import { writeProductsRouter } from './modules/integrations/writeProductsRouter.js'
 import { accessRouter } from './modules/admin/accessRouter.js'
 import { monitorRouter } from './modules/admin/monitorRouter.js'
 import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
@@ -80,6 +81,7 @@ app.use('/api/v1/dashboards', dashboardsRouter)
 // Chat IA e integrações.
 app.use('/api/v1/ai', aiRouter)
 app.use('/api/v1/credentials', credentialsRouter)
+app.use('/api/v1/write-products', writeProductsRouter)
 app.use('/api/public/v1', publicRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))

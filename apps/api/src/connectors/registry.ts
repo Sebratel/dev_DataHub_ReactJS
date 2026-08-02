@@ -34,6 +34,7 @@ export interface ConnectorDef {
   config?: ConnectorConfig    // fontes SQL GERENCIADAS (banco, descriptografada)
   http?: HttpConnConfig       // fontes HTTP GERENCIADAS
   managed?: boolean           // true = veio da tela (editável/removível)
+  writable?: boolean          // true = pode receber ESCRITA (produtos de escrita)
 }
 
 export const CONNECTORS: ConnectorDef[] = [

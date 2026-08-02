@@ -14,6 +14,7 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
+import { executeWriteInsert, type WriteColumn } from '../../connectors/writeProducts.js'
 
 function requireDb(_req: Request, res: Response, next: NextFunction): void {
   if (!isDbAvailable()) { res.status(503).json({ error: 'Banco de metadados indisponível.' }); return }
@@ -35,16 +36,18 @@ credentialsRouter.get('/', requireAuth(), requireDb, async (req, res) => {
 })
 
 credentialsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
-  const { name, datasetSlugs, expiresInDays } = req.body ?? {}
+  const { name, datasetSlugs, writeSlugs, expiresInDays } = req.body ?? {}
   if (!name) return res.status(400).json({ error: 'Informe um nome para o token.' })
+  // Escopo de escrita só admin concede (leitura pode editor).
+  const writes = Array.isArray(writeSlugs) && req.user!.roles.includes('admin') ? writeSlugs : []
   const token = `dhub_${randomBytes(24).toString('base64url')}`
   const expiresAt = Number(expiresInDays) > 0
     ? new Date(Date.now() + Number(expiresInDays) * 86_400_000).toISOString()
     : null
   const row = (await db.query(
-    `insert into api_credentials (tenant_id, name, token_hash, dataset_slugs, owner_email, expires_at)
-     select t.id, $1, $2, $3, $4, $5 from tenants t where t.slug = $6 returning id`,
-    [String(name).trim(), hash(token), Array.isArray(datasetSlugs) ? datasetSlugs : [],
+    `insert into api_credentials (tenant_id, name, token_hash, dataset_slugs, write_slugs, owner_email, expires_at)
+     select t.id, $1, $2, $3, $4, $5, $6 from tenants t where t.slug = $7 returning id`,
+    [String(name).trim(), hash(token), Array.isArray(datasetSlugs) ? datasetSlugs : [], writes,
      req.user!.email, expiresAt, req.user!.tenant],
   )).rows[0]
   await audit(req, 'credentials.create', { type: 'credential', id: String(row.id) }, { name })
@@ -150,6 +153,52 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
       return
     }
     res.json({ dataset: ds.slug, total, limit, offset, rows })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+// ─── Escrita (Fase 4): produto de escrita → INSERT parametrizado ────────────
+// O consumidor manda só VALORES; o SQL é montado pelo servidor a partir da
+// definição do admin. Auditado + monitorado (herda o middleware do publicRouter).
+publicRouter.post('/w/:slug', async (req, res) => {
+  if (!isDbAvailable()) return res.status(503).json({ error: 'Serviço indisponível.' })
+  const token = String(req.query.token ?? req.headers['x-api-token'] ?? '')
+  if (!token) return res.status(401).json({ error: 'Token ausente (?token=… ou header X-Api-Token).' })
+
+  const cred = (await db.query(
+    `select c.*, t.slug as tenant_slug from api_credentials c
+      join tenants t on t.id = c.tenant_id where c.token_hash = $1`,
+    [hash(token)],
+  )).rows[0]
+  if (!cred || cred.revoked) return res.status(401).json({ error: 'Token inválido ou revogado.' })
+  if (cred.expires_at && new Date(cred.expires_at) < new Date()) return res.status(401).json({ error: 'Token expirado.' })
+  res.locals.consumer = cred.name
+
+  const writeSlugs = (cred.write_slugs as string[]) ?? []
+  if (!writeSlugs.includes(req.params.slug)) {
+    return res.status(403).json({ error: 'Este token não tem acesso a este produto de escrita.' })
+  }
+  const p = (await db.query(
+    `select * from api_write_products where tenant_id = $1 and slug = $2 and enabled`,
+    [cred.tenant_id, req.params.slug],
+  )).rows[0]
+  if (!p) return res.status(404).json({ error: 'Produto de escrita não encontrado (ou desativado).' })
+  res.locals.dataSlug = p.slug
+
+  try {
+    const result = await executeWriteInsert(
+      { connectionId: String(p.connection_id), schema: String(p.schema_name), table: String(p.table_name), columns: p.columns as WriteColumn[] },
+      (req.body ?? {}) as Record<string, unknown>,
+    )
+    res.locals.rows = result.rowCount
+    await db.query(`update api_credentials set last_used_at = now() where id = $1`, [cred.id])
+    await db.query(
+      `insert into audit_logs (tenant_id, user_email, action, resource_type, resource_id, detail, ip)
+       values ($1, $2, 'write-product.exec', 'write_product', $3, $4, $5)`,
+      [cred.tenant_id, cred.name, p.slug, JSON.stringify({ affected: result.rowCount }), req.ip ?? null],
+    )
+    res.status(201).json({ ok: true, affected: result.rowCount, returned: result.rows[0] ?? null })
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }

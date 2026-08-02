@@ -11,6 +11,7 @@ export interface ConnectionInput {
   name: string
   kind: 'postgres' | 'mysql' | 'http'
   ssl: boolean
+  writable?: boolean // permite ESCRITA (só postgres/mysql; produtos de escrita)
   // SQL (postgres/mysql)
   host?: string
   port?: number
@@ -47,7 +48,7 @@ export async function reloadConnections(): Promise<void> {
         })
       } else {
         defs.push({
-          id: r.id, name: r.name, kind: r.kind, managed: true,
+          id: r.id, name: r.name, kind: r.kind, managed: true, writable: !!r.writable,
           config: {
             host: r.host, port: r.port, database: r.database,
             user: r.username, password: decryptSecret(r.password_enc), ssl: r.ssl,
@@ -95,11 +96,12 @@ export async function createConnection(input: ConnectionInput, byEmail: string):
   const v = rowValues(input)
   if (input.kind !== 'http' && !v.secret) throw new Error('Senha obrigatória para criar uma conexão de banco.')
   const id = await uniqueId(slugify(input.name))
+  const writable = input.kind !== 'http' && input.writable === true
   await db.query(
-    `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, config, created_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, config, writable, created_by)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [id, input.name, input.kind, v.host, v.port, v.database, v.username,
-     v.secret ? encryptSecret(v.secret) : null, input.ssl, v.config, byEmail],
+     v.secret ? encryptSecret(v.secret) : null, input.ssl, v.config, writable, byEmail],
   )
   await reloadConnections()
   return id
@@ -120,17 +122,18 @@ export async function updateConnection(id: string, input: ConnectionInput, byEma
     if (!seed) throw new Error('Informe a senha (não há senha do .env para reaproveitar).')
     pwdEnc = encryptSecret(seed)
   }
+  const writable = input.kind !== 'http' && input.writable === true
   if (exists) {
     await db.query(
       `update source_connections set name=$2, kind=$3, host=$4, port=$5, "database"=$6, username=$7,
-         password_enc = coalesce($8, password_enc), ssl=$9, config=$10, updated_at=now() where id=$1`,
-      [id, input.name, input.kind, v.host, v.port, v.database, v.username, pwdEnc, input.ssl, v.config],
+         password_enc = coalesce($8, password_enc), ssl=$9, config=$10, writable=$11, updated_at=now() where id=$1`,
+      [id, input.name, input.kind, v.host, v.port, v.database, v.username, pwdEnc, input.ssl, v.config, writable],
     )
   } else {
     await db.query(
-      `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, config, created_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [id, input.name, input.kind, v.host, v.port, v.database, v.username, pwdEnc, input.ssl, v.config, byEmail],
+      `insert into source_connections (id, name, kind, host, port, "database", username, password_enc, ssl, config, writable, created_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, input.name, input.kind, v.host, v.port, v.database, v.username, pwdEnc, input.ssl, v.config, writable, byEmail],
     )
   }
   resetPool(id)

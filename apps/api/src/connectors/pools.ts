@@ -149,6 +149,28 @@ export async function testParams(input: {
   }
 }
 
+// ESCRITA (Fase 4): executa uma mutação parametrizada numa conexão GRAVÁVEL.
+// É o ÚNICO caminho que NÃO passa pelo guard read-only — e só funciona em
+// conexões explicitamente marcadas como writable. Uso exclusivo do executor de
+// produtos de escrita (o SQL é montado pelo servidor; o consumidor só dá valores).
+export async function execSource(
+  connectorId: string, sql: string, params: unknown[] = [],
+): Promise<{ rowCount: number; rows: Record<string, unknown>[] }> {
+  const def = getConnector(connectorId)
+  if (!def) throw new Error(`Fonte desconhecida: ${connectorId}`)
+  if (!def.writable) throw new Error(`A conexão "${connectorId}" não está marcada como gravável.`)
+  if (def.kind === 'postgres') {
+    const res = await getPgPool(def).query(sql, params as never[])
+    return { rowCount: res.rowCount ?? 0, rows: res.rows }
+  }
+  if (def.kind === 'mysql') {
+    const [result] = await getMysqlPool(def).query(sql, params)
+    const r = result as { affectedRows?: number; insertId?: number }
+    return { rowCount: r.affectedRows ?? 0, rows: r.insertId != null ? [{ insertId: r.insertId }] : [] }
+  }
+  throw new Error(`Conexão "${connectorId}" (${def.kind}) não suporta escrita SQL.`)
+}
+
 // Ping barato (SELECT 1) para a tela de conexões do admin.
 export async function checkConnection(connectorId: string): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
   const def = getConnector(connectorId)
