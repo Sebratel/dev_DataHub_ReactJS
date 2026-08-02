@@ -18,7 +18,8 @@ import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { accessRouter } from './modules/admin/accessRouter.js'
-import { startScheduler } from './modules/sync/scheduler.js'
+import { monitorRouter } from './modules/admin/monitorRouter.js'
+import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging } from './core/lake.js'
 import { reloadConnections } from './connectors/store.js'
@@ -61,6 +62,7 @@ app.get('/api/v1/auth/me', requireAuth(), (req, res) => {
 // Admin: fontes de dados e controle de acesso (usuários, times, concessões).
 app.use('/api/v1/connections', connectionsRouter)
 app.use('/api/v1/admin', accessRouter)
+app.use('/api/v1/health-checks', monitorRouter)
 
 // Catálogo de conjuntos de dados. ORDEM IMPORTA: query e sync têm rotas mais
 // específicas (/:slug/query, /:id/sync) e vêm antes do router genérico.
@@ -100,6 +102,7 @@ if (isDbAvailable()) {
     console.warn(`[api-metrics] provisionamento falhou: ${(e as Error).message}`))
 }
 startScheduler() // sync diário na madrugada (ETL_HOUR)
+startHealthChecks() // Fase 3: monitor de uptime a cada 60s
 // Catálogo semântico: indexa em background os datasets sem embedding (ou com
 // texto desatualizado). Não bloqueia o boot — na 1ª vez baixa o modelo (~120MB).
 if (isDbAvailable()) {

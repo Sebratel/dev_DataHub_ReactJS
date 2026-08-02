@@ -16,6 +16,7 @@ const FIELDS: [key: string, label: string, type: string][] = [
   ['rows', 'Linhas', 'number'],
   ['bytes', 'Bytes', 'number'],
   ['error', 'Erro', 'text'],
+  ['check_type', 'Origem', 'text'], // 'sync' (ingestão) | 'healthcheck' (uptime)
   ['created_at', 'Quando', 'date'],
 ]
 

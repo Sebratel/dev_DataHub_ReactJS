@@ -7,6 +7,7 @@ import { db, isDbAvailable } from '../../db/pool.js'
 import { enqueueSync } from './ingest.js'
 import { orderDerived } from '../transform/derive.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
+import { runDueHealthChecks } from '../../connectors/healthChecks.js'
 
 function msUntilNextHour(): number {
   const now = new Date()
@@ -54,4 +55,13 @@ export function startScheduler(): void {
   }
   console.log(`[scheduler] verificação a cada hora cheia (janela diária ETL_HOUR=${config.sync.hour}h; cadência por conjunto). Próxima em ${Math.round(msUntilNextHour() / 60000)} min.`)
   schedule()
+}
+
+// Health checks (Fase 3): a cada 60s executa os que estão vencidos pela sua
+// cadência (interval_minutes). Independente da fila de sync.
+export function startHealthChecks(): void {
+  setInterval(() => {
+    void runDueHealthChecks().catch((e) => console.error(`[healthcheck] falha: ${(e as Error).message}`))
+  }, 60_000)
+  console.log('[healthcheck] monitor ativo (verifica a cada 60s).')
 }
