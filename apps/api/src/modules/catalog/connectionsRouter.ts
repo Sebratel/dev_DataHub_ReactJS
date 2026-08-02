@@ -59,7 +59,7 @@ connectionsRouter.get('/', async (_req, res) => {
         : undefined
       const base = {
         id: def.id, name: def.name, kind: def.kind, envPrefix: def.envPrefix ?? null,
-        managed: !!def.managed, native: RESERVED_IDS.has(def.id), configured, detail, http,
+        managed: !!def.managed, native: RESERVED_IDS.has(def.id), writable: !!def.writable, configured, detail, http,
       }
       if (!configured) return { ...base, status: 'unknown' as const, latencyMs: null, error: null }
       const check = await checkConnection(def.id)

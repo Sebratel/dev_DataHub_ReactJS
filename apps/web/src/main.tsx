@@ -9,6 +9,7 @@ import ConnectionsPage from '@/features/admin/ConnectionsPage'
 import AccessPage from '@/features/admin/AccessPage'
 import AuditPage from '@/features/admin/AuditPage'
 import MonitorPage from '@/features/admin/MonitorPage'
+import WriteProductsPage from '@/features/admin/WriteProductsPage'
 import DatasetsPage from '@/features/datasets/DatasetsPage'
 import DatasetDetailPage from '@/features/datasets/DatasetDetailPage'
 import DerivedDatasetPage from '@/features/datasets/DerivedDatasetPage'
@@ -40,6 +41,7 @@ const router = createBrowserRouter([
       { path: 'admin/access', element: <AccessPage /> },
       { path: 'admin/audit', element: <AuditPage /> },
       { path: 'admin/monitor', element: <MonitorPage /> },
+      { path: 'admin/write-products', element: <WriteProductsPage /> },
     ],
   },
 ])

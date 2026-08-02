@@ -26,6 +26,7 @@ export default function ConnectionDialog({ existing, onClose, onSaved }: Props) 
   const [database, setDatabase] = useState(d?.database ?? '')
   const [username, setUsername] = useState(d?.username ?? '')
   const [ssl, setSsl] = useState(d?.ssl ?? false)
+  const [writable, setWritable] = useState(existing?.writable ?? false)
   // HTTP
   const [baseUrl, setBaseUrl] = useState(h?.baseUrl ?? '')
   const [authHeader, setAuthHeader] = useState(h?.authHeader ?? 'Authorization')
@@ -43,7 +44,7 @@ export default function ConnectionDialog({ existing, onClose, onSaved }: Props) 
     if (isHttp) {
       return { name: name.trim(), kind, ssl: false, baseUrl: baseUrl.trim(), authHeader: authHeader.trim() || undefined, authScheme: authScheme.trim() || undefined, token: secret || undefined }
     }
-    return { name: name.trim(), kind, host: host.trim(), port: Number(port) || defaultPort, database: database.trim(), username: username.trim(), password: secret || undefined, ssl }
+    return { name: name.trim(), kind, host: host.trim(), port: Number(port) || defaultPort, database: database.trim(), username: username.trim(), password: secret || undefined, ssl, writable }
   }
   const valid = isHttp
     ? name.trim() && /^https?:\/\//i.test(baseUrl.trim())
@@ -151,6 +152,12 @@ export default function ConnectionDialog({ existing, onClose, onSaved }: Props) 
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={ssl} onChange={(e) => setSsl(e.target.checked)} />
                 <span>Conexão SSL</span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" checked={writable} onChange={(e) => setWritable(e.target.checked)} className="mt-0.5" />
+                <span>Permitir <strong>escrita</strong> (produtos de escrita)<br />
+                  <span className="text-xs text-zinc-400">Use um usuário com permissão de INSERT. As fontes de produção devem ficar desmarcadas.</span>
+                </span>
               </label>
             </>
           )}

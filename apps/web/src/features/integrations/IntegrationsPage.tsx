@@ -11,17 +11,21 @@ interface Credential {
   id: string; name: string; dataset_slugs: string[]; owner_email: string
   revoked: boolean; last_used_at: string | null; expires_at: string | null; created_at: string
 }
+interface WriteProduct { id: string; slug: string; name: string }
 
 export default function IntegrationsPage() {
   const user = useAuthStore((s) => s.user)
   const confirm = useConfirm()
   const canEdit = !!user?.roles.some((r) => r === 'admin' || r === 'editor')
+  const isAdmin = !!user?.roles.includes('admin')
   const [credentials, setCredentials] = useState<Credential[] | null>(null)
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
+  const [writeProducts, setWriteProducts] = useState<WriteProduct[]>([])
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [fName, setFName] = useState('')
   const [fSlugs, setFSlugs] = useState<string[]>([])
+  const [fWriteSlugs, setFWriteSlugs] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [newToken, setNewToken] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
@@ -35,7 +39,11 @@ export default function IntegrationsPage() {
     load()
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
       .then((r) => setDatasets(r.datasets.filter((d) => d.lastSyncAt))).catch(() => {})
-  }, [])
+    if (isAdmin) {
+      api<{ products: WriteProduct[] }>('/api/v1/write-products')
+        .then((r) => setWriteProducts(r.products)).catch(() => {})
+    }
+  }, [isAdmin])
 
   async function create() {
     setSaving(true)
@@ -43,11 +51,11 @@ export default function IntegrationsPage() {
     try {
       const r = await api<{ token: string }>('/api/v1/credentials', {
         method: 'POST',
-        body: JSON.stringify({ name: fName, datasetSlugs: fSlugs }),
+        body: JSON.stringify({ name: fName, datasetSlugs: fSlugs, writeSlugs: isAdmin ? fWriteSlugs : [] }),
       })
       setNewToken(r.token)
       setShowForm(false)
-      setFName(''); setFSlugs([])
+      setFName(''); setFSlugs([]); setFWriteSlugs([])
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao criar token.')
@@ -136,6 +144,22 @@ export default function IntegrationsPage() {
               ))}
             </div>
           </div>
+          {isAdmin && writeProducts.length > 0 && (
+            <div className="text-sm">
+              <span className="mb-1 block text-xs text-zinc-500">
+                APIs de <strong>escrita</strong> permitidas (só admin concede — nenhuma marcada = só leitura)
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {writeProducts.map((p) => (
+                  <label key={p.slug} className="flex cursor-pointer items-center gap-1.5 rounded-full border border-red-200 px-3 py-1 text-xs dark:border-red-900">
+                    <input type="checkbox" checked={fWriteSlugs.includes(p.slug)}
+                      onChange={(e) => setFWriteSlugs((prev) => e.target.checked ? [...prev, p.slug] : prev.filter((s) => s !== p.slug))} />
+                    {p.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <button onClick={create} disabled={saving || !fName}
             className="flex w-fit items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
             {saving && <Loader2 size={14} className="animate-spin" />} Gerar token

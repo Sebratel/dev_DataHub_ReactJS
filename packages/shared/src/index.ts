@@ -133,6 +133,7 @@ export interface ConnectionInfo {
   // excluir a sobreposição reverte para o .env). Detalhe sem senha p/ editar.
   managed: boolean
   native: boolean
+  writable: boolean // pode receber escrita (produtos de escrita)
   detail?: { host: string; port: number; database: string; username: string; ssl: boolean }
   // Para conexões HTTP (sem o token): base e header de auth, p/ editar/publicar.
   http?: { baseUrl: string; authHeader: string | null; authScheme: string | null }

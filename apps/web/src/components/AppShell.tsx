@@ -4,7 +4,7 @@
 import { NavLink, Outlet, Navigate } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, Plug, Settings, ShieldCheck, ScrollText,
-  Moon, Sun, LogOut, Ruler, Zap, Activity,
+  Moon, Sun, LogOut, Ruler, Zap, Activity, PenLine,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from '@/store/authStore'
@@ -77,6 +77,7 @@ export default function AppShell() {
               </div>
               <NavItem to="/admin/connections" label="Conexões" sublabel="Fontes de dados" icon={Settings} />
               <NavItem to="/admin/monitor" label="Monitoramento" sublabel="Uptime das APIs" icon={Activity} />
+              <NavItem to="/admin/write-products" label="APIs de Escrita" sublabel="Endpoints de INSERT" icon={PenLine} />
               <NavItem to="/admin/access" label="Usuários e Acessos" sublabel="Papéis, times e permissões" icon={ShieldCheck} />
               <NavItem to="/admin/audit" label="Auditoria" sublabel="Histórico de ações" icon={ScrollText} />
             </>
