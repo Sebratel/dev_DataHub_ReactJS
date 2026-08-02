@@ -23,7 +23,7 @@ import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging } from './core/lake.js'
 import { reloadConnections } from './connectors/store.js'
-import { ensureApiMetricsDataset } from './modules/catalog/apiMetricsDataset.js'
+import { ensureApiMetricsDataset, ensureApiMetricsDashboard } from './modules/catalog/apiMetricsDataset.js'
 
 // Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
 // middleware de erro — sem isto, um único erro de SQL derruba a API inteira
@@ -100,6 +100,8 @@ if (isDbAvailable()) {
   // Painel de saúde das APIs "de graça": provisiona o dataset de métricas.
   await ensureApiMetricsDataset().catch((e) =>
     console.warn(`[api-metrics] provisionamento falhou: ${(e as Error).message}`))
+  await ensureApiMetricsDashboard().catch((e) =>
+    console.warn(`[api-metrics] dashboard falhou: ${(e as Error).message}`))
 }
 startScheduler() // sync diário na madrugada (ETL_HOUR)
 startHealthChecks() // Fase 3: monitor de uptime a cada 60s
