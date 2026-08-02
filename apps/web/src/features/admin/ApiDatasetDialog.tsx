@@ -11,7 +11,7 @@ interface Props {
   onClose: () => void
 }
 
-type PagStyle = 'none' | 'page' | 'offset'
+type PagStyle = 'none' | 'page' | 'offset' | 'cursor'
 
 export default function ApiDatasetDialog({ connection, onClose }: Props) {
   const navigate = useNavigate()
@@ -23,6 +23,10 @@ export default function ApiDatasetDialog({ connection, onClose }: Props) {
   const [pageParam, setPageParam] = useState('page')
   const [sizeParam, setSizeParam] = useState('per_page')
   const [size, setSize] = useState('100')
+  // cursor
+  const [cursorMode, setCursorMode] = useState<'body' | 'link'>('body')
+  const [cursorParam, setCursorParam] = useState('cursor')
+  const [cursorPath, setCursorPath] = useState('meta.next')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -39,13 +43,22 @@ export default function ApiDatasetDialog({ connection, onClose }: Props) {
     if (!path.trim()) { setError('Informe o caminho do endpoint.'); return }
     setBusy(true); setError(null)
     try {
-      const pagination = pag === 'none' ? { style: 'none' } : {
-        style: pag,
-        pageParam: pageParam.trim() || (pag === 'offset' ? 'offset' : 'page'),
-        sizeParam: sizeParam.trim() || undefined,
-        size: Number(size) || undefined,
-        start: pag === 'offset' ? 0 : 1,
-      }
+      const pagination = pag === 'none' ? { style: 'none' }
+        : pag === 'cursor' ? {
+          style: 'cursor',
+          pageParam: cursorMode === 'body' ? (cursorParam.trim() || 'cursor') : undefined,
+          cursorPath: cursorMode === 'body' ? (cursorPath.trim() || undefined) : undefined,
+          linkHeader: cursorMode === 'link' ? true : undefined,
+          sizeParam: sizeParam.trim() || undefined,
+          size: Number(size) || undefined,
+        }
+        : {
+          style: pag,
+          pageParam: pageParam.trim() || (pag === 'offset' ? 'offset' : 'page'),
+          sizeParam: sizeParam.trim() || undefined,
+          size: Number(size) || undefined,
+          start: pag === 'offset' ? 0 : 1,
+        }
       const r = await api<{ slug: string }>('/api/v1/datasets/http', {
         method: 'POST',
         body: JSON.stringify({
@@ -101,9 +114,10 @@ export default function ApiDatasetDialog({ connection, onClose }: Props) {
                 <option value="none">Sem paginação (uma resposta)</option>
                 <option value="page">Por página (?page=1&amp;per_page=100)</option>
                 <option value="offset">Por offset (?offset=0&amp;limit=100)</option>
+                <option value="cursor">Por cursor / Link header</option>
               </select>
             </label>
-            {pag !== 'none' && (
+            {(pag === 'page' || pag === 'offset') && (
               <div className="mt-2 grid grid-cols-3 gap-2">
                 <label className="text-xs text-zinc-500">Param {pag === 'offset' ? 'offset' : 'página'}
                   <input value={pageParam} onChange={(e) => setPageParam(e.target.value)} className={inp} placeholder={pag === 'offset' ? 'offset' : 'page'} />
@@ -114,6 +128,29 @@ export default function ApiDatasetDialog({ connection, onClose }: Props) {
                 <label className="text-xs text-zinc-500">Tamanho
                   <input value={size} onChange={(e) => setSize(e.target.value)} className={inp} inputMode="numeric" />
                 </label>
+              </div>
+            )}
+            {pag === 'cursor' && (
+              <div className="mt-2 grid gap-2">
+                <label className="text-xs text-zinc-500">Origem do cursor
+                  <select value={cursorMode} onChange={(e) => setCursorMode(e.target.value as 'body' | 'link')} className={inp}>
+                    <option value="body">No corpo da resposta (campo)</option>
+                    <option value="link">No header Link (rel="next")</option>
+                  </select>
+                </label>
+                {cursorMode === 'body' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-xs text-zinc-500">Param que envia o cursor
+                      <input value={cursorParam} onChange={(e) => setCursorParam(e.target.value)} className={inp} placeholder="cursor" />
+                    </label>
+                    <label className="text-xs text-zinc-500">Campo do próximo cursor
+                      <input value={cursorPath} onChange={(e) => setCursorPath(e.target.value)} className={inp} placeholder="meta.next" />
+                    </label>
+                  </div>
+                )}
+                {cursorMode === 'link' && (
+                  <p className="text-xs text-zinc-400">A próxima página vem do header <span className="font-mono">Link; rel="next"</span> — nada mais a configurar.</p>
+                )}
               </div>
             )}
           </div>

@@ -12,11 +12,14 @@ export interface HttpAuth {
 }
 
 export interface HttpPagination {
-  style: 'none' | 'page' | 'offset'
-  pageParam?: string // 'page' (page) ou 'offset' (offset)
-  sizeParam?: string // 'per_page' | 'limit'
-  size?: number      // itens por página
-  start?: number     // 1 (page) ou 0 (offset) por padrão
+  style: 'none' | 'page' | 'offset' | 'cursor'
+  pageParam?: string  // 'page' (page) | 'offset' (offset) | param do cursor
+  sizeParam?: string  // 'per_page' | 'limit'
+  size?: number       // itens por página
+  start?: number      // 1 (page) ou 0 (offset) por padrão
+  // cursor:
+  cursorPath?: string // caminho (dot) no corpo até o PRÓXIMO cursor (ex.: 'meta.next')
+  linkHeader?: boolean // usar o header Link (rel="next") em vez do corpo
 }
 
 export interface HttpEndpoint {
@@ -37,25 +40,44 @@ export interface FetchOpts {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-// Extrai o array de registros do corpo pelo recordsPath (ex.: 'data.items').
-// Sem path e raiz-array → usa a raiz. Objeto único → embrulha em [obj].
-export function extractRecords(body: unknown, path?: string): Record<string, unknown>[] {
+// Caminho (dot) num objeto: 'meta.next' → body.meta.next.
+function getByPath(body: unknown, path?: string): unknown {
   let node: unknown = body
   if (path) for (const seg of path.split('.').filter(Boolean)) {
     node = node && typeof node === 'object' ? (node as Record<string, unknown>)[seg] : undefined
   }
+  return node
+}
+
+// Extrai o array de registros do corpo pelo recordsPath (ex.: 'data.items').
+// Sem path e raiz-array → usa a raiz. Objeto único → embrulha em [obj].
+export function extractRecords(body: unknown, path?: string): Record<string, unknown>[] {
+  const node = getByPath(body, path)
   if (Array.isArray(node)) return node as Record<string, unknown>[]
   if (node && typeof node === 'object') return [node as Record<string, unknown>]
   return []
 }
 
-function buildUrl(ep: HttpEndpoint, cursor: number): string {
+// Extrai a URL de rel="next" de um header Link (RFC 5988).
+function parseNextLink(link: string | null): string | null {
+  if (!link) return null
+  for (const part of link.split(',')) {
+    const m = part.match(/<([^>]+)>\s*;\s*rel\s*=\s*"?next"?/i)
+    if (m) return m[1]
+  }
+  return null
+}
+
+function buildUrl(ep: HttpEndpoint, cursor: string | number | null): string {
   const base = ep.baseUrl.endsWith('/') ? ep.baseUrl : ep.baseUrl + '/'
   const u = new URL(String(ep.path).replace(/^\//, ''), base)
   for (const [k, v] of Object.entries(ep.query ?? {})) u.searchParams.set(k, v)
   const pg = ep.pagination
   if (pg && pg.style !== 'none') {
-    u.searchParams.set(pg.pageParam ?? (pg.style === 'offset' ? 'offset' : 'page'), String(cursor))
+    if (cursor != null) {
+      const param = pg.pageParam ?? (pg.style === 'offset' ? 'offset' : pg.style === 'cursor' ? 'cursor' : 'page')
+      u.searchParams.set(param, String(cursor))
+    }
     if (pg.sizeParam && pg.size) u.searchParams.set(pg.sizeParam, String(pg.size))
   }
   return u.toString()
@@ -100,10 +122,12 @@ export async function* fetchHttpPages(
   const headers = authHeaders(ep.auth)
   const pg = ep.pagination ?? { style: 'none' as const }
   const size = pg.size
-  let cursor = pg.start ?? (pg.style === 'offset' ? 0 : 1)
+  // page/offset avançam um número; cursor começa nulo (1ª página sem token).
+  let cursor: string | number | null = pg.style === 'cursor' ? null : (pg.start ?? (pg.style === 'offset' ? 0 : 1))
+  let nextUrl: string | null = null // Link header pode devolver a URL completa
 
   for (let i = 0; ; i++) {
-    const url = buildUrl(ep, cursor)
+    const url = nextUrl ?? buildUrl(ep, cursor)
     const started = Date.now()
     const ctrl = opts.timeoutMs ? new AbortController() : null
     const timer = ctrl && opts.timeoutMs ? setTimeout(() => ctrl.abort(), opts.timeoutMs) : null
@@ -128,9 +152,24 @@ export async function* fetchHttpPages(
 
     if (records.length) yield records
     if (pg.style === 'none') return
-    // Última página: veio menos que o tamanho pedido (ou nada).
-    if (!records.length || (size != null && records.length < size)) return
-    cursor += pg.style === 'offset' ? (size ?? records.length) : 1
+    if (pg.style === 'cursor') {
+      if (pg.linkHeader) {
+        nextUrl = parseNextLink(res.headers.get('link'))
+        if (!nextUrl) return
+      } else {
+        const next = getByPath(body, pg.cursorPath)
+        if (next == null || next === '') return
+        cursor = typeof next === 'number' ? next : String(next)
+        nextUrl = null
+      }
+    } else {
+      // page/offset: última página = veio menos que o tamanho pedido (ou nada).
+      if (!records.length || (size != null && records.length < size)) return
+      cursor = (cursor as number) + (pg.style === 'offset' ? (size ?? records.length) : 1)
+    }
+    // Guarda anti-loop: se a próxima requisição seria idêntica à atual (cursor
+    // que não avança), para em vez de repetir para sempre.
+    if ((nextUrl ?? buildUrl(ep, cursor)) === url) return
     if (opts.maxPages && i + 1 >= opts.maxPages) return
     if (opts.pauseMs) await sleep(opts.pauseMs)
   }
