@@ -10,7 +10,7 @@ import type { DashboardDetail, Metric, Widget } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import WidgetCard from './WidgetCard'
-import AddWidgetModal from './AddWidgetModal'
+import WidgetEditorPanel, { type WidgetInput } from './WidgetEditorPanel'
 import ShareDialog from './ShareDialog'
 import EditDashboardDialog from './EditDashboardDialog'
 import TabBar from './TabBar'
@@ -26,8 +26,6 @@ import './grid.css'
 
 const GridLayout = WidthProvider(RGL)
 
-type WidgetInput = Parameters<Parameters<typeof AddWidgetModal>[0]['onSubmit']>[0]
-
 export default function DashboardPage() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -39,6 +37,7 @@ export default function DashboardPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [showShare, setShowShare] = useState(false)
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
+  const [previewWidget, setPreviewWidget] = useState<Widget | null>(null)
   const [showEditDash, setShowEditDash] = useState(false)
   const [showAi, setShowAi] = useState(false)
   const [showTabFilters, setShowTabFilters] = useState(false)
@@ -100,7 +99,14 @@ export default function DashboardPage() {
     () => (dash?.widgets ?? []).filter((w) => w.tabId === activeTabId),
     [dash, activeTabId],
   )
-  const layout = useMemo(() => resolveLayout(tabWidgets), [tabWidgets])
+  // Preview ao vivo: substitui o widget em edição (mesmo id) ou anexa o novo.
+  const displayWidgets = useMemo(() => {
+    if (!previewWidget) return tabWidgets
+    return tabWidgets.some((w) => w.id === previewWidget.id)
+      ? tabWidgets.map((w) => (w.id === previewWidget.id ? previewWidget : w))
+      : [...tabWidgets, previewWidget]
+  }, [tabWidgets, previewWidget])
+  const layout = useMemo(() => resolveLayout(displayWidgets), [displayWidgets])
   const activeTab = dash?.tabs.find((t) => t.id === activeTabId) ?? null
   const tabFilterDefs = activeTab?.config?.filters ?? []
   const tabDatasetSlugs = useMemo(() => [...new Set(tabWidgets.map((w) => w.datasetSlug))], [tabWidgets])
@@ -229,7 +235,7 @@ export default function DashboardPage() {
 
       <FilterBar filters={tabFilterDefs} values={filterValues} onChange={setFilterValues} />
 
-      {tabWidgets.length === 0 ? (
+      {displayWidgets.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
           Aba vazia. {editable ? 'Clique em "Widget" para adicionar o primeiro gráfico.' : ''}
         </div>
@@ -248,12 +254,12 @@ export default function DashboardPage() {
           containerPadding={[0, 0]}
           compactType="vertical"
         >
-          {tabWidgets.map((w) => (
-            <div key={w.id}>
+          {displayWidgets.map((w) => (
+            <div key={w.id} className={previewWidget?.id === w.id ? 'rounded-xl ring-2 ring-accent ring-offset-2 ring-offset-white dark:ring-offset-zinc-950' : undefined}>
               <WidgetCard
                 widget={w}
                 metrics={metrics}
-                editable={editMode && editable && !present}
+                editable={editMode && editable && !present && previewWidget?.id !== w.id}
                 fill
                 dashboardPalette={dash.settings?.palette}
                 refreshKey={refreshKey}
@@ -266,13 +272,21 @@ export default function DashboardPage() {
         </GridLayout>
       )}
 
-      {showAdd && <AddWidgetModal metrics={metrics} onClose={() => setShowAdd(false)} onSubmit={addWidget} />}
+      {showAdd && (
+        <WidgetEditorPanel
+          metrics={metrics}
+          onClose={() => { setShowAdd(false); setPreviewWidget(null) }}
+          onSubmit={addWidget}
+          onPreview={setPreviewWidget}
+        />
+      )}
       {editingWidget && (
-        <AddWidgetModal
+        <WidgetEditorPanel
           metrics={metrics}
           initial={editingWidget}
-          onClose={() => setEditingWidget(null)}
+          onClose={() => { setEditingWidget(null); setPreviewWidget(null) }}
           onSubmit={editWidget}
+          onPreview={setPreviewWidget}
         />
       )}
       {showEditDash && (
