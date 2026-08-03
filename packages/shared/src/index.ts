@@ -158,8 +158,34 @@ export interface Metric {
 // ── Dashboards ────────────────────────────────────────────────
 export type WidgetType = 'kpi' | 'line' | 'bar' | 'pie' | 'area' | 'table'
 
+// Posição livre no grid de 12 colunas (react-grid-layout). null = auto-flow:
+// o cliente calcula um layout inicial a partir de sort_order/size.
+export interface WidgetLayout { x: number; y: number; w: number; h: number }
+
+// Formatação condicional (KPI/tabela): pinta conforme o valor cruza um limite.
+export interface ConditionalRule {
+  op: '>' | '>=' | '<' | '<=' | '=' | '!='
+  value: number
+  color: string
+}
+
+// Personalização visual do widget (Fase 3). Tudo opcional — o render aplica
+// defaults de marca quando ausente.
+export interface WidgetStyle {
+  color?: string                 // cor primária da série
+  palette?: string[]             // paleta custom (pizza/multi-série)
+  showDataLabels?: boolean       // rótulos de dado no gráfico
+  showLegend?: boolean
+  numberFormat?: 'number' | 'currency' | 'percent'
+  decimals?: number
+  target?: number                // linha de meta (bar/line/area)
+  conditionalRules?: ConditionalRule[]
+  subtitle?: string
+}
+
 export interface Widget {
   id: string
+  tabId: string
   title: string
   type: WidgetType
   datasetId: string
@@ -167,8 +193,22 @@ export interface Widget {
   dimension: string | null
   metric: { metric: string } | { field: string; agg: Aggregation }
   filters: QueryFilter[]
-  size: 'sm' | 'md' | 'lg'
+  size: 'sm' | 'md' | 'lg'       // legado; fallback quando layout é null
+  layout: WidgetLayout | null
+  style: WidgetStyle | null
   sortOrder: number
+}
+
+// Filtro no nível da aba (aplica a todos os widgets da aba) — Fase 5.
+export interface TabFilter { field: string; label?: string; kind: 'multiselect' | 'daterange' }
+export interface TabConfig { autoRefreshSec?: number; filters?: TabFilter[] }
+
+export interface DashboardTab {
+  id: string
+  label: string
+  icon: string | null
+  sortOrder: number
+  config: TabConfig | null
 }
 
 export interface DashboardSummary {
@@ -181,6 +221,7 @@ export interface DashboardSummary {
 }
 
 export interface DashboardDetail extends DashboardSummary {
+  tabs: DashboardTab[]
   widgets: Widget[]
 }
 

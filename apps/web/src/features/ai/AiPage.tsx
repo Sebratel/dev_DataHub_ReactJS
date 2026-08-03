@@ -34,8 +34,9 @@ const TOOL_LABEL: Record<string, { icon: typeof Search; label: string }> = {
 
 function chartToWidget(c: ChartDef, i: number): Widget {
   return {
-    id: `ai-${i}`, title: c.title, type: c.type, datasetId: '', datasetSlug: c.datasetSlug,
-    dimension: c.dimension, metric: c.metric, filters: c.filters ?? [], size: 'md', sortOrder: i,
+    id: `ai-${i}`, tabId: '', title: c.title, type: c.type, datasetId: '', datasetSlug: c.datasetSlug,
+    dimension: c.dimension, metric: c.metric, filters: c.filters ?? [], size: 'md',
+    layout: null, style: null, sortOrder: i,
   }
 }
 
