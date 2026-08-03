@@ -4,7 +4,7 @@
 // no modo de edição habilitam-se arraste, redimensionamento e gestão de abas.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, Share2, Pencil, LayoutGrid, Check, Sparkles, Tv, Minimize } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Share2, Pencil, LayoutGrid, Check, Sparkles, Tv, Minimize, Filter } from 'lucide-react'
 import RGL, { WidthProvider, type Layout } from 'react-grid-layout'
 import type { DashboardDetail, Metric, Widget } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -15,6 +15,9 @@ import ShareDialog from './ShareDialog'
 import EditDashboardDialog from './EditDashboardDialog'
 import TabBar from './TabBar'
 import AiWidgetPanel from './AiWidgetPanel'
+import FilterBar from './FilterBar'
+import TabFiltersDialog from './TabFiltersDialog'
+import { tabQueryFilters, type FilterValues } from './tabFilters'
 import { resolveLayout, GRID_COLS, GRID_ROW_H } from './gridLayout'
 import { useConfirm } from '@/components/Dialogs'
 import 'react-grid-layout/css/styles.css'
@@ -38,6 +41,8 @@ export default function DashboardPage() {
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showEditDash, setShowEditDash] = useState(false)
   const [showAi, setShowAi] = useState(false)
+  const [showTabFilters, setShowTabFilters] = useState(false)
+  const [filterValues, setFilterValues] = useState<FilterValues>({})
   const [activeTabId, setActiveTabId] = useState<string>('')
   const [editMode, setEditMode] = useState(false)
   const [present, setPresent] = useState(false)
@@ -96,6 +101,12 @@ export default function DashboardPage() {
     [dash, activeTabId],
   )
   const layout = useMemo(() => resolveLayout(tabWidgets), [tabWidgets])
+  const activeTab = dash?.tabs.find((t) => t.id === activeTabId) ?? null
+  const tabFilterDefs = activeTab?.config?.filters ?? []
+  const tabDatasetSlugs = useMemo(() => [...new Set(tabWidgets.map((w) => w.datasetSlug))], [tabWidgets])
+
+  // Zera os filtros ao trocar de aba (cada aba tem seus próprios filtros).
+  useEffect(() => { setFilterValues({}) }, [activeTabId])
 
   async function addWidget(w: WidgetInput) {
     await api(`/api/v1/dashboards/${id}/widgets`, { method: 'POST', body: JSON.stringify({ ...w, tabId: activeTabId }) })
@@ -183,6 +194,10 @@ export default function DashboardPage() {
               className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
               <Plus size={15} /> Widget
             </button>
+            <button onClick={() => setShowTabFilters(true)} title="Filtros da aba"
+              className="rounded-lg border border-zinc-200 p-2 text-zinc-400 hover:text-accent dark:border-zinc-700">
+              <Filter size={15} />
+            </button>
             <button onClick={() => setShowEditDash(true)} title="Editar nome e descrição"
               className="rounded-lg border border-zinc-200 p-2 text-zinc-400 hover:text-accent dark:border-zinc-700">
               <Pencil size={15} />
@@ -212,6 +227,8 @@ export default function DashboardPage() {
         />
       </div>
 
+      <FilterBar filters={tabFilterDefs} values={filterValues} onChange={setFilterValues} />
+
       {tabWidgets.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
           Aba vazia. {editable ? 'Clique em "Widget" para adicionar o primeiro gráfico.' : ''}
@@ -240,6 +257,7 @@ export default function DashboardPage() {
                 fill
                 dashboardPalette={dash.settings?.palette}
                 refreshKey={refreshKey}
+                extraFilters={tabQueryFilters(tabFilterDefs, filterValues, w.datasetSlug)}
                 onDelete={() => void deleteWidget(w.id)}
                 onEdit={editMode && editable ? () => setEditingWidget(w) : undefined}
               />
@@ -274,6 +292,15 @@ export default function DashboardPage() {
           tabId={activeTabId}
           onClose={() => setShowAi(false)}
           onAdded={() => load()}
+        />
+      )}
+      {showTabFilters && activeTab && (
+        <TabFiltersDialog
+          dashboardId={dash.id}
+          tab={activeTab}
+          tabDatasetSlugs={tabDatasetSlugs}
+          onClose={() => setShowTabFilters(false)}
+          onSaved={load}
         />
       )}
     </div>
