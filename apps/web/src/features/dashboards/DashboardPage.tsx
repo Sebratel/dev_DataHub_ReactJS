@@ -1,9 +1,11 @@
-// Página de um dashboard: grade de widgets com reordenação por arrastar
-// (HTML5 drag), redimensionar, adicionar e remover.
-import { useCallback, useEffect, useRef, useState } from 'react'
+// Página de um dashboard: abas (guias) + canvas livre (react-grid-layout, 12
+// colunas, arrastar/redimensionar). O layout de cada widget (x/y/w/h) é salvo
+// por aba ao soltar. No modo de visualização o painel fica estático e limpo;
+// no modo de edição habilitam-se arraste, redimensionamento e gestão de abas.
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, Share2, Pencil } from 'lucide-react'
-import clsx from 'clsx'
+import { ArrowLeft, Plus, Trash2, Share2, Pencil, LayoutGrid, Check } from 'lucide-react'
+import RGL, { WidthProvider, type Layout } from 'react-grid-layout'
 import type { DashboardDetail, Metric, Widget } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -11,7 +13,14 @@ import WidgetCard from './WidgetCard'
 import AddWidgetModal from './AddWidgetModal'
 import ShareDialog from './ShareDialog'
 import EditDashboardDialog from './EditDashboardDialog'
+import TabBar from './TabBar'
+import { resolveLayout, GRID_COLS, GRID_ROW_H } from './gridLayout'
 import { useConfirm } from '@/components/Dialogs'
+import 'react-grid-layout/css/styles.css'
+import 'react-resizable/css/styles.css'
+import './grid.css'
+
+const GridLayout = WidthProvider(RGL)
 
 type WidgetInput = Parameters<Parameters<typeof AddWidgetModal>[0]['onSubmit']>[0]
 
@@ -27,11 +36,19 @@ export default function DashboardPage() {
   const [showShare, setShowShare] = useState(false)
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showEditDash, setShowEditDash] = useState(false)
-  const dragFrom = useRef<number | null>(null)
+  const [activeTabId, setActiveTabId] = useState<string>('')
+  const [editMode, setEditMode] = useState(false)
 
-  const load = useCallback(() => {
+  const load = useCallback((switchTo?: string) => {
     api<{ dashboard: DashboardDetail }>(`/api/v1/dashboards/${id}`)
-      .then((r) => setDash(r.dashboard))
+      .then((r) => {
+        setDash(r.dashboard)
+        setActiveTabId((cur) => {
+          if (switchTo) return switchTo
+          const exists = r.dashboard.tabs.some((t) => t.id === cur)
+          return exists ? cur : (r.dashboard.tabs[0]?.id ?? '')
+        })
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar.'))
   }, [id])
 
@@ -43,8 +60,14 @@ export default function DashboardPage() {
   const editable = !!user && (user.roles.includes('admin') ||
     (user.roles.includes('editor') && dash?.ownerEmail === user.email) || dash?.ownerEmail === user.email)
 
+  const tabWidgets = useMemo(
+    () => (dash?.widgets ?? []).filter((w) => w.tabId === activeTabId),
+    [dash, activeTabId],
+  )
+  const layout = useMemo(() => resolveLayout(tabWidgets), [tabWidgets])
+
   async function addWidget(w: WidgetInput) {
-    await api(`/api/v1/dashboards/${id}/widgets`, { method: 'POST', body: JSON.stringify(w) })
+    await api(`/api/v1/dashboards/${id}/widgets`, { method: 'POST', body: JSON.stringify({ ...w, tabId: activeTabId }) })
     load()
   }
 
@@ -59,20 +82,21 @@ export default function DashboardPage() {
     load()
   }
 
-  async function resizeWidget(widgetId: string, size: Widget['size']) {
-    await api(`/api/v1/dashboards/${id}/widgets/${widgetId}`, { method: 'PATCH', body: JSON.stringify({ size }) })
-    load()
-  }
-
-  // Reordenação por arrastar: solta sobre outro widget → troca as posições.
-  async function reorder(from: number, to: number) {
-    if (!dash || from === to) return
-    const list = [...dash.widgets]
-    const [moved] = list.splice(from, 1)
-    list.splice(to, 0, moved)
-    setDash({ ...dash, widgets: list }) // otimista
-    await Promise.all(list.map((w, i) =>
-      api(`/api/v1/dashboards/${id}/widgets/${w.id}`, { method: 'PATCH', body: JSON.stringify({ sortOrder: i }) })))
+  // Salva o layout do grid (posições x/y/w/h) da aba ativa ao soltar/redimensionar.
+  function persistLayout(next: Layout[]) {
+    setDash((d) => d && ({
+      ...d,
+      widgets: d.widgets.map((w) => {
+        const l = next.find((x) => x.i === w.id)
+        return l && w.tabId === activeTabId ? { ...w, layout: { x: l.x, y: l.y, w: l.w, h: l.h } } : w
+      }),
+    }))
+    void api(`/api/v1/dashboards/${id}/layout`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        widgets: next.map((l) => ({ id: l.i, layout: { x: l.x, y: l.y, w: l.w, h: l.h }, tabId: activeTabId })),
+      }),
+    }).catch(() => {})
   }
 
   async function deleteDashboard() {
@@ -89,7 +113,7 @@ export default function DashboardPage() {
   if (!dash) return <p className="text-sm text-zinc-500">Carregando…</p>
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto max-w-7xl">
       <Link to="/dashboards" className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
         <ArrowLeft size={14} /> Dashboards
       </Link>
@@ -100,6 +124,14 @@ export default function DashboardPage() {
         </div>
         {editable && (
           <div className="flex shrink-0 gap-2">
+            <button onClick={() => setEditMode((v) => !v)}
+              className={editMode
+                ? 'flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover'
+                : 'flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-600 hover:text-accent dark:border-zinc-700'}
+              title="Ativar arraste, redimensionamento e gestão de abas">
+              {editMode ? <Check size={15} /> : <LayoutGrid size={15} />}
+              {editMode ? 'Concluir' : 'Editar layout'}
+            </button>
             <button onClick={() => setShowAdd(true)}
               className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
               <Plus size={15} /> Widget
@@ -120,38 +152,51 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {dash.widgets.length === 0 && (
-        <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          Dashboard vazio. {editable ? 'Clique em "Widget" para adicionar o primeiro gráfico.' : ''}
-        </div>
-      )}
-
-      <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {dash.widgets.map((w, i) => (
-          <div
-            key={w.id}
-            className={clsx(
-              w.size === 'lg' && 'md:col-span-2 xl:col-span-3',
-              w.size === 'md' && 'xl:col-span-1',
-            )}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => { if (dragFrom.current !== null) { void reorder(dragFrom.current, i); dragFrom.current = null } }}
-          >
-            <WidgetCard
-              widget={w}
-              metrics={metrics}
-              editable={editable}
-              onDelete={() => void deleteWidget(w.id)}
-              onResize={(size) => void resizeWidget(w.id, size)}
-              onEdit={editable ? () => setEditingWidget(w) : undefined}
-              dragHandleProps={{
-                draggable: true,
-                onDragStart: () => { dragFrom.current = i },
-              }}
-            />
-          </div>
-        ))}
+      {/* Abas */}
+      <div className="mt-5">
+        <TabBar
+          dashboardId={dash.id}
+          tabs={dash.tabs}
+          activeTabId={activeTabId}
+          editMode={editMode && editable}
+          onSwitch={setActiveTabId}
+          onChanged={(opts) => load(opts?.switchTo)}
+        />
       </div>
+
+      {tabWidgets.length === 0 ? (
+        <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
+          Aba vazia. {editable ? 'Clique em "Widget" para adicionar o primeiro gráfico.' : ''}
+        </div>
+      ) : (
+        <GridLayout
+          className="mt-3"
+          cols={GRID_COLS}
+          rowHeight={GRID_ROW_H}
+          layout={layout}
+          isDraggable={editMode && editable}
+          isResizable={editMode && editable}
+          draggableHandle=".widget-drag"
+          onDragStop={persistLayout}
+          onResizeStop={persistLayout}
+          margin={[12, 12]}
+          containerPadding={[0, 0]}
+          compactType="vertical"
+        >
+          {tabWidgets.map((w) => (
+            <div key={w.id}>
+              <WidgetCard
+                widget={w}
+                metrics={metrics}
+                editable={editMode && editable}
+                fill
+                onDelete={() => void deleteWidget(w.id)}
+                onEdit={editMode && editable ? () => setEditingWidget(w) : undefined}
+              />
+            </div>
+          ))}
+        </GridLayout>
+      )}
 
       {showAdd && <AddWidgetModal metrics={metrics} onClose={() => setShowAdd(false)} onSubmit={addWidget} />}
       {editingWidget && (

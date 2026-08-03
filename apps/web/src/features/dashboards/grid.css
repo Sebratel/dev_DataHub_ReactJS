@@ -1,0 +1,18 @@
+/* Ajustes visuais do react-grid-layout ao tema do Data Hub. */
+.react-grid-item.react-grid-placeholder {
+  background: #f59e0b; /* accent (âmbar) */
+  opacity: 0.18;
+  border-radius: 0.75rem;
+}
+.react-grid-item > .react-resizable-handle {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.react-grid-item:hover > .react-resizable-handle {
+  opacity: 0.5;
+}
+/* A alça padrão desenha um "canto"; mantemos discreto e no tom certo. */
+.react-grid-item > .react-resizable-handle::after {
+  border-right-color: #a1a1aa;
+  border-bottom-color: #a1a1aa;
+}

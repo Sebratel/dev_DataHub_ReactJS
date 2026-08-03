@@ -9,6 +9,7 @@ import {
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
 import { GripVertical, Loader2, Maximize2, Minimize2, Pencil, Trash2 } from 'lucide-react'
+import clsx from 'clsx'
 import type { Widget, QueryDef, QueryResult, Metric } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { palette, vizTokens, formatValue } from '@/lib/viz'
@@ -43,12 +44,13 @@ interface Props {
   metrics: Metric[]
   editable: boolean
   onDelete: () => void
-  onResize: (size: Widget['size']) => void
+  onResize?: (size: Widget['size']) => void
   onEdit?: () => void
   dragHandleProps?: Record<string, unknown>
+  fill?: boolean // preenche a célula do grid (react-grid-layout) em vez de altura fixa
 }
 
-export default function WidgetCard({ widget, metrics, editable, onDelete, onResize, onEdit, dragHandleProps }: Props) {
+export default function WidgetCard({ widget, metrics, editable, onDelete, onResize, onEdit, dragHandleProps, fill }: Props) {
   const theme = useThemeStore((s) => s.theme)
   const colors = palette(theme)
   const tokens = vizTokens(theme)
@@ -167,10 +169,14 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
   }
 
   return (
-    <div className="flex flex-col rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className={clsx('flex flex-col rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900', fill && 'h-full')}>
       <div className="mb-2 flex items-center gap-1.5">
         {editable && (
-          <span {...dragHandleProps} className="cursor-grab text-zinc-300 dark:text-zinc-600" title="Arrastar para reordenar">
+          <span
+            {...dragHandleProps}
+            className={clsx('text-zinc-300 dark:text-zinc-600', fill ? 'widget-drag cursor-grab' : 'cursor-grab')}
+            title="Arrastar"
+          >
             <GripVertical size={14} />
           </span>
         )}
@@ -182,20 +188,22 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
                 <Pencil size={13} />
               </button>
             )}
-            <button
-              onClick={() => onResize(widget.size === 'lg' ? 'md' : 'lg')}
-              className="rounded p-1 text-zinc-300 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-300"
-              title={widget.size === 'lg' ? 'Diminuir' : 'Ampliar'}
-            >
-              {widget.size === 'lg' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-            </button>
+            {!fill && onResize && (
+              <button
+                onClick={() => onResize(widget.size === 'lg' ? 'md' : 'lg')}
+                className="rounded p-1 text-zinc-300 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-300"
+                title={widget.size === 'lg' ? 'Diminuir' : 'Ampliar'}
+              >
+                {widget.size === 'lg' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              </button>
+            )}
             <button onClick={onDelete} className="rounded p-1 text-zinc-300 hover:text-red-500 dark:text-zinc-600" title="Remover widget">
               <Trash2 size={13} />
             </button>
           </span>
         )}
       </div>
-      <div className={heights[widget.type]}>
+      <div className={fill ? 'min-h-0 flex-1' : heights[widget.type]}>
         {error && <p className="text-xs text-red-500">{error}</p>}
         {!result && !error && (
           <div className="flex h-full items-center justify-center text-zinc-400"><Loader2 size={16} className="animate-spin" /></div>
