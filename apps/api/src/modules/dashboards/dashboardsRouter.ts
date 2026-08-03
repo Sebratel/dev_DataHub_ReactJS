@@ -22,6 +22,7 @@ function toSummary(row: Record<string, unknown>): DashboardSummary {
     id: String(row.id), name: String(row.name), description: String(row.description ?? ''),
     ownerEmail: String(row.owner_email), widgetCount: Number(row.widget_count ?? 0),
     updatedAt: String(row.updated_at),
+    settings: (row.settings ?? null) as DashboardSummary['settings'],
   }
 }
 
@@ -122,12 +123,15 @@ dashboardsRouter.get('/:id', requireAuth(), requireDb, async (req, res) => {
 
 dashboardsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
   if (!(await canEdit(req, req.params.id))) return res.status(403).json({ error: 'Apenas o dono (ou admin) pode editar.' })
-  const { name, description, visibility } = req.body ?? {}
+  const { name, description, visibility, settings } = req.body ?? {}
   await db.query(
     `update dashboards set name = coalesce($2, name), description = coalesce($3, description),
-       visibility = coalesce($4, visibility), updated_at = now() where id = $1`,
+       visibility = coalesce($4, visibility),
+       settings = case when $5::jsonb is not null then $5::jsonb else settings end,
+       updated_at = now() where id = $1`,
     [req.params.id, name ?? null, description ?? null,
-     ['tenant', 'private'].includes(visibility) ? visibility : null],
+     ['tenant', 'private'].includes(visibility) ? visibility : null,
+     settings != null ? JSON.stringify(settings) : null],
   )
   res.json({ ok: true })
 })

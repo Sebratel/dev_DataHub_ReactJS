@@ -13,25 +13,26 @@ import {
 } from 'recharts'
 import { GripVertical, Loader2, Maximize2, Minimize2, Pencil, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
-import type { Widget, QueryDef, QueryResult, Metric, ConditionalRule } from '@datahub/shared'
+import type { Widget, QueryDef, QueryResult, Metric, ConditionalRule, QueryFilter } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { palette, vizTokens, formatValue } from '@/lib/viz'
 import { useThemeStore } from '@/store/themeStore'
 
 const VALUE = 'valor' // alias fixo da medida em todos os widgets
 
-function widgetQuery(w: Widget): QueryDef {
+function widgetQuery(w: Widget, extra?: QueryFilter[]): QueryDef {
   const metricSel = 'metric' in w.metric && typeof (w.metric as { metric?: string }).metric === 'string'
     ? { metric: (w.metric as { metric: string }).metric, as: VALUE }
     : { ...(w.metric as { field: string; agg: never }), as: VALUE }
+  const filters = extra?.length ? [...w.filters, ...extra] : w.filters
   if (w.type === 'kpi') {
-    return { dataset: w.datasetSlug, select: [metricSel], filters: w.filters, limit: 1 }
+    return { dataset: w.datasetSlug, select: [metricSel], filters, limit: 1 }
   }
   const dim = w.dimension!
   const base: QueryDef = {
     dataset: w.datasetSlug,
     select: [dim, metricSel],
-    filters: w.filters,
+    filters,
     groupBy: [dim],
   }
   if (w.type === 'line' || w.type === 'area') {
@@ -66,12 +67,15 @@ interface Props {
   onEdit?: () => void
   dragHandleProps?: Record<string, unknown>
   fill?: boolean // preenche a célula do grid (react-grid-layout) em vez de altura fixa
+  dashboardPalette?: string[] // paleta padrão do dashboard (fallback)
+  extraFilters?: QueryFilter[] // filtros da aba aplicados por cima dos do widget
+  refreshKey?: number // muda → re-consulta (auto-refresh / modo TV)
 }
 
-export default function WidgetCard({ widget, metrics, editable, onDelete, onResize, onEdit, dragHandleProps, fill }: Props) {
+export default function WidgetCard({ widget, metrics, editable, onDelete, onResize, onEdit, dragHandleProps, fill, dashboardPalette, extraFilters, refreshKey }: Props) {
   const theme = useThemeStore((s) => s.theme)
   const style = widget.style ?? {}
-  const basePalette = style.palette?.length ? style.palette : palette(theme)
+  const basePalette = style.palette?.length ? style.palette : (dashboardPalette?.length ? dashboardPalette : palette(theme))
   const primary = style.color || basePalette[0]
   const tokens = vizTokens(theme)
   const [result, setResult] = useState<QueryResult | null>(null)
@@ -86,17 +90,18 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
   const showLegend = style.showLegend ?? (widget.type === 'pie')
   const showLabels = style.showDataLabels ?? false
 
+  const extraKey = JSON.stringify(extraFilters ?? [])
   useEffect(() => {
     setResult(null)
     setError(null)
     api<QueryResult>(`/api/v1/datasets/${widget.datasetSlug}/query`, {
       method: 'POST',
-      body: JSON.stringify(widgetQuery(widget)),
+      body: JSON.stringify(widgetQuery(widget, extraFilters)),
     })
       .then(setResult)
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha na consulta.'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widget.id, widget.datasetSlug])
+  }, [widget.id, widget.datasetSlug, extraKey, refreshKey])
 
   const data = useMemo(() => (result?.rows ?? []).map((r) => ({
     ...r,

@@ -199,8 +199,14 @@ export interface Widget {
   sortOrder: number
 }
 
-// Filtro no nível da aba (aplica a todos os widgets da aba) — Fase 5.
-export interface TabFilter { field: string; label?: string; kind: 'multiselect' | 'daterange' }
+// Filtro no nível da aba: aplica a todos os widgets da aba cujo conjunto
+// (datasetSlug) contém o campo. multiselect usa op 'in'; daterange usa 'between'.
+export interface TabFilter {
+  field: string
+  label?: string
+  kind: 'multiselect' | 'daterange'
+  datasetSlug: string // conjunto de onde vêm os valores e a que widgets se aplica
+}
 export interface TabConfig { autoRefreshSec?: number; filters?: TabFilter[] }
 
 export interface DashboardTab {
@@ -211,6 +217,12 @@ export interface DashboardTab {
   config: TabConfig | null
 }
 
+// Configuração do dashboard como um todo (personalização global + modo TV).
+export interface DashboardSettings {
+  palette?: string[]       // paleta padrão dos widgets sem cor/paleta própria
+  autoRefreshSec?: number  // recarrega os dados a cada N segundos (modo painel)
+}
+
 export interface DashboardSummary {
   id: string
   name: string
@@ -218,6 +230,7 @@ export interface DashboardSummary {
   ownerEmail: string
   widgetCount: number
   updatedAt: string
+  settings: DashboardSettings | null
 }
 
 export interface DashboardDetail extends DashboardSummary {

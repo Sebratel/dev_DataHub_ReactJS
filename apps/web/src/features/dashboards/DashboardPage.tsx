@@ -2,9 +2,9 @@
 // colunas, arrastar/redimensionar). O layout de cada widget (x/y/w/h) é salvo
 // por aba ao soltar. No modo de visualização o painel fica estático e limpo;
 // no modo de edição habilitam-se arraste, redimensionamento e gestão de abas.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, Share2, Pencil, LayoutGrid, Check, Sparkles } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Share2, Pencil, LayoutGrid, Check, Sparkles, Tv, Minimize } from 'lucide-react'
 import RGL, { WidthProvider, type Layout } from 'react-grid-layout'
 import type { DashboardDetail, Metric, Widget } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -40,6 +40,9 @@ export default function DashboardPage() {
   const [showAi, setShowAi] = useState(false)
   const [activeTabId, setActiveTabId] = useState<string>('')
   const [editMode, setEditMode] = useState(false)
+  const [present, setPresent] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback((switchTo?: string) => {
     api<{ dashboard: DashboardDetail }>(`/api/v1/dashboards/${id}`)
@@ -61,6 +64,32 @@ export default function DashboardPage() {
 
   const editable = !!user && (user.roles.includes('admin') ||
     (user.roles.includes('editor') && dash?.ownerEmail === user.email) || dash?.ownerEmail === user.email)
+
+  // Auto-refresh: no modo TV usa o intervalo do dashboard (ou 60s); fora dele,
+  // só se o dashboard tiver auto-atualização configurada.
+  useEffect(() => {
+    const sec = present ? (dash?.settings?.autoRefreshSec || 60) : (dash?.settings?.autoRefreshSec || 0)
+    if (!sec) return
+    const t = setInterval(() => setRefreshKey((k) => k + 1), sec * 1000)
+    return () => clearInterval(t)
+  }, [present, dash?.settings?.autoRefreshSec])
+
+  // Sair da apresentação quando o fullscreen é fechado (ESC/gesto do browser).
+  useEffect(() => {
+    const onFs = () => { if (!document.fullscreenElement) setPresent(false) }
+    document.addEventListener('fullscreenchange', onFs)
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
+
+  async function togglePresent() {
+    if (!present) {
+      setPresent(true); setEditMode(false)
+      try { await rootRef.current?.requestFullscreen?.() } catch { /* fullscreen pode ser bloqueado */ }
+    } else {
+      setPresent(false)
+      try { if (document.fullscreenElement) await document.exitFullscreen() } catch { /* ignore */ }
+    }
+  }
 
   const tabWidgets = useMemo(
     () => (dash?.widgets ?? []).filter((w) => w.tabId === activeTabId),
@@ -115,17 +144,28 @@ export default function DashboardPage() {
   if (!dash) return <p className="text-sm text-zinc-500">Carregando…</p>
 
   return (
-    <div className="mx-auto max-w-7xl">
-      <Link to="/dashboards" className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
-        <ArrowLeft size={14} /> Dashboards
-      </Link>
+    <div ref={rootRef} className={present ? 'min-h-screen overflow-auto bg-white p-6 dark:bg-zinc-950' : 'mx-auto max-w-7xl'}>
+      {!present && (
+        <Link to="/dashboards" className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
+          <ArrowLeft size={14} /> Dashboards
+        </Link>
+      )}
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{dash.name}</h1>
-          {dash.description && <p className="mt-1 text-sm text-zinc-500">{dash.description}</p>}
+          {dash.description && !present && <p className="mt-1 text-sm text-zinc-500">{dash.description}</p>}
         </div>
-        {editable && (
-          <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 gap-2">
+          <button onClick={() => void togglePresent()}
+            className={present
+              ? 'flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover'
+              : 'flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-600 hover:text-accent dark:border-zinc-700'}
+            title="Modo TV: tela cheia e auto-atualização">
+            {present ? <Minimize size={15} /> : <Tv size={15} />}
+            {present ? 'Sair' : 'Apresentar'}
+          </button>
+        {editable && !present && (
+          <>
             <button onClick={() => setEditMode((v) => !v)}
               className={editMode
                 ? 'flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover'
@@ -155,8 +195,9 @@ export default function DashboardPage() {
               className="rounded-lg border border-zinc-200 p-2 text-zinc-400 hover:text-red-500 dark:border-zinc-700">
               <Trash2 size={15} />
             </button>
-          </div>
+          </>
         )}
+        </div>
       </div>
 
       {/* Abas */}
@@ -165,7 +206,7 @@ export default function DashboardPage() {
           dashboardId={dash.id}
           tabs={dash.tabs}
           activeTabId={activeTabId}
-          editMode={editMode && editable}
+          editMode={editMode && editable && !present}
           onSwitch={setActiveTabId}
           onChanged={(opts) => load(opts?.switchTo)}
         />
@@ -195,8 +236,10 @@ export default function DashboardPage() {
               <WidgetCard
                 widget={w}
                 metrics={metrics}
-                editable={editMode && editable}
+                editable={editMode && editable && !present}
                 fill
+                dashboardPalette={dash.settings?.palette}
+                refreshKey={refreshKey}
                 onDelete={() => void deleteWidget(w.id)}
                 onEdit={editMode && editable ? () => setEditingWidget(w) : undefined}
               />
@@ -219,6 +262,7 @@ export default function DashboardPage() {
           dashboardId={dash.id}
           initialName={dash.name}
           initialDescription={dash.description ?? ''}
+          initialSettings={dash.settings}
           onClose={() => setShowEditDash(false)}
           onSaved={load}
         />

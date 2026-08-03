@@ -9,19 +9,13 @@ import type {
   DatasetSummary, DatasetDetail, Metric, Widget, WidgetType, Aggregation, WidgetStyle, ConditionalRule,
 } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { PALETTES, paletteNameOf } from './palettes'
 
 const TYPE_LABEL: Record<WidgetType, string> = {
   kpi: 'KPI (número)', line: 'Linha', bar: 'Barras', pie: 'Pizza', area: 'Área', table: 'Tabela',
 }
 const AGG_LABEL: Record<string, string> = {
   count: 'Contagem', count_distinct: 'Contagem distinta', sum: 'Soma', avg: 'Média', min: 'Mínimo', max: 'Máximo',
-}
-// Paletas prontas para pizza/multi-série (a "Padrão" usa a paleta de marca).
-const PALETTES: Record<string, string[] | undefined> = {
-  'Padrão (marca)': undefined,
-  'Quente': ['#e34948', '#eb6834', '#eda100', '#e87ba4', '#d55181'],
-  'Frio': ['#2a78d6', '#1baf7a', '#4a3aa7', '#008300', '#3987e5'],
-  'Mono âmbar': ['#f59e0b', '#d97706', '#fbbf24', '#b45309', '#fcd34d'],
 }
 const COND_OPS: ConditionalRule['op'][] = ['>', '>=', '<', '<=', '=', '!=']
 
@@ -36,13 +30,6 @@ interface Props {
   initial?: Widget // presente = modo edição
   onClose: () => void
   onSubmit: (w: WidgetInput) => Promise<void>
-}
-
-// Nome do preset cuja paleta bate com a salva (para pré-selecionar no editor).
-function paletteNameOf(pal?: string[]): string {
-  if (!pal) return 'Padrão (marca)'
-  const hit = Object.entries(PALETTES).find(([, v]) => v && JSON.stringify(v) === JSON.stringify(pal))
-  return hit ? hit[0] : 'Padrão (marca)'
 }
 
 export default function AddWidgetModal({ metrics, initial, onClose, onSubmit }: Props) {
