@@ -3,14 +3,17 @@
 // com ponta arredondada só no topo (ancoradas na base), grade recessiva,
 // tooltip sempre presente, pizza com vão de 2px e legenda (identidade nunca
 // só pela cor), texto em tokens de texto — nunca na cor da série.
+// A personalização (WidgetStyle) sobrepõe defaults: cor/paleta, rótulos de
+// dado, legenda, formato/decimais, linha de meta e formatação condicional.
 import { useEffect, useMemo, useState } from 'react'
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, AreaChart, Area,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  LabelList, ReferenceLine,
 } from 'recharts'
 import { GripVertical, Loader2, Maximize2, Minimize2, Pencil, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
-import type { Widget, QueryDef, QueryResult, Metric } from '@datahub/shared'
+import type { Widget, QueryDef, QueryResult, Metric, ConditionalRule } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { palette, vizTokens, formatValue } from '@/lib/viz'
 import { useThemeStore } from '@/store/themeStore'
@@ -39,6 +42,21 @@ function widgetQuery(w: Widget): QueryDef {
   return { ...base, orderBy: [{ field: VALUE, dir: 'desc' }], limit: 20 } // bar
 }
 
+// Primeira regra de formatação condicional satisfeita → sua cor (ou undefined).
+function condColor(v: number, rules?: ConditionalRule[]): string | undefined {
+  if (!rules?.length || Number.isNaN(v)) return undefined
+  for (const r of rules) {
+    const ok =
+      r.op === '>' ? v > r.value :
+      r.op === '>=' ? v >= r.value :
+      r.op === '<' ? v < r.value :
+      r.op === '<=' ? v <= r.value :
+      r.op === '=' ? v === r.value : v !== r.value
+    if (ok) return r.color
+  }
+  return undefined
+}
+
 interface Props {
   widget: Widget
   metrics: Metric[]
@@ -52,7 +70,9 @@ interface Props {
 
 export default function WidgetCard({ widget, metrics, editable, onDelete, onResize, onEdit, dragHandleProps, fill }: Props) {
   const theme = useThemeStore((s) => s.theme)
-  const colors = palette(theme)
+  const style = widget.style ?? {}
+  const basePalette = style.palette?.length ? style.palette : palette(theme)
+  const primary = style.color || basePalette[0]
   const tokens = vizTokens(theme)
   const [result, setResult] = useState<QueryResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -60,7 +80,11 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
   const metricDef = 'metric' in widget.metric
     ? metrics.find((m) => m.slug === (widget.metric as { metric: string }).metric)
     : undefined
-  const format = metricDef?.format ?? 'number'
+  const format = style.numberFormat ?? metricDef?.format ?? 'number'
+  const decimals = style.decimals
+  const fmt = (v: unknown) => formatValue(v, format, decimals)
+  const showLegend = style.showLegend ?? (widget.type === 'pie')
+  const showLabels = style.showDataLabels ?? false
 
   useEffect(() => {
     setResult(null)
@@ -91,13 +115,19 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
     stroke: tokens.axis, fontSize: 11,
     tickLine: false as const, axisLine: { stroke: tokens.grid },
   }
+  const labelProps = { fontSize: 10, fill: tokens.text, formatter: (v: unknown) => fmt(v) }
+  const target = typeof style.target === 'number' ? style.target : undefined
+  const targetLine = target !== undefined
+    ? <ReferenceLine y={target} stroke={tokens.axis} strokeDasharray="4 3" label={{ value: `Meta ${fmt(target)}`, fontSize: 10, fill: tokens.axis, position: 'insideTopRight' }} />
+    : null
 
   function renderChart() {
     if (widget.type === 'kpi') {
       const v = data[0]?.[VALUE]
+      const cc = condColor(Number(v), style.conditionalRules)
       return (
         <div className="flex h-full flex-col items-start justify-center px-1">
-          <span className="text-3xl font-semibold tabular-nums">{formatValue(v, format)}</span>
+          <span className="text-3xl font-semibold tabular-nums" style={cc ? { color: cc } : undefined}>{fmt(v)}</span>
         </div>
       )
     }
@@ -106,12 +136,15 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
         <div className="h-full overflow-auto">
           <table className="w-full text-left text-xs">
             <tbody>
-              {data.map((r, i) => (
-                <tr key={i} className="border-t border-zinc-100 first:border-0 dark:border-zinc-800">
-                  <td className="max-w-[180px] truncate py-1.5 pr-3">{r._dim}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatValue(r[VALUE], format)}</td>
-                </tr>
-              ))}
+              {data.map((r, i) => {
+                const cc = condColor(Number(r[VALUE]), style.conditionalRules)
+                return (
+                  <tr key={i} className="border-t border-zinc-100 first:border-0 dark:border-zinc-800">
+                    <td className="max-w-[180px] truncate py-1.5 pr-3">{r._dim}</td>
+                    <td className="py-1.5 text-right tabular-nums" style={cc ? { color: cc, fontWeight: 600 } : undefined}>{fmt(r[VALUE])}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -125,11 +158,12 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
               data={data} dataKey={VALUE} nameKey="_dim"
               innerRadius="55%" outerRadius="85%"
               stroke={tokens.surface} strokeWidth={2} /* vão de 2px entre fatias */
+              label={showLabels ? ({ value }) => fmt(value) : undefined}
             >
-              {data.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+              {data.map((_, i) => <Cell key={i} fill={basePalette[i % basePalette.length]} />)}
             </Pie>
-            <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatValue(v, format)} />
-            <Legend wrapperStyle={{ fontSize: 11, color: tokens.text }} iconSize={9} />
+            <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmt(v)} />
+            {showLegend && <Legend wrapperStyle={{ fontSize: 11, color: tokens.text }} iconSize={9} />}
           </PieChart>
         </ResponsiveContainer>
       )
@@ -141,11 +175,17 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
           <Chart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
             <CartesianGrid stroke={tokens.grid} vertical={false} />
             <XAxis dataKey="_dim" {...axisProps} minTickGap={24} />
-            <YAxis {...axisProps} width={52} tickFormatter={(v) => formatValue(v, format)} />
-            <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatValue(v, format)} />
+            <YAxis {...axisProps} width={52} tickFormatter={(v) => fmt(v)} />
+            <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmt(v)} />
+            {showLegend && <Legend wrapperStyle={{ fontSize: 11, color: tokens.text }} iconSize={9} />}
+            {targetLine}
             {widget.type === 'line'
-              ? <Line dataKey={VALUE} stroke={colors[0]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} name={widget.title || VALUE} />
-              : <Area dataKey={VALUE} stroke={colors[0]} strokeWidth={2} fill={colors[0]} fillOpacity={0.18} name={widget.title || VALUE} />}
+              ? <Line dataKey={VALUE} stroke={primary} strokeWidth={2} dot={false} activeDot={{ r: 4 }} name={widget.title || VALUE}>
+                  {showLabels && <LabelList dataKey={VALUE} position="top" {...labelProps} />}
+                </Line>
+              : <Area dataKey={VALUE} stroke={primary} strokeWidth={2} fill={primary} fillOpacity={0.18} name={widget.title || VALUE}>
+                  {showLabels && <LabelList dataKey={VALUE} position="top" {...labelProps} />}
+                </Area>}
           </Chart>
         </ResponsiveContainer>
       )
@@ -156,9 +196,13 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="25%">
           <CartesianGrid stroke={tokens.grid} vertical={false} />
           <XAxis dataKey="_dim" {...axisProps} minTickGap={16} />
-          <YAxis {...axisProps} width={52} tickFormatter={(v) => formatValue(v, format)} />
-          <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatValue(v, format)} cursor={{ fill: tokens.grid, opacity: 0.35 }} />
-          <Bar dataKey={VALUE} fill={colors[0]} radius={[4, 4, 0, 0]} name={widget.title || VALUE} />
+          <YAxis {...axisProps} width={52} tickFormatter={(v) => fmt(v)} />
+          <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmt(v)} cursor={{ fill: tokens.grid, opacity: 0.35 }} />
+          {showLegend && <Legend wrapperStyle={{ fontSize: 11, color: tokens.text }} iconSize={9} />}
+          {targetLine}
+          <Bar dataKey={VALUE} fill={primary} radius={[4, 4, 0, 0]} name={widget.title || VALUE}>
+            {showLabels && <LabelList dataKey={VALUE} position="top" {...labelProps} />}
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     )
@@ -180,7 +224,10 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
             <GripVertical size={14} />
           </span>
         )}
-        <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{widget.title || metricDef?.name || 'Widget'}</h3>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-medium">{widget.title || metricDef?.name || 'Widget'}</h3>
+          {style.subtitle && <p className="truncate text-[11px] text-zinc-400">{style.subtitle}</p>}
+        </div>
         {editable && (
           <span className="flex gap-1">
             {onEdit && (

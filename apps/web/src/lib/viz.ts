@@ -15,10 +15,14 @@ export function vizTokens(theme: 'light' | 'dark') {
     : { grid: '#e8e8e6', axis: '#71717a', text: '#52525b', surface: '#ffffff' }
 }
 
-export function formatValue(v: unknown, format: 'number' | 'currency' | 'percent' = 'number'): string {
+export function formatValue(
+  v: unknown,
+  format: 'number' | 'currency' | 'percent' = 'number',
+  decimals?: number,
+): string {
   const n = Number(v)
   if (v === null || v === undefined || Number.isNaN(n)) return '—'
-  if (format === 'currency') return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
-  if (format === 'percent') return `${(n * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`
-  return n.toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+  if (format === 'currency') return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: decimals ?? 0 })
+  if (format === 'percent') return `${(n * 100).toLocaleString('pt-BR', { maximumFractionDigits: decimals ?? 1 })}%`
+  return n.toLocaleString('pt-BR', { maximumFractionDigits: decimals ?? 2 })
 }
