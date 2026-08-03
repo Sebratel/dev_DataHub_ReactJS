@@ -43,6 +43,7 @@ function parseInput(body: unknown): ConnectionInput {
     name, kind, host, port, database, username,
     password: b.password ? String(b.password) : undefined,
     ssl: b.ssl === true,
+    writable: b.writable === true, // sem isto o flag de escrita nunca persiste
   }
 }
 
