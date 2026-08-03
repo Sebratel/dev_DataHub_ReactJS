@@ -15,6 +15,7 @@ import { exportRouter } from './modules/explorer/exportRouter.js'
 import { transformRouter } from './modules/transform/transformRouter.js'
 import { metricsRouter } from './modules/metrics/metricsRouter.js'
 import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
+import { aiWidgetsRouter } from './modules/dashboards/aiWidgetsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { writeProductsRouter } from './modules/integrations/writeProductsRouter.js'
@@ -76,6 +77,7 @@ app.use('/api/v1/datasets', datasetsRouter)
 
 // Biblioteca de métricas e dashboards.
 app.use('/api/v1/metrics', metricsRouter)
+app.use('/api/v1/dashboards', aiWidgetsRouter) // rota /:id/ai/build — antes do genérico
 app.use('/api/v1/dashboards', dashboardsRouter)
 
 // Chat IA e integrações.

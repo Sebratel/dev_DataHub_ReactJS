@@ -4,7 +4,7 @@
 // no modo de edição habilitam-se arraste, redimensionamento e gestão de abas.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Trash2, Share2, Pencil, LayoutGrid, Check } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Share2, Pencil, LayoutGrid, Check, Sparkles } from 'lucide-react'
 import RGL, { WidthProvider, type Layout } from 'react-grid-layout'
 import type { DashboardDetail, Metric, Widget } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -14,6 +14,7 @@ import AddWidgetModal from './AddWidgetModal'
 import ShareDialog from './ShareDialog'
 import EditDashboardDialog from './EditDashboardDialog'
 import TabBar from './TabBar'
+import AiWidgetPanel from './AiWidgetPanel'
 import { resolveLayout, GRID_COLS, GRID_ROW_H } from './gridLayout'
 import { useConfirm } from '@/components/Dialogs'
 import 'react-grid-layout/css/styles.css'
@@ -36,6 +37,7 @@ export default function DashboardPage() {
   const [showShare, setShowShare] = useState(false)
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showEditDash, setShowEditDash] = useState(false)
+  const [showAi, setShowAi] = useState(false)
   const [activeTabId, setActiveTabId] = useState<string>('')
   const [editMode, setEditMode] = useState(false)
 
@@ -132,6 +134,11 @@ export default function DashboardPage() {
               {editMode ? <Check size={15} /> : <LayoutGrid size={15} />}
               {editMode ? 'Concluir' : 'Editar layout'}
             </button>
+            <button onClick={() => setShowAi(true)}
+              className="flex items-center gap-2 rounded-lg border border-accent/60 px-3 py-2 text-sm text-accent hover:bg-accent/10"
+              title="Descreva o painel e a IA monta os gráficos">
+              <Sparkles size={15} /> Criar com IA
+            </button>
             <button onClick={() => setShowAdd(true)}
               className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
               <Plus size={15} /> Widget
@@ -217,6 +224,14 @@ export default function DashboardPage() {
         />
       )}
       {showShare && <ShareDialog dashboardId={dash.id} onClose={() => setShowShare(false)} />}
+      {showAi && (
+        <AiWidgetPanel
+          dashboardId={dash.id}
+          tabId={activeTabId}
+          onClose={() => setShowAi(false)}
+          onAdded={() => load()}
+        />
+      )}
     </div>
   )
 }

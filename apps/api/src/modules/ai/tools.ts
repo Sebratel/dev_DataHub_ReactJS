@@ -69,10 +69,51 @@ export const AI_TOOLS: AiToolDef[] = [
   },
 ]
 
+// Tool exclusiva do CONSTRUTOR de widgets do dashboard (não entra no chat): a
+// IA devolve uma LISTA de widgets prontos para o usuário adicionar a uma aba.
+// Cada widget é validado (a consulta é executada) antes de ser proposto.
+export const PROPOSE_WIDGETS_TOOL: AiToolDef = {
+  name: 'propose_widgets',
+  description: 'Propõe um ou mais widgets prontos para o dashboard. Chame UMA vez, no fim. Cada widget vira um cartão que o usuário adiciona à aba. Só use conjuntos e campos reais (via get_dataset_schema). Se algum widget for inválido, a tool devolve o erro e você corrige e chama de novo.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      widgets: {
+        type: 'array',
+        description: 'Lista de widgets (1 a 6). Cada item: {type, dataset(slug), title, dimension?, metric, filters?, style?}',
+        items: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', enum: ['kpi', 'line', 'bar', 'pie', 'area', 'table'] },
+            dataset: { type: 'string', description: 'Slug do conjunto' },
+            title: { type: 'string', description: 'Título curto em português' },
+            dimension: { type: 'string', description: 'Campo do eixo/categoria (omitir para kpi)' },
+            metric: { type: 'object', description: '{metric: slug} da biblioteca OU {field, agg}' },
+            filters: { type: 'array', items: {} },
+            style: { type: 'object', description: 'Opcional: {color, numberFormat, showDataLabels, showLegend, target, subtitle}' },
+          },
+          required: ['type', 'dataset', 'metric'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['widgets'],
+    additionalProperties: false,
+  },
+}
+
+// Ferramentas do construtor de widgets: reusa a descoberta/validação do chat
+// (busca semântica, schema, run_query) e troca render_chart por propose_widgets.
+export const WIDGET_BUILDER_TOOLS: AiToolDef[] = [
+  ...AI_TOOLS.filter((t) => t.name !== 'render_chart'),
+  PROPOSE_WIDGETS_TOOL,
+]
+
 export interface ToolOutcome {
   content: string
   isError?: boolean
   chart?: Record<string, unknown> // presença = render_chart bem-sucedido
+  widgets?: Record<string, unknown>[] // presença = propose_widgets bem-sucedido
 }
 
 export async function executeTool(
@@ -86,6 +127,7 @@ export async function executeTool(
       case 'get_dataset_schema': return await getSchema(String(input.slug ?? ''), user)
       case 'run_query': return await runQuery(input as unknown as QueryDef, user)
       case 'render_chart': return await renderChart(input, user)
+      case 'propose_widgets': return await proposeWidgets(input, user)
       default: return { content: `Tool desconhecida: ${name}`, isError: true }
     }
   } catch (e) {
@@ -198,6 +240,28 @@ async function runQuery(def: QueryDef, user: SessionUser): Promise<ToolOutcome> 
   return { content: JSON.stringify({ rowCount: rows.length, rows: rows.slice(0, 100) }) }
 }
 
+// Monta o MESMO QueryDef que o widget executará no frontend (fonte única da
+// verdade para render_chart e propose_widgets).
+function widgetSpecToQueryDef(
+  type: string, slug: string, dimension: string | null,
+  metric: Record<string, unknown>, filters: unknown,
+): QueryDef {
+  const metricSel = 'metric' in metric
+    ? { metric: String(metric.metric), as: 'valor' }
+    : { field: String(metric.field), agg: metric.agg as never, as: 'valor' }
+  if (type === 'kpi') {
+    return { dataset: slug, select: [metricSel as never], filters: (filters as never) ?? [], limit: 1 }
+  }
+  return {
+    dataset: slug,
+    select: [dimension!, metricSel as never],
+    filters: (filters as never) ?? [],
+    groupBy: [dimension!],
+    orderBy: [{ field: type === 'line' || type === 'area' ? dimension! : 'valor', dir: type === 'line' || type === 'area' ? 'asc' : 'desc' }],
+    limit: type === 'pie' ? 8 : 100,
+  }
+}
+
 async function renderChart(input: Record<string, unknown>, user: SessionUser): Promise<ToolOutcome> {
   const type = String(input.type)
   const slug = String(input.dataset)
@@ -206,20 +270,7 @@ async function renderChart(input: Record<string, unknown>, user: SessionUser): P
   if (type !== 'kpi' && !dimension) {
     return { content: 'Gráficos (exceto kpi) exigem dimension.', isError: true }
   }
-  // Valida executando a consulta que o widget fará no frontend.
-  const metricSel = 'metric' in metric
-    ? { metric: String(metric.metric), as: 'valor' }
-    : { field: String(metric.field), agg: metric.agg as never, as: 'valor' }
-  const def: QueryDef = type === 'kpi'
-    ? { dataset: slug, select: [metricSel as never], filters: (input.filters as never) ?? [], limit: 1 }
-    : {
-        dataset: slug,
-        select: [dimension!, metricSel as never],
-        filters: (input.filters as never) ?? [],
-        groupBy: [dimension!],
-        orderBy: [{ field: type === 'line' || type === 'area' ? dimension! : 'valor', dir: type === 'line' || type === 'area' ? 'asc' : 'desc' }],
-        limit: type === 'pie' ? 8 : 100,
-      }
+  const def = widgetSpecToQueryDef(type, slug, dimension, metric, input.filters)
   const { rows } = await executeQueryDef(def, user)
   const chart = {
     type, title: String(input.title ?? ''), datasetSlug: slug,
@@ -229,4 +280,55 @@ async function renderChart(input: Record<string, unknown>, user: SessionUser): P
     content: `Gráfico exibido ao usuário (${rows.length} ponto(s) de dados).`,
     chart,
   }
+}
+
+const WIDGET_TYPES = new Set(['kpi', 'line', 'bar', 'pie', 'area', 'table'])
+
+// Valida UM widget proposto: tipo/dimensão coerentes, conjunto acessível e a
+// consulta REALMENTE roda (campos existem, está sincronizado). Devolve o widget
+// normalizado (com datasetId, para o POST /widgets) ou uma mensagem de erro.
+async function validateSpec(
+  spec: Record<string, unknown>, user: SessionUser,
+): Promise<{ ok: true; widget: Record<string, unknown> } | { ok: false; error: string }> {
+  const type = String(spec.type ?? '')
+  if (!WIDGET_TYPES.has(type)) return { ok: false, error: `tipo inválido "${type}"` }
+  const slug = String(spec.dataset ?? spec.datasetSlug ?? '')
+  if (!slug) return { ok: false, error: 'conjunto (dataset) ausente' }
+  const dimension = spec.dimension ? String(spec.dimension) : null
+  const metric = spec.metric as Record<string, unknown> | undefined
+  if (!metric) return { ok: false, error: 'métrica ausente' }
+  if (type !== 'kpi' && !dimension) return { ok: false, error: `o widget "${spec.title || type}" precisa de dimension` }
+  try {
+    const ds = await loadDataset(slug, user)
+    const def = widgetSpecToQueryDef(type, slug, dimension, metric, spec.filters)
+    await executeQueryDef(def, user) // lança se um campo não existe ou não há dados
+    return {
+      ok: true,
+      widget: {
+        type, title: String(spec.title ?? ''), datasetSlug: slug, datasetId: String(ds.id),
+        dimension, metric, filters: spec.filters ?? [], style: spec.style ?? null,
+      },
+    }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+}
+
+async function proposeWidgets(input: Record<string, unknown>, user: SessionUser): Promise<ToolOutcome> {
+  const specs = Array.isArray(input.widgets) ? (input.widgets as Record<string, unknown>[]) : []
+  if (!specs.length) return { content: 'Informe ao menos um widget em "widgets".', isError: true }
+  const valid: Record<string, unknown>[] = []
+  const errors: string[] = []
+  for (const [i, s] of specs.entries()) {
+    const r = await validateSpec(s, user)
+    if (r.ok) valid.push(r.widget)
+    else errors.push(`widget ${i + 1} (${s.title || s.type || '?'}): ${r.error}`)
+  }
+  if (errors.length) {
+    return {
+      content: `Alguns widgets são inválidos — corrija (use get_dataset_schema para os campos certos) e chame propose_widgets de novo:\n- ${errors.join('\n- ')}`,
+      isError: true,
+    }
+  }
+  return { content: `${valid.length} widget(s) validado(s) e proposto(s) ao usuário.`, widgets: valid }
 }
