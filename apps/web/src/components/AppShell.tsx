@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, Plug, Settings, ShieldCheck, ScrollText,
-  Moon, Sun, LogOut, Ruler, Zap, Activity, PenLine, ChevronDown, ChevronRight,
+  Moon, Sun, LogOut, Ruler, Zap, Activity, Webhook, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from '@/store/authStore'
@@ -125,6 +125,7 @@ export default function AppShell() {
 
   if (!user) return <Navigate to="/login" replace />
   const isAdmin = user.roles.includes('admin')
+  const isEditor = user.roles.some((r) => r === 'admin' || r === 'editor')
 
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50 dark:bg-zinc-950">
@@ -143,6 +144,7 @@ export default function AppShell() {
           {NAV.map((item) => (
             <NavItem key={item.to} {...item} />
           ))}
+          {isEditor && <NavItem to="/apis" label="APIs" sublabel="Construtor GET/POST" icon={Webhook} />}
           {isAdmin && (
             <>
               <div className="px-3 pb-1 pt-4 text-[10px] font-medium uppercase tracking-widest text-zinc-400">
@@ -150,7 +152,6 @@ export default function AppShell() {
               </div>
               <NavItem to="/admin/connections" label="Conexões" sublabel="Fontes de dados" icon={Settings} />
               <NavItem to="/admin/monitor" label="Monitoramento" sublabel="Uptime das APIs" icon={Activity} />
-              <NavItem to="/admin/write-products" label="APIs de Escrita" sublabel="Endpoints de INSERT" icon={PenLine} />
               <NavItem to="/admin/access" label="Usuários e Acessos" sublabel="Papéis, times e permissões" icon={ShieldCheck} />
               <NavItem to="/admin/audit" label="Auditoria" sublabel="Histórico de ações" icon={ScrollText} />
             </>

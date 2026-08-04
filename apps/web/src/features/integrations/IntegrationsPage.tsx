@@ -40,8 +40,9 @@ export default function IntegrationsPage() {
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
       .then((r) => setDatasets(r.datasets.filter((d) => d.lastSyncAt))).catch(() => {})
     if (isAdmin) {
-      api<{ products: WriteProduct[] }>('/api/v1/write-products')
-        .then((r) => setWriteProducts(r.products)).catch(() => {})
+      api<{ products: (WriteProduct & { kind: string; status: string })[] }>('/api/v1/products')
+        .then((r) => setWriteProducts(r.products.filter((p) => p.kind === 'write' && p.status === 'active')))
+        .catch(() => {})
     }
   }, [isAdmin])
 
