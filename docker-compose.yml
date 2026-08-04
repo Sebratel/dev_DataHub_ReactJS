@@ -18,8 +18,8 @@ services:
     container_name: datahub-web
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 256m               # ← novo
-    memswap_limit: 256m           # ← novo
+    mem_limit: ${WEB_MEM_LIMIT:-256m}      # nginx estático — leve
+    memswap_limit: ${WEB_MEM_LIMIT:-256m}
     networks:
       - datahub
     depends_on:
@@ -37,8 +37,12 @@ services:
     container_name: datahub-api
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 2g                 # ← novo
-    memswap_limit: 2g             # ← novo
+    # Memória da API: aqui rodam Node + DuckDB + modelo de embeddings + a fila
+    # de sincronização noturna. 12g com ~2g de swap de colchão: um pico grande
+    # derrama pra swap em vez de tomar OOM na hora (que perdia a fila da noite).
+    # Ajustável por env — dimensione conforme a RAM do host.
+    mem_limit: ${API_MEM_LIMIT:-12g}
+    memswap_limit: ${API_MEMSWAP_LIMIT:-14g}
     networks:
       - datahub
     depends_on:
@@ -60,11 +64,11 @@ services:
       SYNC_STAGING_DIR: ${SYNC_STAGING_DIR:-}
       SOURCE_STATEMENT_TIMEOUT_MS: ${SOURCE_STATEMENT_TIMEOUT_MS:-120000}
       SYNC_MAX_ROWS: ${SYNC_MAX_ROWS:-30000000}
-      # Motor de consulta (DuckDB) — cabe no mem_limit 2g DA API JUNTO com o Node
-      # e o modelo de embeddings (RAG). 1GB deixa ~1GB de folga; consultas
-      # grandes derramam pra disco (spill) em vez de estourar (OOM).
-      DUCK_MEMORY_LIMIT: ${DUCK_MEMORY_LIMIT:-1024MB}
-      DUCK_THREADS: ${DUCK_THREADS:-4}
+      # Motor de consulta (DuckDB) — teto GLOBAL do DuckDB (não é por consulta).
+      # 6GB dentro dos 12g da API deixa ~6g pro Node + embeddings + SO. Consultas
+      # e cargas grandes derramam pra disco (spill) em vez de estourar (OOM).
+      DUCK_MEMORY_LIMIT: ${DUCK_MEMORY_LIMIT:-6144MB}
+      DUCK_THREADS: ${DUCK_THREADS:-6}
       DUCK_QUERY_TIMEOUT_MS: ${DUCK_QUERY_TIMEOUT_MS:-30000}
       DUCK_MAX_CONCURRENCY: ${DUCK_MAX_CONCURRENCY:-3}
       # Fontes de dados (somente leitura — use usuário só-SELECT).
@@ -114,8 +118,8 @@ services:
     container_name: datahub-db
     restart: unless-stopped
     logging: *default-logging
-    mem_limit: 768m               # ← novo
-    memswap_limit: 768m           # ← novo
+    mem_limit: ${DB_MEM_LIMIT:-3g}          # metadados + pgvector (embeddings)
+    memswap_limit: ${DB_MEMSWAP_LIMIT:-3g}
     networks:
       - datahub
     environment:
