@@ -285,6 +285,43 @@ export interface SavedView {
   updatedAt: string
 }
 
+// ── Produtos de API (construtor self-service do dev) ──────────
+// GET = leitura (dataset + paginação + filtros); POST = escrita (INSERT com body).
+// Escrita passa por aprovação do admin (status pending → active).
+export type ApiProductKind = 'read' | 'write'
+export type ApiProductStatus = 'active' | 'pending' | 'rejected'
+
+export interface ApiProductColumn {
+  col: string
+  type: 'text' | 'number' | 'bool' | 'date'
+  required?: boolean
+}
+
+export interface ApiProduct {
+  id: string
+  slug: string
+  name: string
+  kind: ApiProductKind
+  method: 'GET' | 'POST'
+  ownerEmail: string
+  status: ApiProductStatus
+  enabled: boolean
+  // Leitura (kind='read')
+  datasetSlug: string | null
+  pagination: 'page' | 'offset' | null
+  defaultLimit: number | null
+  maxLimit: number | null
+  readFilters: QueryFilter[] | null
+  // Escrita (kind='write')
+  connectionId: string | null
+  schemaName: string | null
+  tableName: string | null
+  columns: ApiProductColumn[] | null
+  reviewedBy: string | null
+  reviewedAt: string | null
+  createdAt: string
+}
+
 // ── Auth ──────────────────────────────────────────────────────
 export interface SessionUser {
   email: string

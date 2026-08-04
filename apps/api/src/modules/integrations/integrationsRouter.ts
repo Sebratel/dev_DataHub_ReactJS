@@ -179,11 +179,13 @@ publicRouter.post('/w/:slug', async (req, res) => {
   if (!writeSlugs.includes(req.params.slug)) {
     return res.status(403).json({ error: 'Este token não tem acesso a este produto de escrita.' })
   }
+  // Só produtos de ESCRITA APROVADOS (status active) e ativos são chamáveis —
+  // rascunhos/pendentes de aprovação do admin NUNCA executam.
   const p = (await db.query(
-    `select * from api_write_products where tenant_id = $1 and slug = $2 and enabled`,
+    `select * from api_products where tenant_id = $1 and slug = $2 and kind = 'write' and status = 'active' and enabled`,
     [cred.tenant_id, req.params.slug],
   )).rows[0]
-  if (!p) return res.status(404).json({ error: 'Produto de escrita não encontrado (ou desativado).' })
+  if (!p) return res.status(404).json({ error: 'API de escrita não encontrada, desativada ou ainda não aprovada.' })
   res.locals.dataSlug = p.slug
 
   try {
@@ -199,6 +201,95 @@ publicRouter.post('/w/:slug', async (req, res) => {
       [cred.tenant_id, cred.name, p.slug, JSON.stringify({ affected: result.rowCount }), req.ip ?? null],
     )
     res.status(201).json({ ok: true, affected: result.rowCount, returned: result.rows[0] ?? null })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+// ─── Leitura: produto de API GET → consulta paginada de um dataset ──────────
+// Endpoint nomeado que o dev configurou (paginação page/offset + filtros fixos).
+// Roda como NÃO-admin (sensíveis mascarados); o token precisa alcançar o dataset.
+publicRouter.get('/p/:slug', async (req, res) => {
+  if (!isDbAvailable()) return res.status(503).json({ error: 'Serviço indisponível.' })
+  const token = String(req.query.token ?? req.headers['x-api-token'] ?? '')
+  if (!token) return res.status(401).json({ error: 'Token ausente (?token=… ou header X-Api-Token).' })
+
+  const cred = (await db.query(
+    `select c.*, t.slug as tenant_slug from api_credentials c
+      join tenants t on t.id = c.tenant_id where c.token_hash = $1`,
+    [hash(token)],
+  )).rows[0]
+  if (!cred || cred.revoked) return res.status(401).json({ error: 'Token inválido ou revogado.' })
+  if (cred.expires_at && new Date(cred.expires_at) < new Date()) return res.status(401).json({ error: 'Token expirado.' })
+  res.locals.consumer = cred.name
+
+  const p = (await db.query(
+    `select * from api_products where tenant_id = $1 and slug = $2 and kind = 'read' and status = 'active' and enabled`,
+    [cred.tenant_id, req.params.slug],
+  )).rows[0]
+  if (!p) return res.status(404).json({ error: 'API de leitura não encontrada ou desativada.' })
+
+  // O token precisa alcançar o dataset por trás do produto (escopo de leitura).
+  const allowed = (cred.dataset_slugs as string[]) ?? []
+  if (allowed.length && !allowed.includes(String(p.dataset_slug))) {
+    return res.status(403).json({ error: 'Este token não tem acesso ao dataset desta API.' })
+  }
+
+  const ds = (await db.query(
+    `select d.* from datasets d join tenants t on t.id = d.tenant_id where t.slug = $1 and d.slug = $2`,
+    [cred.tenant_slug, p.dataset_slug],
+  )).rows[0]
+  if (!ds) return res.status(404).json({ error: 'Dataset da API não encontrado.' })
+  res.locals.dataSlug = ds.slug
+  const dir = datasetDir(String(cred.tenant_slug), String(ds.slug))
+  if (!listParquet(dir).length) return res.status(409).json({ error: 'Dataset ainda não sincronizado.' })
+
+  const fields = (await db.query(
+    `select f.key, f.type, f.sensitive, f.label from dataset_fields f
+      where f.dataset_id = $1 and not f.hidden order by f.sort_order`,
+    [ds.id],
+  )).rows as { key: string; type: FieldType; sensitive: boolean; label: string }[]
+
+  // Paginação conforme o produto: 'page' (page/size) ou 'offset' (offset/limit).
+  const maxLimit = Math.min(Number(p.max_limit) || 10_000, 100_000)
+  const defLimit = Math.min(Math.max(1, Number(p.default_limit) || 100), maxLimit)
+  let limit = defLimit
+  let offset = 0
+  let page: number | null = null
+  if (p.pagination === 'page') {
+    const size = Math.min(Math.max(1, Number(req.query.size) || defLimit), maxLimit)
+    page = Math.max(1, Number(req.query.page) || 1)
+    limit = size
+    offset = (page - 1) * size
+  } else {
+    limit = Math.min(Math.max(1, Number(req.query.limit) || defLimit), maxLimit)
+    offset = Math.max(0, Number(req.query.offset) || 0)
+  }
+  const format = String(req.query.format ?? (req.headers.accept === 'text/csv' ? 'csv' : 'json'))
+
+  try {
+    const filters = Array.isArray(p.read_filters) ? p.read_filters : []
+    const compiled = compileQuery({ dataset: String(ds.slug), filters, limit, offset }, fields, {
+      admin: false, glob: parquetGlob(dir),
+    })
+    const { columns, rows } = await duckQuery(compiled.sql, compiled.params)
+    res.locals.rows = rows.length
+    const total = Number((await duckQuery(compiled.countSql!, compiled.countParams)).rows[0]?.n ?? 0)
+    await db.query(`update api_credentials set last_used_at = now() where id = $1`, [cred.id])
+
+    if (format === 'csv') {
+      const esc = (v: unknown) => {
+        if (v === null || v === undefined) return ''
+        const s = String(v)
+        return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+      }
+      const lines = [columns.join(';')]
+      for (const row of rows) lines.push(columns.map((c) => esc(row[c])).join(';'))
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+      res.send('﻿' + lines.join('\r\n'))
+      return
+    }
+    res.json({ api: p.slug, dataset: ds.slug, total, limit, ...(page !== null ? { page } : { offset }), rows })
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }

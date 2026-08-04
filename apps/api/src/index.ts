@@ -19,6 +19,7 @@ import { aiWidgetsRouter } from './modules/dashboards/aiWidgetsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { writeProductsRouter } from './modules/integrations/writeProductsRouter.js'
+import { productsRouter } from './modules/integrations/productsRouter.js'
 import { accessRouter } from './modules/admin/accessRouter.js'
 import { monitorRouter } from './modules/admin/monitorRouter.js'
 import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
@@ -83,7 +84,8 @@ app.use('/api/v1/dashboards', dashboardsRouter)
 // Chat IA e integrações.
 app.use('/api/v1/ai', aiRouter)
 app.use('/api/v1/credentials', credentialsRouter)
-app.use('/api/v1/write-products', writeProductsRouter)
+app.use('/api/v1/write-products', writeProductsRouter) // legado (será removido na UI nova)
+app.use('/api/v1/products', productsRouter)             // construtor de APIs (GET+POST, self-service)
 app.use('/api/public/v1', publicRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
