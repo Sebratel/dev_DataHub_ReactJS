@@ -109,7 +109,7 @@ export default function DatasetDetailPage() {
 
   if (error && !dataset) {
     return (
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-6xl">
         <p className="rounded-lg bg-red-50 p-4 text-sm text-red-600 dark:bg-red-950/40">{error}</p>
       </div>
     )
@@ -172,7 +172,7 @@ export default function DatasetDetailPage() {
   const menuItem = 'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800'
 
   return (
-    <div className="mx-auto max-w-5xl animate-fade-in">
+    <div className="mx-auto max-w-6xl animate-fade-in">
       {/* Trilha */}
       <nav className="mb-4 flex items-center gap-1.5 text-sm text-zinc-500">
         <Link to="/datasets" className="inline-flex items-center gap-1.5 hover:text-accent">

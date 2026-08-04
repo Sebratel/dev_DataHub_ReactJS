@@ -33,7 +33,7 @@ export default function DashboardsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-screen-2xl">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Dashboards</h1>
@@ -55,7 +55,7 @@ export default function DashboardsPage() {
         </div>
       )}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {dashboards?.map((d) => (
           <Link key={d.id} to={`/dashboards/${d.id}`}
             className="group rounded-xl border border-zinc-200 bg-white p-5 transition hover:border-accent hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900">

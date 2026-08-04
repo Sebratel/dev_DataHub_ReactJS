@@ -222,7 +222,7 @@ export default function ExplorerPage() {
   const totalPages = result?.total !== undefined ? Math.max(1, Math.ceil(result.total / PAGE_SIZE)) : null
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto max-w-screen-2xl">
       <Link to={`/datasets/${slug}`} className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
         <ArrowLeft size={14} /> {dataset.name}
       </Link>

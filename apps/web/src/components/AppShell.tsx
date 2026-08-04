@@ -1,10 +1,11 @@
-// Layout base: sidebar de navegação + rodapé de usuário, no mesmo padrão
-// visual do churn_mvp (pills âmbar, sublabels, logo circular Sebratel).
-// O usuário final só vê conceitos amigáveis (Conjuntos de Dados, Dashboards…).
-import { NavLink, Outlet, Navigate } from 'react-router-dom'
+// Layout base: sidebar de navegação + HEADER superior fixo (breadcrumb + menu
+// de usuário) sobre um canvas cinza que dá profundidade aos cards. Padrão de
+// app-shell corporativo: a sidebar e o header ficam fixos; só o conteúdo rola.
+import { useEffect, useRef, useState } from 'react'
+import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, Plug, Settings, ShieldCheck, ScrollText,
-  Moon, Sun, LogOut, Ruler, Zap, Activity, PenLine,
+  Moon, Sun, LogOut, Ruler, Zap, Activity, PenLine, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from '@/store/authStore'
@@ -18,6 +19,14 @@ const NAV = [
   { to: '/ai', label: 'Assistente IA', sublabel: 'Converse com os dados', icon: Sparkles },
   { to: '/integrations', label: 'Integrações', sublabel: 'Tokens e APIs', icon: Plug },
 ]
+
+// Rótulos amigáveis por segmento de rota (para o breadcrumb dinâmico).
+const CRUMB: Record<string, string> = {
+  datasets: 'Datasets', dashboards: 'Dashboards', metrics: 'Métricas', ai: 'Assistente IA',
+  integrations: 'Integrações', admin: 'Administração', connections: 'Conexões',
+  monitor: 'Monitoramento', 'write-products': 'APIs de Escrita', access: 'Usuários e Acessos',
+  audit: 'Auditoria', derived: 'Calculado', new: 'Novo',
+}
 
 function navItemClass({ isActive }: { isActive: boolean }) {
   return clsx(
@@ -46,16 +55,80 @@ function NavItem({ to, label, sublabel, icon: Icon, end }: (typeof NAV)[number])
   )
 }
 
-export default function AppShell() {
+// Breadcrumb derivado do caminho — mostra onde a pessoa está de forma dinâmica.
+function Breadcrumb() {
+  const { pathname } = useLocation()
+  const segs = pathname.split('/').filter(Boolean)
+  const crumbs = segs.map((seg, i) => ({
+    label: CRUMB[seg] ?? decodeURIComponent(seg).replace(/-/g, ' '),
+    to: '/' + segs.slice(0, i + 1).join('/'),
+  }))
+  return (
+    <nav className="flex min-w-0 items-center gap-1.5 text-sm">
+      <Link to="/" className="shrink-0 text-zinc-400 hover:text-accent"><Home size={15} /></Link>
+      {crumbs.map((c, i) => (
+        <span key={c.to} className="flex min-w-0 items-center gap-1.5">
+          <ChevronRight size={13} className="shrink-0 text-zinc-300 dark:text-zinc-600" />
+          {i === crumbs.length - 1
+            ? <span className="truncate font-semibold capitalize">{c.label}</span>
+            : <Link to={c.to} className="truncate capitalize text-zinc-500 hover:text-accent">{c.label}</Link>}
+        </span>
+      ))}
+    </nav>
+  )
+}
+
+function UserMenu() {
   const { user, logout } = useAuthStore()
+  const { theme, toggle } = useThemeStore()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+  if (!user) return null
+  const avatar = user.picture
+    ? <img src={user.picture} alt="" className="h-7 w-7 rounded-full ring-1 ring-zinc-200 dark:ring-zinc-700" referrerPolicy="no-referrer" />
+    : <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-brand text-xs font-bold text-[#1a1a1a]">{user.name[0]}</div>
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 rounded-full border border-zinc-200 py-1 pl-1 pr-2 transition-colors hover:border-zinc-300 dark:border-zinc-700 dark:hover:border-zinc-600">
+        {avatar}
+        <span className="hidden max-w-[120px] truncate text-sm font-medium sm:block">{user.name}</span>
+        <ChevronDown size={14} className="text-zinc-400" />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-30 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+            <p className="truncate text-sm font-medium">{user.name}</p>
+            <p className="truncate text-xs text-zinc-500">{user.email}</p>
+          </div>
+          <button onClick={() => { toggle(); }} className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800">
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />} Tema {theme === 'dark' ? 'claro' : 'escuro'}
+          </button>
+          <button onClick={logout} className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-zinc-600 hover:bg-red-50 hover:text-red-600 dark:text-zinc-300 dark:hover:bg-red-950/30 dark:hover:text-red-400">
+            <LogOut size={15} /> Sair
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function AppShell() {
+  const { user } = useAuthStore()
   const { theme, toggle } = useThemeStore()
 
   if (!user) return <Navigate to="/login" replace />
   const isAdmin = user.roles.includes('admin')
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="flex h-screen overflow-hidden bg-zinc-50 dark:bg-zinc-950">
+      <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         {/* Logo */}
         <div className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-200 px-4 dark:border-zinc-800">
           <img src="/logo-circular-sebratel.png" alt="Sebratel" className="h-8 w-8 shrink-0 rounded-full ring-1 ring-zinc-200 dark:ring-zinc-700" />
@@ -85,7 +158,7 @@ export default function AppShell() {
         </nav>
 
         {/* Status pill — sincronização controlada (1x/dia, madrugada) */}
-        <div className="mx-3 mb-3 rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="mx-3 mb-3 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -98,39 +171,27 @@ export default function AppShell() {
             <span className="font-mono text-[10px] text-secondary">Sincronização diária</span>
           </div>
         </div>
-
-        {/* Usuário */}
-        <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
-          <div className="flex items-center gap-2.5">
-            {user.picture
-              ? <img src={user.picture} alt="" className="h-8 w-8 rounded-full ring-1 ring-zinc-200 dark:ring-zinc-700" referrerPolicy="no-referrer" />
-              : <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-brand text-xs font-bold text-[#1a1a1a]">{user.name[0]}</div>}
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{user.name}</p>
-              <p className="truncate text-xs text-zinc-500">{user.email}</p>
-            </div>
-          </div>
-          <div className="mt-3 flex gap-1.5">
-            <button
-              onClick={toggle}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 bg-white py-1.5 text-xs text-zinc-600 transition-all hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
-            >
-              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-              Tema
-            </button>
-            <button
-              onClick={logout}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 bg-white py-1.5 text-xs text-zinc-600 transition-all hover:border-red-300 hover:text-red-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:text-red-400"
-            >
-              <LogOut size={14} />
-              Sair
-            </button>
-          </div>
-        </div>
       </aside>
-      <main className="flex-1 overflow-x-hidden p-6 animate-fade-in">
-        <Outlet />
-      </main>
+
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Header superior fixo */}
+        <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white/80 px-6 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/80">
+          <Breadcrumb />
+          <div className="flex items-center gap-2">
+            <button onClick={toggle} title="Alternar tema"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 text-zinc-500 transition-colors hover:border-zinc-300 hover:text-accent dark:border-zinc-700 dark:hover:border-zinc-600">
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <UserMenu />
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-6 lg:px-8">
+          <div className="animate-fade-in">
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
   )
 }

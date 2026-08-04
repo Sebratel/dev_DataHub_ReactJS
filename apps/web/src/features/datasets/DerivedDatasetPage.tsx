@@ -113,7 +113,7 @@ export default function DerivedDatasetPage() {
   const inputCls = 'w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-950'
 
   return (
-    <div className="mx-auto max-w-6xl animate-fade-in">
+    <div className="mx-auto max-w-7xl animate-fade-in">
       <Link to="/datasets" className="mb-4 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
         <ArrowLeft size={14} /> Catálogo
       </Link>

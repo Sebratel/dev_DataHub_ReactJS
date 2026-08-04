@@ -17,7 +17,7 @@ const ROLE_LABEL: Record<string, string> = { admin: 'Administrador', editor: 'Ed
 export default function AccessPage() {
   const [tab, setTab] = useState<'users' | 'teams'>('users')
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-7xl">
       <h1 className="text-2xl font-semibold">Usuários e Acessos</h1>
       <p className="mt-1 text-sm text-zinc-500">
         Papéis dos usuários e times para conceder acesso aos conjuntos de dados.

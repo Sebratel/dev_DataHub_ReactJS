@@ -116,7 +116,7 @@ export default function HomePage() {
   const hasContent = datasets.length > 0 || dashboards.length > 0
 
   return (
-    <div className="mx-auto max-w-5xl animate-fade-in">
+    <div className="mx-auto max-w-7xl animate-fade-in">
       <h1 className="text-2xl font-semibold tracking-tight">Olá, {user?.name.split(' ')[0]} 👋</h1>
       <p className="mt-1 text-sm text-zinc-500">
         {hasContent ? 'O que você quer analisar hoje?' : 'Bem-vindo ao Data Hub da Sebratel.'}

@@ -86,7 +86,7 @@ export default function IntegrationsPage() {
   const csvUrl = `${restUrl}&format=csv`
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-6xl">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Integrações</h1>

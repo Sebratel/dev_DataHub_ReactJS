@@ -118,7 +118,7 @@ export default function DatasetsPage() {
   ]
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-screen-2xl">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Datasets</h1>
@@ -166,7 +166,7 @@ export default function DatasetsPage() {
         </div>
       )}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {filtered?.map((d) => <DatasetCard key={d.id} d={d} />)}
       </div>
     </div>

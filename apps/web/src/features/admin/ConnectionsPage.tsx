@@ -100,7 +100,7 @@ export default function ConnectionsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-7xl">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Conexões</h1>
