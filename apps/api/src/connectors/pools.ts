@@ -171,6 +171,59 @@ export async function execSource(
   throw new Error(`Conexão "${connectorId}" (${def.kind}) não suporta escrita SQL.`)
 }
 
+// ESCRITA COM TETO (UPDATE/DELETE): roda a mutação numa TRANSAÇÃO e, se afetar
+// mais linhas que `maxAffected`, faz ROLLBACK e falha — rede de segurança contra
+// um filtro largo demais apagar/atualizar meio banco. maxAffected null = sem teto
+// (o WHERE obrigatório já é garantido pelo construtor do SQL).
+export async function execSourceGuarded(
+  connectorId: string, sql: string, params: unknown[] = [], maxAffected: number | null = null,
+): Promise<{ rowCount: number; rows: Record<string, unknown>[] }> {
+  const def = getConnector(connectorId)
+  if (!def) throw new Error(`Fonte desconhecida: ${connectorId}`)
+  if (!def.writable) throw new Error(`A conexão "${connectorId}" não está marcada como gravável.`)
+  const overLimit = (n: number) => maxAffected != null && n > maxAffected
+
+  if (def.kind === 'postgres') {
+    const client = await getPgPool(def).connect()
+    try {
+      await client.query('begin')
+      const res = await client.query(sql, params as never[])
+      const rowCount = res.rowCount ?? 0
+      if (overLimit(rowCount)) {
+        await client.query('rollback')
+        throw new Error(`Bloqueado: a operação afetaria ${rowCount} linha(s), acima do teto de ${maxAffected}. Refine o filtro (where).`)
+      }
+      await client.query('commit')
+      return { rowCount, rows: res.rows }
+    } catch (e) {
+      try { await client.query('rollback') } catch { /* já pode ter feito rollback */ }
+      throw e
+    } finally {
+      client.release()
+    }
+  }
+  if (def.kind === 'mysql') {
+    const conn = await getMysqlPool(def).getConnection()
+    try {
+      await conn.beginTransaction()
+      const [result] = await conn.query(sql, params)
+      const rowCount = (result as { affectedRows?: number }).affectedRows ?? 0
+      if (overLimit(rowCount)) {
+        await conn.rollback()
+        throw new Error(`Bloqueado: a operação afetaria ${rowCount} linha(s), acima do teto de ${maxAffected}. Refine o filtro (where).`)
+      }
+      await conn.commit()
+      return { rowCount, rows: [] }
+    } catch (e) {
+      try { await conn.rollback() } catch { /* idem */ }
+      throw e
+    } finally {
+      conn.release()
+    }
+  }
+  throw new Error(`Conexão "${connectorId}" (${def.kind}) não suporta escrita SQL.`)
+}
+
 // Ping barato (SELECT 1) para a tela de conexões do admin.
 export async function checkConnection(connectorId: string): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
   const def = getConnector(connectorId)

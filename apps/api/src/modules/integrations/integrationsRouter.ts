@@ -8,13 +8,13 @@
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { createHash, randomBytes } from 'node:crypto'
-import type { FieldType } from '@datahub/shared'
+import type { FieldType, ApiWriteOp } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
-import { executeWriteInsert, type WriteColumn } from '../../connectors/writeProducts.js'
+import { executeWrite, type WriteColumn } from '../../connectors/writeProducts.js'
 
 function requireDb(_req: Request, res: Response, next: NextFunction): void {
   if (!isDbAvailable()) { res.status(503).json({ error: 'Banco de metadados indisponível.' }); return }
@@ -158,10 +158,11 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
   }
 })
 
-// ─── Escrita (Fase 4): produto de escrita → INSERT parametrizado ────────────
+// ─── Escrita: INSERT (POST) / UPDATE (PUT,PATCH) / DELETE ───────────────────
 // O consumidor manda só VALORES; o SQL é montado pelo servidor a partir da
-// definição do admin. Auditado + monitorado (herda o middleware do publicRouter).
-publicRouter.post('/w/:slug', async (req, res) => {
+// definição aprovada. UPDATE/DELETE exigem filtro (where) e respeitam o teto de
+// linhas (transação + rollback). Auditado + monitorado (middleware do publicRouter).
+publicRouter.all('/w/:slug', async (req, res) => {
   if (!isDbAvailable()) return res.status(503).json({ error: 'Serviço indisponível.' })
   const token = String(req.query.token ?? req.headers['x-api-token'] ?? '')
   if (!token) return res.status(401).json({ error: 'Token ausente (?token=… ou header X-Api-Token).' })
@@ -188,19 +189,42 @@ publicRouter.post('/w/:slug', async (req, res) => {
   if (!p) return res.status(404).json({ error: 'API de escrita não encontrada, desativada ou ainda não aprovada.' })
   res.locals.dataSlug = p.slug
 
+  // O verbo HTTP tem de casar com a operação definida (evita chamar DELETE num
+  // endpoint de INSERT por engano). PUT e PATCH são ambos aceitos p/ update.
+  const op = (p.write_op as ApiWriteOp) ?? 'insert'
+  const allowedMethods = op === 'insert' ? ['POST'] : op === 'update' ? ['PUT', 'PATCH'] : ['DELETE']
+  if (!allowedMethods.includes(req.method)) {
+    res.setHeader('Allow', allowedMethods.join(', '))
+    return res.status(405).json({ error: `Esta API é de ${op}; use ${allowedMethods.join(' ou ')}.` })
+  }
+
   try {
-    const result = await executeWriteInsert(
-      { connectionId: String(p.connection_id), schema: String(p.schema_name), table: String(p.table_name), columns: p.columns as WriteColumn[] },
-      (req.body ?? {}) as Record<string, unknown>,
+    // Corpo: insert → valores planos (ou {values}); update → {set, where}; delete → {where}.
+    // No DELETE, filtros também podem vir na query string (?id=123).
+    const raw = (req.body ?? {}) as Record<string, unknown>
+    const payload = op === 'insert'
+      ? { values: (raw.values as Record<string, unknown>) ?? raw }
+      : op === 'update'
+        ? { set: (raw.set as Record<string, unknown>) ?? {}, where: (raw.where as Record<string, unknown>) ?? {} }
+        : { where: (raw.where as Record<string, unknown>) ?? (Object.keys(raw).length ? raw : (req.query as Record<string, unknown>)) }
+
+    const result = await executeWrite(
+      {
+        op, connectionId: String(p.connection_id), schema: String(p.schema_name), table: String(p.table_name),
+        columns: (p.columns as WriteColumn[]) ?? [], keyColumns: (p.key_columns as WriteColumn[]) ?? [],
+        maxAffected: p.max_affected != null ? Number(p.max_affected) : null,
+      },
+      payload,
     )
     res.locals.rows = result.rowCount
     await db.query(`update api_credentials set last_used_at = now() where id = $1`, [cred.id])
     await db.query(
       `insert into audit_logs (tenant_id, user_email, action, resource_type, resource_id, detail, ip)
-       values ($1, $2, 'write-product.exec', 'write_product', $3, $4, $5)`,
-      [cred.tenant_id, cred.name, p.slug, JSON.stringify({ affected: result.rowCount }), req.ip ?? null],
+       values ($1, $2, $3, 'api_product', $4, $5, $6)`,
+      [cred.tenant_id, cred.name, `api-product.${op}`, p.slug,
+       JSON.stringify({ affected: result.rowCount, method: req.method }), req.ip ?? null],
     )
-    res.status(201).json({ ok: true, affected: result.rowCount, returned: result.rows[0] ?? null })
+    res.status(op === 'insert' ? 201 : 200).json({ ok: true, op, affected: result.rowCount, returned: result.rows[0] ?? null })
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }

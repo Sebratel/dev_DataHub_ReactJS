@@ -11,7 +11,8 @@ import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { getConnector } from '../../connectors/registry.js'
 import { canQuery } from '../../core/access.js'
-import { buildInsert, type WriteColumn } from '../../connectors/writeProducts.js'
+import { buildWriteSql, type WriteColumn } from '../../connectors/writeProducts.js'
+import type { ApiWriteOp } from '@datahub/shared'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
@@ -30,14 +31,14 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 48) || 'api'
 }
 
-function parseColumns(raw: unknown): WriteColumn[] {
-  if (!Array.isArray(raw) || !raw.length) throw new Error('Defina ao menos uma coluna no body.')
+function parseCols(raw: unknown, label: string): WriteColumn[] {
+  if (!Array.isArray(raw) || !raw.length) throw new Error(`Defina ao menos uma coluna em ${label}.`)
   return raw.map((c) => {
     const o = c as Record<string, unknown>
     const col = String(o.col ?? '').trim()
     const type = String(o.type ?? 'text')
-    if (!col) throw new Error('Coluna do body sem nome.')
-    if (!['text', 'number', 'bool', 'date'].includes(type)) throw new Error(`Tipo inválido no body: ${type}`)
+    if (!col) throw new Error(`Coluna sem nome em ${label}.`)
+    if (!['text', 'number', 'bool', 'date'].includes(type)) throw new Error(`Tipo inválido em ${label}: ${type}`)
     return { col, type: type as WriteColumn['type'], required: o.required === true }
   })
 }
@@ -51,8 +52,11 @@ function toProduct(r: Record<string, unknown>): ApiProduct {
     defaultLimit: r.default_limit != null ? Number(r.default_limit) : null,
     maxLimit: r.max_limit != null ? Number(r.max_limit) : null,
     readFilters: (r.read_filters as ApiProduct['readFilters']) ?? null,
+    writeOp: (r.write_op as ApiProduct['writeOp']) ?? null,
     connectionId: (r.connection_id as string) ?? null, schemaName: (r.schema_name as string) ?? null,
     tableName: (r.table_name as string) ?? null, columns: (r.columns as ApiProduct['columns']) ?? null,
+    keyColumns: (r.key_columns as ApiProduct['keyColumns']) ?? null,
+    maxAffected: r.max_affected != null ? Number(r.max_affected) : null,
     reviewedBy: (r.reviewed_by as string) ?? null, reviewedAt: r.reviewed_at ? String(r.reviewed_at) : null,
     createdAt: String(r.created_at),
   }
@@ -86,10 +90,13 @@ async function validateConfig(req: Request, body: Record<string, unknown>) {
     return {
       kind, name, method: 'GET' as const,
       datasetSlug, pagination, defaultLimit, maxLimit, readFilters,
-      connectionId: null, schemaName: null, tableName: null, columns: null,
+      writeOp: null as ApiWriteOp | null, connectionId: null, schemaName: null, tableName: null,
+      columns: null as WriteColumn[] | null, keyColumns: null as WriteColumn[] | null, maxAffected: null as number | null,
     }
   }
-  // write
+  // write — operação: insert (POST) | update (PUT/PATCH) | delete (DELETE)
+  const op: ApiWriteOp = ['insert', 'update', 'delete'].includes(String(body.writeOp)) ? (String(body.writeOp) as ApiWriteOp) : 'insert'
+  const method = op === 'insert' ? 'POST' : op === 'delete' ? 'DELETE' : (body.method === 'PATCH' ? 'PATCH' : 'PUT')
   const connectionId = String(body.connectionId ?? '')
   const def = getConnector(connectionId)
   if (!def) throw new Error('Conexão não encontrada.')
@@ -97,11 +104,15 @@ async function validateConfig(req: Request, body: Record<string, unknown>) {
   const schemaName = String(body.schema ?? body.schemaName ?? 'public').trim() || 'public'
   const tableName = String(body.table ?? body.tableName ?? '').trim()
   if (!tableName) throw new Error('Informe a tabela de destino.')
-  const columns = parseColumns(body.columns)
+  // INSERT/UPDATE precisam de colunas (SET/body); UPDATE/DELETE precisam de chaves (WHERE).
+  const columns = op === 'delete' ? [] : parseCols(body.columns, 'body')
+  const keyColumns = op === 'insert' ? [] : parseCols(body.keyColumns, 'filtros (where)')
+  const maxAffected = op !== 'insert' && body.maxAffected != null && String(body.maxAffected) !== ''
+    ? Math.max(1, Number(body.maxAffected)) : null
   return {
-    kind, name, method: 'POST' as const,
+    kind, name, method: method as 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     datasetSlug: null, pagination: null, defaultLimit: null, maxLimit: null, readFilters: null,
-    connectionId, schemaName, tableName, columns,
+    writeOp: op, connectionId, schemaName, tableName, columns, keyColumns, maxAffected,
   }
 }
 
@@ -141,12 +152,15 @@ productsRouter.post('/', async (req, res) => {
       `insert into api_products
          (tenant_id, slug, name, kind, method, owner_email, status,
           dataset_slug, pagination, default_limit, max_limit, read_filters,
-          connection_id, schema_name, table_name, columns, reviewed_by, reviewed_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id`,
+          write_op, connection_id, schema_name, table_name, columns, key_columns, max_affected,
+          reviewed_by, reviewed_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) returning id`,
       [tid, slug, cfg.name, cfg.kind, cfg.method, req.user!.email, status,
        cfg.datasetSlug, cfg.pagination, cfg.defaultLimit, cfg.maxLimit,
        cfg.readFilters ? JSON.stringify(cfg.readFilters) : null,
-       cfg.connectionId, cfg.schemaName, cfg.tableName, cfg.columns ? JSON.stringify(cfg.columns) : null,
+       cfg.writeOp, cfg.connectionId, cfg.schemaName, cfg.tableName,
+       cfg.columns ? JSON.stringify(cfg.columns) : null,
+       cfg.keyColumns ? JSON.stringify(cfg.keyColumns) : null, cfg.maxAffected,
        reviewed ? req.user!.email : null, reviewed ? new Date().toISOString() : null],
     )).rows[0]
     await audit(req, 'api-product.create', { type: 'api_product', id: slug }, { kind: cfg.kind, status })
@@ -180,12 +194,14 @@ productsRouter.patch('/:id', async (req, res) => {
     const status = cfg.kind === 'write' && !admin ? 'pending' : String(cur.status)
     const enabled = typeof req.body?.enabled === 'boolean' ? req.body.enabled : cur.enabled
     await db.query(
-      `update api_products set name=$2, dataset_slug=$3, pagination=$4, default_limit=$5, max_limit=$6,
-         read_filters=$7, connection_id=$8, schema_name=$9, table_name=$10, columns=$11,
-         status=$12, enabled=$13 where id=$1`,
-      [cur.id, cfg.name, cfg.datasetSlug, cfg.pagination, cfg.defaultLimit, cfg.maxLimit,
+      `update api_products set name=$2, method=$3, dataset_slug=$4, pagination=$5, default_limit=$6, max_limit=$7,
+         read_filters=$8, write_op=$9, connection_id=$10, schema_name=$11, table_name=$12, columns=$13,
+         key_columns=$14, max_affected=$15, status=$16, enabled=$17 where id=$1`,
+      [cur.id, cfg.name, cfg.method, cfg.datasetSlug, cfg.pagination, cfg.defaultLimit, cfg.maxLimit,
        cfg.readFilters ? JSON.stringify(cfg.readFilters) : null,
-       cfg.connectionId, cfg.schemaName, cfg.tableName, cfg.columns ? JSON.stringify(cfg.columns) : null,
+       cfg.writeOp, cfg.connectionId, cfg.schemaName, cfg.tableName,
+       cfg.columns ? JSON.stringify(cfg.columns) : null,
+       cfg.keyColumns ? JSON.stringify(cfg.keyColumns) : null, cfg.maxAffected,
        status, enabled],
     )
     await audit(req, 'api-product.update', { type: 'api_product', id: String(cur.slug) }, { status })
@@ -236,11 +252,21 @@ productsRouter.post('/:id/test', async (req, res) => {
       const { rows } = await duckQuery(compiled.sql, compiled.params)
       return res.json({ ok: true, kind: 'read', rows })
     }
-    // write — dry-run
+    // write — DRY-RUN (monta o SQL da operação e valida; NÃO executa).
     const def = getConnector(String(cur.connection_id))
     if (!def || (def.kind !== 'postgres' && def.kind !== 'mysql')) return res.status(400).json({ error: 'Conexão inválida.' })
-    const { sql, params } = buildInsert(def.kind, String(cur.schema_name), String(cur.table_name), cur.columns as WriteColumn[], (req.body?.body ?? {}) as Record<string, unknown>)
-    res.json({ ok: true, kind: 'write', dryRun: true, sql, params })
+    const b = (req.body ?? {}) as { values?: Record<string, unknown>; set?: Record<string, unknown>; where?: Record<string, unknown>; body?: Record<string, unknown> }
+    const { sql, params } = buildWriteSql(
+      {
+        op: (cur.write_op as ApiWriteOp) ?? 'insert', connectionId: String(cur.connection_id),
+        schema: String(cur.schema_name), table: String(cur.table_name),
+        columns: (cur.columns as WriteColumn[]) ?? [], keyColumns: (cur.key_columns as WriteColumn[]) ?? [],
+        maxAffected: cur.max_affected != null ? Number(cur.max_affected) : null,
+      },
+      def.kind,
+      { values: b.body ?? b.values, set: b.set, where: b.where },
+    )
+    res.json({ ok: true, kind: 'write', op: cur.write_op ?? 'insert', dryRun: true, sql, params })
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }

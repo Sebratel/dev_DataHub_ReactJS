@@ -290,6 +290,9 @@ export interface SavedView {
 // Escrita passa por aprovação do admin (status pending → active).
 export type ApiProductKind = 'read' | 'write'
 export type ApiProductStatus = 'active' | 'pending' | 'rejected'
+export type ApiHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+// Operação de escrita: insert (POST) | update (PUT/PATCH) | delete (DELETE).
+export type ApiWriteOp = 'insert' | 'update' | 'delete'
 
 export interface ApiProductColumn {
   col: string
@@ -302,7 +305,7 @@ export interface ApiProduct {
   slug: string
   name: string
   kind: ApiProductKind
-  method: 'GET' | 'POST'
+  method: ApiHttpMethod
   ownerEmail: string
   status: ApiProductStatus
   enabled: boolean
@@ -313,10 +316,13 @@ export interface ApiProduct {
   maxLimit: number | null
   readFilters: QueryFilter[] | null
   // Escrita (kind='write')
+  writeOp: ApiWriteOp | null
   connectionId: string | null
   schemaName: string | null
   tableName: string | null
-  columns: ApiProductColumn[] | null
+  columns: ApiProductColumn[] | null       // SET/body (insert e update)
+  keyColumns: ApiProductColumn[] | null     // WHERE (update e delete) — obrigatório
+  maxAffected: number | null                // teto de linhas afetadas (update/delete)
   reviewedBy: string | null
   reviewedAt: string | null
   createdAt: string
