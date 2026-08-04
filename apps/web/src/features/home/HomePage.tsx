@@ -52,8 +52,8 @@ const ADMIN_STEPS: Step[] = [
   { icon: ShieldCheck, title: 'Crie times e conceda acesso', desc: 'Defina quais times consultam cada conjunto — o acesso é fechado por padrão.', to: '/admin/access', cta: 'Usuários e Acessos' },
 ]
 const EDITOR_STEPS: Step[] = [
-  { icon: GitMerge, title: 'Crie um conjunto derivado', desc: 'Junte e trate conjuntos já sincronizados com SQL — sem pesar nas fontes.', to: '/datasets/derived/new', cta: 'Novo derivado' },
-  { icon: LayoutDashboard, title: 'Monte um dashboard', desc: 'Widgets a partir das métricas dos seus conjuntos.', to: '/dashboards', cta: 'Ir para Dashboards' },
+  { icon: GitMerge, title: 'Crie um dataset calculado', desc: 'Junte e trate datasets já sincronizados com SQL — sem pesar nas fontes.', to: '/datasets/derived/new', cta: 'Novo calculado' },
+  { icon: LayoutDashboard, title: 'Monte um dashboard', desc: 'Widgets a partir das métricas dos seus datasets.', to: '/dashboards', cta: 'Ir para Dashboards' },
   { icon: Compass, title: 'Explore os dados', desc: 'Filtre, agrupe e exporte no Explorador.', to: '/datasets', cta: 'Ver catálogo' },
 ]
 
@@ -65,10 +65,10 @@ function Onboarding({ isAdmin, isEditor, name }: { isAdmin: boolean; isEditor: b
         <h2 className="text-lg font-semibold">Vamos começar 🚀</h2>
         <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
           {isAdmin
-            ? 'Seu hub ainda está vazio. Em poucos passos você conecta uma fonte, publica conjuntos e libera o acesso para os times.'
+            ? 'Seu hub ainda está vazio. Em poucos passos você conecta uma fonte, publica datasets e libera o acesso para os times.'
             : isEditor
-              ? 'Comece criando um conjunto derivado a partir dos dados já disponíveis, ou monte um dashboard.'
-              : 'Você ainda não recebeu acesso a nenhum conjunto de dados.'}
+              ? 'Comece criando um dataset calculado a partir dos dados já disponíveis, ou monte um dashboard.'
+              : 'Você ainda não recebeu acesso a nenhum dataset.'}
         </p>
       </div>
 
@@ -131,7 +131,7 @@ export default function HomePage() {
           {/* Visão geral */}
           <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile icon={Database} label="Fontes" value={sources.length} to="/datasets" />
-            <StatTile icon={GitMerge} label="Derivados" value={deriveds.length} to="/datasets" />
+            <StatTile icon={GitMerge} label="Calculados" value={deriveds.length} to="/datasets" />
             <StatTile icon={LayoutDashboard} label="Dashboards" value={dashboards.length} to="/dashboards" />
             <StatTile icon={BadgeCheck} label="Oficiais" value={officials.length} to="/datasets" />
           </div>

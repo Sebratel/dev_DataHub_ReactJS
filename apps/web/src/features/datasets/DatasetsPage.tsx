@@ -1,6 +1,6 @@
-// Catálogo de Conjuntos de Dados — dividido entre FONTES (ingeridas) e
-// DERIVADOS (SQL sobre o lake). O usuário só vê nomes amigáveis e apenas os
-// conjuntos a que tem acesso (o backend já filtra).
+// Catálogo de Datasets — tudo é dataset: FONTES (ingeridas das origens) e
+// CALCULADOS (SQL sobre o lake, com selo). Lista única + filtro. O usuário só vê
+// nomes amigáveis e apenas os datasets a que tem acesso (o backend já filtra).
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Boxes, GitMerge, Database, Search, Plus } from 'lucide-react'
@@ -37,7 +37,12 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <h2 className="truncate font-semibold group-hover:text-accent">{d.name}</h2>
-            {d.official && <OfficialBadge />}
+            <div className="flex shrink-0 items-center gap-1.5">
+              {derived && (
+                <span className="rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-semibold text-[#1a1a1a]">calculado</span>
+              )}
+              {d.official && <OfficialBadge />}
+            </div>
           </div>
           <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{d.description || 'Sem descrição.'}</p>
         </div>
@@ -70,7 +75,7 @@ export default function DatasetsPage() {
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [tab, setTab] = useState<'source' | 'derived'>('source')
+  const [filter, setFilter] = useState<'all' | 'source' | 'derived'>('all')
 
   useEffect(() => {
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
@@ -79,13 +84,14 @@ export default function DatasetsPage() {
   }, [])
 
   const counts = useMemo(() => ({
+    all: datasets?.length ?? 0,
     source: datasets?.filter((d) => d.kind === 'source').length ?? 0,
     derived: datasets?.filter((d) => d.kind === 'derived').length ?? 0,
   }), [datasets])
 
   const filtered = datasets
     ?.filter((d) => {
-      if (d.kind !== tab) return false
+      if (filter !== 'all' && d.kind !== filter) return false
       const q = query.toLowerCase()
       return !q || d.name.toLowerCase().includes(q) || d.description.toLowerCase().includes(q)
         || d.tags.some((t) => t.toLowerCase().includes(q))
@@ -98,59 +104,54 @@ export default function DatasetsPage() {
   const emptyMessage = query
     ? 'Nada encontrado para essa busca.'
     : !canEdit && (datasets?.length ?? 0) === 0
-      ? 'Você ainda não tem acesso a nenhum conjunto de dados. Peça a um administrador para incluir você (ou o seu time) nos conjuntos de que precisa.'
-      : tab === 'derived'
-        ? (canEdit ? 'Nenhum derivado ainda. Crie um com “Novo derivado”.' : 'Nenhum conjunto derivado disponível para você.')
-        : (canEdit ? 'Nenhuma fonte publicada. Publique em Administração › Conexões.' : 'Nenhuma fonte disponível para você.')
+      ? 'Você ainda não tem acesso a nenhum dataset. Peça a um administrador para incluir você (ou o seu time) nos datasets de que precisa.'
+      : filter === 'derived'
+        ? (canEdit ? 'Nenhum dataset calculado ainda. Crie um com “Novo calculado”.' : 'Nenhum dataset calculado disponível para você.')
+        : filter === 'source'
+          ? (canEdit ? 'Nenhuma fonte publicada. Publique em Administração › Conexões.' : 'Nenhuma fonte disponível para você.')
+          : (canEdit ? 'Nenhum dataset ainda. Publique uma fonte em Conexões ou crie um calculado.' : 'Nenhum dataset disponível para você.')
 
-  const TABS = [
-    { k: 'source' as const, icon: Database, label: 'Fontes', hint: 'Ingeridas das origens', count: counts.source },
-    { k: 'derived' as const, icon: GitMerge, label: 'Derivados', hint: 'SQL sobre o lake', count: counts.derived },
+  const FILTERS = [
+    { k: 'all' as const, label: 'Todos', count: counts.all },
+    { k: 'source' as const, label: 'Fontes', count: counts.source },
+    { k: 'derived' as const, label: 'Calculados', count: counts.derived },
   ]
 
   return (
     <div className="mx-auto max-w-5xl">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Conjuntos de Dados</h1>
-          <p className="mt-1 text-sm text-zinc-500">Dados publicados e prontos para explorar.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Datasets</h1>
+          <p className="mt-1 text-sm text-zinc-500">Dados publicados e prontos para explorar — fontes e calculados.</p>
         </div>
         {canEdit && (
           <Link to="/datasets/derived/new"
             className="flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-zinc-950 shadow-card transition-colors hover:bg-accent-hover">
-            <Plus size={15} /> Novo derivado
+            <Plus size={15} /> Novo calculado
           </Link>
         )}
       </div>
 
-      {/* Abas Fontes × Derivados */}
-      <div className="mt-6 flex gap-2">
-        {TABS.map(({ k, icon: Icon, label, hint, count }) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={clsx('flex flex-1 items-center gap-3 rounded-xl border p-3 text-left transition-all sm:flex-none sm:min-w-[190px]',
-              tab === k
-                ? 'border-accent bg-accent-soft shadow-card dark:bg-zinc-800'
-                : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700')}>
-            <div className={clsx('flex h-9 w-9 items-center justify-center rounded-lg',
-              tab === k ? 'bg-white text-accent dark:bg-zinc-900' : 'bg-zinc-100 text-zinc-400 dark:bg-zinc-800')}>
-              <Icon size={17} />
-            </div>
-            <div className="min-w-0">
-              <p className="flex items-center gap-1.5 text-sm font-semibold">
-                {label}
-                <span className="rounded-full bg-zinc-200/70 px-1.5 text-[11px] font-medium text-zinc-500 dark:bg-zinc-700/60">{count}</span>
-              </p>
-              <p className="text-[11px] text-zinc-500">{hint}</p>
-            </div>
+      {/* Filtro Todos / Fontes / Calculados (tudo é dataset). */}
+      <div className="mt-6 flex flex-wrap items-center gap-2">
+        {FILTERS.map(({ k, label, count }) => (
+          <button key={k} onClick={() => setFilter(k)}
+            className={clsx('flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors',
+              filter === k
+                ? 'border-accent bg-accent-soft font-semibold text-accent dark:bg-zinc-800'
+                : 'border-zinc-200 text-zinc-500 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700')}>
+            {k === 'source' && <Database size={14} />}
+            {k === 'derived' && <GitMerge size={14} />}
+            {label}
+            <span className="rounded-full bg-zinc-200/70 px-1.5 text-[11px] font-medium text-zinc-500 dark:bg-zinc-700/60">{count}</span>
           </button>
         ))}
-      </div>
-
-      <div className="relative mt-5 max-w-sm">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-        <input value={query} onChange={(e) => setQuery(e.target.value)}
-          placeholder={`Buscar em ${tab === 'source' ? 'fontes' : 'derivados'}…`}
-          className="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-900" />
+        <div className="relative ml-auto min-w-[180px] flex-1 sm:max-w-xs">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar datasets…"
+            className="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-900" />
+        </div>
       </div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
@@ -159,7 +160,7 @@ export default function DatasetsPage() {
       {filtered?.length === 0 && (
         <div className="mt-8 flex flex-col items-center rounded-2xl border border-dashed border-zinc-300 p-12 text-center dark:border-zinc-700">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800">
-            {tab === 'derived' ? <GitMerge size={22} /> : <Boxes size={22} />}
+            {filter === 'derived' ? <GitMerge size={22} /> : <Boxes size={22} />}
           </div>
           <p className="max-w-md text-sm text-zinc-500">{emptyMessage}</p>
         </div>

@@ -12,7 +12,7 @@ import { useThemeStore } from '@/store/themeStore'
 
 const NAV = [
   { to: '/', label: 'Início', sublabel: 'Visão geral', icon: Home, end: true },
-  { to: '/datasets', label: 'Conjuntos de Dados', sublabel: 'Catálogo e exploração', icon: Boxes },
+  { to: '/datasets', label: 'Datasets', sublabel: 'Fontes e calculados', icon: Boxes },
   { to: '/dashboards', label: 'Dashboards', sublabel: 'Painéis e widgets', icon: LayoutDashboard },
   { to: '/metrics', label: 'Métricas', sublabel: 'Biblioteca de indicadores', icon: Ruler },
   { to: '/ai', label: 'Assistente IA', sublabel: 'Converse com os dados', icon: Sparkles },

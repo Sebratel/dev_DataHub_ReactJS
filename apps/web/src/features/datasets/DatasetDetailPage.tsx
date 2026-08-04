@@ -195,7 +195,7 @@ export default function DatasetDetailPage() {
               {dataset.official && <OfficialBadge size="md" />}
               <span className={clsx('shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
                 derived ? 'bg-accent-soft text-secondary dark:bg-zinc-800' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800')}>
-                {derived ? 'Derivado' : 'Fonte'}
+                {derived ? 'Calculado' : 'Fonte'}
               </span>
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-zinc-500">{dataset.description || 'Sem descrição.'}</p>
@@ -286,7 +286,7 @@ export default function DatasetDetailPage() {
             ? <span className={clsx('h-2 w-2 rounded-full', fresh ? 'bg-emerald-500' : 'bg-amber-500')} />
             : <span className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600" />} />
         <StatTile icon={derived ? GitMerge : Database} label="Tipo"
-          value={<span className="text-base font-medium">{derived ? 'Derivado' : 'Fonte'}</span>} />
+          value={<span className="text-base font-medium">{derived ? 'Calculado' : 'Fonte'}</span>} />
       </div>
 
       {/* Campos (schema) */}

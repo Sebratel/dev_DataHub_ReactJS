@@ -122,8 +122,8 @@ export default function DerivedDatasetPage() {
           <GitMerge size={22} />
         </div>
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? 'Editar conjunto derivado' : 'Novo conjunto derivado'}</h1>
-          <p className="text-sm text-zinc-500">Junte e trate conjuntos já sincronizados — roda no lake, sem pesar nas fontes.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? 'Editar dataset calculado' : 'Novo dataset calculado'}</h1>
+          <p className="text-sm text-zinc-500">Junte e trate datasets já sincronizados — roda no lake, sem pesar nas fontes.</p>
         </div>
       </div>
 
@@ -168,7 +168,7 @@ export default function DerivedDatasetPage() {
               <button onClick={save} disabled={!name.trim() || !sql.trim() || busy !== null}
                 className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-zinc-950 shadow-card hover:bg-accent-hover disabled:opacity-50">
                 {busy === 'save' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                {editingId ? 'Salvar e re-materializar' : 'Criar conjunto'}
+                {editingId ? 'Salvar e re-materializar' : 'Criar dataset'}
               </button>
             </div>
           </div>
@@ -202,7 +202,7 @@ export default function DerivedDatasetPage() {
 
         {/* Ajudante: conjuntos e campos disponíveis */}
         <aside className="h-fit rounded-2xl border border-zinc-200 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Conjuntos disponíveis</h2>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Datasets disponíveis</h2>
           <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-500">
             <Info size={13} className="mt-0.5 shrink-0" />
             No SQL, use o <b className="font-semibold text-secondary">apelido</b> (não o nome). Clique para inserir.
@@ -223,7 +223,7 @@ export default function DerivedDatasetPage() {
                       synced ? 'hover:bg-zinc-100 dark:hover:bg-zinc-800' : 'cursor-not-allowed opacity-60')}>
                     <span className={clsx('h-1.5 w-1.5 shrink-0 rounded-full', synced ? 'bg-emerald-500' : 'bg-amber-500')} />
                     {d.kind === 'derived'
-                      ? <span title="Derivado"><GitMerge size={13} className="shrink-0 text-secondary" /></span>
+                      ? <span title="Calculado"><GitMerge size={13} className="shrink-0 text-secondary" /></span>
                       : <Database size={13} className="shrink-0 text-zinc-400" />}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-medium">{d.name}</span>
