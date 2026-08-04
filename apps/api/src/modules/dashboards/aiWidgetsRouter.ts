@@ -61,6 +61,15 @@ aiWidgetsRouter.post('/:id/ai/build', requireAuth({ role: 'editor' }), requireDb
   const prompt = String((req.body ?? {}).prompt ?? '').trim()
   if (!prompt) return res.status(400).json({ error: 'Descreva o que você quer no painel.' })
 
+  // Escopo opcional: os conjuntos que a IA pode usar nesta tela (inclui derivados).
+  const rawSlugs = Array.isArray((req.body ?? {}).datasetSlugs)
+    ? ((req.body as { datasetSlugs: unknown[] }).datasetSlugs).map((s) => String(s)).filter(Boolean)
+    : []
+  const scope = rawSlugs.length ? new Set<string>(rawSlugs) : undefined
+  const systemPrompt = scope
+    ? `${BUILDER_PROMPT}\n\nESCOPO OBRIGATÓRIO: use SOMENTE estes conjuntos (não chame search_datasets; chame get_dataset_schema neles para ver os campos): ${[...scope].join(', ')}.`
+    : BUILDER_PROMPT
+
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
@@ -75,7 +84,7 @@ aiWidgetsRouter.post('/:id/ai/build', requireAuth({ role: 'editor' }), requireDb
     let finalText = ''
 
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const turn = await provider.chat(BUILDER_PROMPT, messages, WIDGET_BUILDER_TOOLS)
+      const turn = await provider.chat(systemPrompt, messages, WIDGET_BUILDER_TOOLS)
       if (!turn.toolCalls.length) {
         finalText = turn.text
         break
@@ -84,7 +93,7 @@ aiWidgetsRouter.post('/:id/ai/build', requireAuth({ role: 'editor' }), requireDb
       const results = []
       for (const call of turn.toolCalls) {
         send('tool', { name: call.name, input: call.input })
-        const outcome = await executeTool(call.name, call.input, req.user!)
+        const outcome = await executeTool(call.name, call.input, req.user!, scope)
         if (outcome.widgets) {
           proposed = outcome.widgets
           send('widgets', outcome.widgets)

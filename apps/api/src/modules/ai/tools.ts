@@ -116,14 +116,34 @@ export interface ToolOutcome {
   widgets?: Record<string, unknown>[] // presença = propose_widgets bem-sucedido
 }
 
+// Conjuntos referenciados no input de uma tool (para checar o escopo).
+function slugsInInput(name: string, input: Record<string, unknown>): string[] {
+  if (name === 'get_dataset_schema') return [String(input.slug ?? '')]
+  if (name === 'run_query') return [String(input.dataset ?? '')]
+  if (name === 'propose_widgets') {
+    const ws = Array.isArray(input.widgets) ? (input.widgets as Record<string, unknown>[]) : []
+    return ws.map((w) => String(w.dataset ?? w.datasetSlug ?? ''))
+  }
+  return []
+}
+
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
   user: SessionUser,
+  allowed?: Set<string>, // se definido, a IA só pode tocar nestes conjuntos (slug)
 ): Promise<ToolOutcome> {
   try {
+    // Escopo: barra qualquer conjunto fora da seleção (exceto a busca, que já é filtrada).
+    if (allowed && name !== 'search_datasets') {
+      const refs = slugsInInput(name, input).filter(Boolean)
+      const fora = refs.filter((s) => !allowed.has(s))
+      if (fora.length) {
+        return { content: `Fora do escopo: ${fora.join(', ')}. Use SOMENTE: ${[...allowed].join(', ')}.`, isError: true }
+      }
+    }
     switch (name) {
-      case 'search_datasets': return await searchDatasets(user, input.query ? String(input.query) : undefined)
+      case 'search_datasets': return await searchDatasets(user, input.query ? String(input.query) : undefined, allowed)
       case 'get_dataset_schema': return await getSchema(String(input.slug ?? ''), user)
       case 'run_query': return await runQuery(input as unknown as QueryDef, user)
       case 'render_chart': return await renderChart(input, user)
@@ -140,7 +160,7 @@ export async function executeTool(
 // distância = mais parecido. Filtramos pelo acesso do usuário e devolvemos o
 // topo. Sem query (ou sem embeddings ainda), caímos no comportamento antigo
 // (lista alfabética) — degradação graciosa, o chat nunca quebra.
-async function searchDatasets(user: SessionUser, query?: string): Promise<ToolOutcome> {
+async function searchDatasets(user: SessionUser, query?: string, scope?: Set<string>): Promise<ToolOutcome> {
   const allowed = await accessibleDatasetIds(user)
 
   let rows: Record<string, unknown>[] = []
@@ -175,6 +195,7 @@ async function searchDatasets(user: SessionUser, query?: string): Promise<ToolOu
 
   const list = rows
     .filter((r) => allowed.has(String(r.id))) // só o que o usuário acessa (após ordenar)
+    .filter((r) => !scope || scope.has(String(r.slug))) // escopo selecionado no painel
     .slice(0, query ? 8 : 50)                 // busca → só os mais relevantes
     .map((r) => ({
       slug: r.slug, name: r.name, description: r.description,

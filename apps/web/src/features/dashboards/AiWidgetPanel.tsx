@@ -2,9 +2,9 @@
 // valida no lake e devolve widgets prontos como pré-visualização. Cada proposta
 // pode ser adicionada à aba atual (uma a uma ou todas). O mesmo padrão do
 // dashboards_IA: o modelo devolve specs declarativas validadas; o app executa.
-import { useState } from 'react'
-import { Sparkles, X, Loader2, Plus, Check } from 'lucide-react'
-import type { QueryFilter, Widget, WidgetType, WidgetStyle } from '@datahub/shared'
+import { useEffect, useState } from 'react'
+import { Sparkles, X, Loader2, Plus, Check, GitMerge } from 'lucide-react'
+import type { QueryFilter, Widget, WidgetType, WidgetStyle, DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import WidgetCard from './WidgetCard'
@@ -56,6 +56,17 @@ export default function AiWidgetPanel({ dashboardId, tabId, onClose, onAdded }: 
   const [summary, setSummary] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [added, setAdded] = useState<Set<number>>(new Set())
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([])
+  const [scope, setScope] = useState<string[]>([]) // slugs; vazio = todos
+
+  useEffect(() => {
+    api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
+      .then((r) => setDatasets(r.datasets.filter((d) => d.lastSyncAt))).catch(() => {})
+  }, [])
+
+  function toggleScope(slug: string) {
+    setScope((s) => s.includes(slug) ? s.filter((x) => x !== slug) : [...s, slug])
+  }
 
   async function build() {
     const text = prompt.trim()
@@ -71,7 +82,7 @@ export default function AiWidgetPanel({ dashboardId, tabId, onClose, onAdded }: 
       const res = await fetch(`/api/v1/dashboards/${dashboardId}/ai/build`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify({ prompt: text, datasetSlugs: scope }),
       })
       if (!res.ok || !res.body) {
         throw new Error(((await res.json()) as { error?: string }).error || `Erro ${res.status}`)
@@ -141,6 +152,32 @@ export default function AiWidgetPanel({ dashboardId, tabId, onClose, onAdded }: 
         </div>
 
         <div className="flex-1 overflow-y-auto p-5">
+          {/* Escopo: quais conjuntos a IA pode usar nesta tela (vazio = todos). */}
+          {datasets.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs font-medium text-zinc-500">
+                  Conjuntos que a IA pode usar {scope.length ? `(${scope.length})` : '(todos)'}
+                </span>
+                {scope.length > 0 && (
+                  <button onClick={() => setScope([])} className="text-[11px] text-zinc-400 hover:text-accent">limpar</button>
+                )}
+              </div>
+              <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+                {datasets.map((d) => {
+                  const on = scope.includes(d.slug)
+                  return (
+                    <button key={d.slug} onClick={() => toggleScope(d.slug)}
+                      className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] ${on ? 'border-accent bg-accent/10 text-accent' : 'border-zinc-200 text-zinc-500 hover:border-zinc-300 dark:border-zinc-700'}`}>
+                      {d.kind === 'derived' && <GitMerge size={11} />}
+                      {d.name}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="mt-1 text-[11px] text-zinc-400">Selecione derivados/conjuntos específicos para a IA focar neles — ou deixe vazio para usar todos.</p>
+            </div>
+          )}
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
