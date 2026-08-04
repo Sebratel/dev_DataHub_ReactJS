@@ -156,7 +156,33 @@ export interface Metric {
 }
 
 // ── Dashboards ────────────────────────────────────────────────
-export type WidgetType = 'kpi' | 'line' | 'bar' | 'pie' | 'area' | 'table'
+// Tipos de visual. Os 6 primeiros são o legado; os demais entram com o modelo
+// rico (múltiplas medidas/dimensões, séries, combo, dispersão, funil, texto).
+export type WidgetType =
+  | 'kpi' | 'line' | 'bar' | 'pie' | 'area' | 'table'
+  | 'barH' | 'barStacked' | 'barHStacked' | 'comboBarLine' | 'scatter' | 'funnel' | 'text'
+
+// Uma medida (série): agregação de um campo OU métrica da biblioteca, com
+// rótulo e cor opcionais. Cada medida adicionada vira uma série no gráfico.
+export interface MeasureConfig {
+  field?: string
+  agg?: Aggregation
+  metric?: string // métrica da biblioteca (alternativa a field+agg)
+  label?: string
+  color?: string
+}
+
+// Definição de dados rica do widget (o que dimension/metric sozinhos não cobrem).
+export interface WidgetSpec {
+  dimensions?: string[]        // eixo X / agrupamento (composto se >1)
+  measures?: MeasureConfig[]   // eixo Y — cada uma é uma série
+  measuresLine?: MeasureConfig[] // comboBarLine: série(s) desenhadas como linha
+  measureX?: MeasureConfig     // dispersão: eixo X (numérico)
+  legendDimension?: string     // quebra em séries (pivô), até 8 valores
+  content?: string             // tipo "text"
+  limit?: number               // Top N
+  widgetFilters?: QueryFilter[] // filtro fixo do widget
+}
 
 // Posição livre no grid de 12 colunas (react-grid-layout). null = auto-flow:
 // o cliente calcula um layout inicial a partir de sort_order/size.
@@ -196,6 +222,7 @@ export interface Widget {
   size: 'sm' | 'md' | 'lg'       // legado; fallback quando layout é null
   layout: WidgetLayout | null
   style: WidgetStyle | null
+  spec: WidgetSpec | null        // modelo rico (séries, legenda, combo, texto…)
   sortOrder: number
 }
 

@@ -14,7 +14,10 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
   next()
 }
 
-const TYPES = new Set(['kpi', 'line', 'bar', 'pie', 'area', 'table'])
+const TYPES = new Set([
+  'kpi', 'line', 'bar', 'pie', 'area', 'table',
+  'barH', 'barStacked', 'barHStacked', 'comboBarLine', 'scatter', 'funnel', 'text',
+])
 const SIZES = new Set(['sm', 'md', 'lg'])
 
 function toSummary(row: Record<string, unknown>): DashboardSummary {
@@ -26,17 +29,48 @@ function toSummary(row: Record<string, unknown>): DashboardSummary {
   }
 }
 
+// Métrica "legada" (coluna metric) derivada da 1ª medida do spec — mantém os
+// widgets antigos e o render de fallback funcionando.
+function measureToMetric(m: unknown): Record<string, unknown> | null {
+  const x = m as Record<string, unknown> | undefined
+  if (!x) return null
+  if (x.metric) return { metric: x.metric }
+  if (x.field && x.agg) return { field: x.field, agg: x.agg }
+  return null
+}
+
+// Valida o corpo de um widget (modelo rico). Devolve mensagem de erro ou null.
+function validateWidgetBody(b: Record<string, unknown>): string | null {
+  const type = String(b.type ?? '')
+  if (!TYPES.has(type)) return `Tipo inválido: ${type}`
+  const spec = b.spec as { content?: string; measures?: unknown[]; dimensions?: unknown[] } | undefined
+  if (type === 'text') {
+    if (!spec?.content?.trim()) return 'O widget de texto precisa de conteúdo.'
+    return null
+  }
+  if (!b.datasetId) return 'Selecione o conjunto de dados.'
+  const hasMeasure = !!b.metric || (Array.isArray(spec?.measures) && spec!.measures.length > 0)
+  if (!hasMeasure) return 'Selecione ao menos uma medida.'
+  if (type !== 'kpi') {
+    const hasDim = !!b.dimension || (Array.isArray(spec?.dimensions) && spec!.dimensions.length > 0)
+    if (!hasDim) return 'Gráficos precisam de ao menos uma dimensão (eixo).'
+  }
+  return null
+}
+
 function toWidget(row: Record<string, unknown>): Widget {
   return {
     id: String(row.id), tabId: row.tab_id ? String(row.tab_id) : '',
     title: String(row.title ?? ''), type: row.type as Widget['type'],
-    datasetId: String(row.dataset_id), datasetSlug: String(row.dataset_slug),
+    datasetId: row.dataset_id ? String(row.dataset_id) : '',
+    datasetSlug: row.dataset_slug ? String(row.dataset_slug) : '',
     dimension: (row.dimension as string) ?? null,
-    metric: row.metric as Widget['metric'],
+    metric: (row.metric ?? {}) as Widget['metric'],
     filters: (row.filters ?? []) as QueryFilter[],
     size: row.size as Widget['size'], sortOrder: Number(row.sort_order),
     layout: (row.layout ?? null) as Widget['layout'],
     style: (row.style ?? null) as Widget['style'],
+    spec: (row.spec ?? null) as Widget['spec'],
   }
 }
 
@@ -114,7 +148,7 @@ dashboardsRouter.get('/:id', requireAuth(), requireDb, async (req, res) => {
   }
   const widgets = (await db.query(
     `select w.*, ds.slug as dataset_slug from widgets w
-      join datasets ds on ds.id = w.dataset_id
+      left join datasets ds on ds.id = w.dataset_id
      where w.dashboard_id = $1 order by w.sort_order, w.created_at`,
     [req.params.id],
   )).rows
@@ -252,10 +286,9 @@ dashboardsRouter.delete('/:id/tabs/:tabId', requireAuth({ role: 'editor' }), req
 // ── Widgets ────────────────────────────────────────────────────
 dashboardsRouter.post('/:id/widgets', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
   if (!(await canEdit(req, req.params.id))) return res.status(403).json({ error: 'Apenas o dono (ou admin) pode editar.' })
-  const { title, type, datasetId, dimension, metric, filters, size, tabId, layout, style } = req.body ?? {}
-  if (!TYPES.has(type)) return res.status(400).json({ error: `Tipo inválido: ${type}` })
-  if (!datasetId || !metric) return res.status(400).json({ error: 'datasetId e metric são obrigatórios.' })
-  if (type !== 'kpi' && !dimension) return res.status(400).json({ error: 'Gráficos precisam de uma dimensão (campo do eixo).' })
+  const { title, type, datasetId, dimension, metric, filters, size, tabId, layout, style, spec } = req.body ?? {}
+  const err = validateWidgetBody(req.body ?? {})
+  if (err) return res.status(400).json({ error: err })
 
   // Aba de destino: a informada (validando que é do dashboard) ou a primeira.
   const tab = (await db.query(
@@ -264,14 +297,19 @@ dashboardsRouter.post('/:id/widgets', requireAuth({ role: 'editor' }), requireDb
   )).rows[0]
   if (!tab) return res.status(400).json({ error: 'Aba de destino inválida.' })
 
+  // Colunas legadas (dimension/metric) derivadas do spec para manter o fallback.
+  const legacyDim = dimension ?? spec?.dimensions?.[0] ?? null
+  const legacyMetric = metric ?? measureToMetric(spec?.measures?.[0]) ?? {}
+
   const row = (await db.query(
-    `insert into widgets (dashboard_id, tab_id, dataset_id, title, type, dimension, metric, filters, size, layout, style, sort_order)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+    `insert into widgets (dashboard_id, tab_id, dataset_id, title, type, dimension, metric, filters, size, layout, style, spec, sort_order)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
        coalesce((select max(sort_order) + 1 from widgets where dashboard_id = $1), 0))
      returning id`,
-    [req.params.id, tab.id, datasetId, String(title || ''), type, dimension ?? null,
-     JSON.stringify(metric), JSON.stringify(filters ?? []), SIZES.has(size) ? size : 'md',
-     layout ? JSON.stringify(layout) : null, style ? JSON.stringify(style) : null],
+    [req.params.id, tab.id, datasetId ?? null, String(title || ''), type, legacyDim,
+     JSON.stringify(legacyMetric), JSON.stringify(filters ?? []), SIZES.has(size) ? size : 'md',
+     layout ? JSON.stringify(layout) : null, style ? JSON.stringify(style) : null,
+     spec ? JSON.stringify(spec) : null],
   )).rows[0]
   await db.query('update dashboards set updated_at = now() where id = $1', [req.params.id])
   res.status(201).json({ id: row.id })
@@ -279,38 +317,44 @@ dashboardsRouter.post('/:id/widgets', requireAuth({ role: 'editor' }), requireDb
 
 dashboardsRouter.patch('/:id/widgets/:widgetId', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
   if (!(await canEdit(req, req.params.id))) return res.status(403).json({ error: 'Apenas o dono (ou admin) pode editar.' })
-  const { title, size, sortOrder, type, datasetId, dimension, metric, filters, tabId, layout, style } = req.body ?? {}
-  // Edição de CONFIG (tipo/dataset/dimensão/métrica) só quando `type` é enviado;
-  // os PATCHes de resize/reorder/título/layout/estilo continuam funcionando sem isso.
-  if (type !== undefined) {
-    if (!TYPES.has(type)) return res.status(400).json({ error: `Tipo inválido: ${type}` })
-    if (!datasetId || !metric) return res.status(400).json({ error: 'datasetId e metric são obrigatórios.' })
-    if (type !== 'kpi' && !dimension) return res.status(400).json({ error: 'Gráficos precisam de uma dimensão (campo do eixo).' })
+  const { title, size, sortOrder, type, datasetId, dimension, metric, filters, tabId, layout, style, spec } = req.body ?? {}
+  // Edição de CONFIG (tipo/dados/spec) só quando `type` é enviado; os PATCHes de
+  // resize/reorder/título/layout/estilo continuam funcionando sem isso.
+  const isConfigEdit = type !== undefined
+  if (isConfigEdit) {
+    const err = validateWidgetBody(req.body ?? {})
+    if (err) return res.status(400).json({ error: err })
   }
+  // Colunas legadas derivadas do spec (só numa edição de config).
+  const legacyDim = isConfigEdit ? (dimension ?? spec?.dimensions?.[0] ?? null) : null
+  const legacyMetric = isConfigEdit ? (metric ?? measureToMetric(spec?.measures?.[0]) ?? {}) : null
+
   const row = (await db.query(
     `update widgets set
        title = coalesce($3, title),
        size = coalesce($4, size),
        sort_order = coalesce($5, sort_order),
        type = coalesce($6, type),
-       dataset_id = coalesce($7, dataset_id),
+       dataset_id = case when $6::text is not null then $7 else dataset_id end,
        dimension = case when $6::text is not null then $8 else dimension end,
-       metric = coalesce($9, metric),
+       metric = case when $6::text is not null then $9::jsonb else metric end,
        filters = coalesce($10, filters),
        tab_id = coalesce($11, tab_id),
        layout = case when $12::jsonb is not null then $12::jsonb else layout end,
        style = case when $13::jsonb is not null then $13::jsonb else style end,
+       spec = case when $6::text is not null then $14 else spec end,
        updated_at = now()
      where id = $2 and dashboard_id = $1 returning id`,
     [req.params.id, req.params.widgetId, title ?? null,
      SIZES.has(size) ? size : null, Number.isInteger(sortOrder) ? sortOrder : null,
-     type ?? null, datasetId ?? null,
-     type ? (type === 'kpi' ? null : dimension) : null,
-     metric ? JSON.stringify(metric) : null,
+     type ?? null, isConfigEdit ? (datasetId ?? null) : null,
+     legacyDim,
+     legacyMetric ? JSON.stringify(legacyMetric) : null,
      filters ? JSON.stringify(filters) : null,
      tabId ?? null,
      layout !== undefined ? JSON.stringify(layout) : null,
-     style !== undefined ? JSON.stringify(style) : null],
+     style !== undefined ? JSON.stringify(style) : null,
+     isConfigEdit ? (spec ? JSON.stringify(spec) : null) : null],
   )).rows[0]
   if (!row) return res.status(404).json({ error: 'Widget não encontrado.' })
   await db.query('update dashboards set updated_at = now() where id = $1', [req.params.id])

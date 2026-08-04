@@ -36,7 +36,7 @@ function chartToWidget(c: ChartDef, i: number): Widget {
   return {
     id: `ai-${i}`, tabId: '', title: c.title, type: c.type, datasetId: '', datasetSlug: c.datasetSlug,
     dimension: c.dimension, metric: c.metric, filters: c.filters ?? [], size: 'md',
-    layout: null, style: null, sortOrder: i,
+    layout: null, style: null, spec: null, sortOrder: i,
   }
 }
 

@@ -38,7 +38,7 @@ function toWidget(p: WidgetProposal, i: number): Widget {
   return {
     id: `prop-${i}`, tabId: '', title: p.title, type: p.type,
     datasetId: p.datasetId, datasetSlug: p.datasetSlug, dimension: p.dimension,
-    metric: p.metric, filters: p.filters ?? [], size: 'md', layout: null, style: p.style, sortOrder: i,
+    metric: p.metric, filters: p.filters ?? [], size: 'md', layout: null, style: p.style, spec: null, sortOrder: i,
   }
 }
 
