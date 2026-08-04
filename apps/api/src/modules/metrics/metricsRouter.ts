@@ -22,6 +22,33 @@ function slugify(name: string): string {
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'metrica'
 }
 
+const FILTER_OPS = new Set([
+  '=', '!=', '>', '>=', '<', '<=', 'contains', 'starts_with', 'in', 'not_in', 'is_null', 'not_null', 'between',
+])
+// Filtros embutidos da métrica (ex.: "protocolos onde title = 'instalação'").
+// Validamos campo (tem de existir e estar visível no dataset) e operador; o
+// compilador aplica como FILTER (WHERE …) na agregação.
+async function parseFilters(raw: unknown, datasetId: string): Promise<QueryFilter[]> {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) throw new Error('filters deve ser uma lista.')
+  if (!raw.length) return []
+  const keys = new Set((await db.query(
+    `select key from dataset_fields where dataset_id = $1 and not hidden`, [datasetId],
+  )).rows.map((r) => String(r.key)))
+  return raw.map((f) => {
+    const o = (f ?? {}) as Record<string, unknown>
+    const field = String(o.field ?? '').trim()
+    const op = String(o.op ?? '=')
+    if (!keys.has(field)) throw new Error(`Campo de filtro inválido: "${field}".`)
+    if (!FILTER_OPS.has(op)) throw new Error(`Operador de filtro inválido: "${op}".`)
+    const needsValue = op !== 'is_null' && op !== 'not_null'
+    if (needsValue && (o.value === undefined || o.value === null || o.value === '')) {
+      throw new Error(`Informe o valor do filtro em "${field}".`)
+    }
+    return { field, op: op as QueryFilter['op'], ...(needsValue ? { value: o.value } : {}) }
+  })
+}
+
 function toMetric(row: Record<string, unknown>): Metric {
   return {
     id: String(row.id), slug: String(row.slug), name: String(row.name),
@@ -65,6 +92,13 @@ metricsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (req, 
   )).rows[0]
   if (!field) return res.status(400).json({ error: 'fieldKey precisa ser um campo visível do dataset.' })
 
+  let parsedFilters: QueryFilter[]
+  try {
+    parsedFilters = await parseFilters(filters, String(datasetId))
+  } catch (e) {
+    return res.status(400).json({ error: (e as Error).message })
+  }
+
   const base = slugify(String(name))
   const taken = new Set((await db.query(
     `select m.slug from metrics m join tenants t on t.id = m.tenant_id where t.slug = $1`,
@@ -78,24 +112,51 @@ metricsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (req, 
      select t.id, $1, $2, $3, $4, $5, $6, $7, $8, $9 from tenants t where t.slug = $10
      returning id`,
     [datasetId, slug, String(name).trim(), String(description || ''), agg, fieldKey,
-     JSON.stringify(filters ?? []), format || 'number', req.user!.email, req.user!.tenant],
+     JSON.stringify(parsedFilters), format || 'number', req.user!.email, req.user!.tenant],
   )).rows[0]
   await audit(req, 'metrics.create', { type: 'metric', id: slug })
   res.status(201).json({ id: row.id, slug })
 })
 
 metricsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
-  const { name, description, format } = req.body ?? {}
+  const { name, description, format, agg, fieldKey, filters } = req.body ?? {}
   const admin = req.user!.roles.includes('admin')
-  const row = (await db.query(
+
+  // Localiza a métrica (respeitando a posse) para validar campo/filtros contra
+  // o dataset dela — a definição (agg/campo/filtros) agora é editável.
+  const cur = (await db.query(
+    `select m.* from metrics m join tenants t on t.id = m.tenant_id
+      where t.slug = $1 and m.id = $2 ${admin ? '' : 'and m.owner_email = $3'}`,
+    admin ? [req.user!.tenant, req.params.id] : [req.user!.tenant, req.params.id, req.user!.email],
+  )).rows[0]
+  if (!cur) return res.status(404).json({ error: 'Métrica não encontrada (ou você não é o dono).' })
+
+  if (agg !== undefined && !AGGS.has(agg)) return res.status(400).json({ error: `Agregação inválida: ${agg}` })
+  if (format !== undefined && format && !FORMATS.has(format)) return res.status(400).json({ error: `Formato inválido: ${format}` })
+  if (fieldKey !== undefined) {
+    const ok = (await db.query(
+      `select 1 from dataset_fields where dataset_id = $1 and key = $2 and not hidden`,
+      [cur.dataset_id, fieldKey],
+    )).rows[0]
+    if (!ok) return res.status(400).json({ error: 'fieldKey precisa ser um campo visível do dataset.' })
+  }
+  let parsedFilters: QueryFilter[] | null = null
+  if (filters !== undefined) {
+    try { parsedFilters = await parseFilters(filters, String(cur.dataset_id)) }
+    catch (e) { return res.status(400).json({ error: (e as Error).message }) }
+  }
+
+  await db.query(
     `update metrics set
        name = coalesce($2, name), description = coalesce($3, description),
-       format = coalesce($4, format), updated_at = now()
-     where id = $1 ${admin ? '' : 'and owner_email = $5'} returning slug`,
-    admin ? [req.params.id, name ?? null, description ?? null, format ?? null]
-          : [req.params.id, name ?? null, description ?? null, format ?? null, req.user!.email],
-  )).rows[0]
-  if (!row) return res.status(404).json({ error: 'Métrica não encontrada (ou você não é o dono).' })
+       format = coalesce($4, format), agg = coalesce($5, agg), field_key = coalesce($6, field_key),
+       filters = case when $7::jsonb is not null then $7::jsonb else filters end,
+       updated_at = now()
+     where id = $1`,
+    [cur.id, name ?? null, description ?? null, format ?? null, agg ?? null, fieldKey ?? null,
+     parsedFilters ? JSON.stringify(parsedFilters) : null],
+  )
+  await audit(req, 'metrics.update', { type: 'metric', id: String(cur.slug) })
   res.json({ ok: true })
 })
 
