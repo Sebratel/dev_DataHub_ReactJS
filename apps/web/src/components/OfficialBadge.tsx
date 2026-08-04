@@ -13,7 +13,7 @@ export default function OfficialBadge({ size = 'sm', className }: { size?: 'sm' 
         className,
       )}
     >
-      <BadgeCheck size={size === 'sm' ? 12 : 14} strokeWidth={2.5} />
+      <BadgeCheck size={size === 'sm' ? 12 : 14} strokeWidth={2} />
       Oficial
     </span>
   )

@@ -3,6 +3,33 @@
 @tailwind utilities;
 
 @layer base {
+  /* Variáveis lidas por SVG e estilos inline (sparkline, gráficos, mini-barras)
+     — Tailwind não alcança atributo de SVG. Mesmos valores do tailwind.config;
+     mudar lá exige mudar aqui. */
+  :root {
+    --surface: #ffffff;
+    --series-1: #3b6fe0;
+    --series-2: #0e9f8f;
+    --series-3: #8b5cf6;
+    --grid: #eceff3;
+    --ok: #0e9f6e;
+    --warn: #b26a00;
+    --crit: #d92d20;
+    --ink-faint: #8d96a4;
+  }
+
+  .dark {
+    --surface: #15181d;
+    --series-1: #5b8cf0;
+    --series-2: #0fa394;
+    --series-3: #9575f5;
+    --grid: #23272f;
+    --ok: #2bb583;
+    --warn: #e0942c;
+    --crit: #f0665d;
+    --ink-faint: #6b7482;
+  }
+
   html {
     font-family: 'Inter', system-ui, sans-serif;
     /* Base do rem = alavanca de densidade global (mesma regra do churn_mvp):
@@ -18,6 +45,12 @@
     overflow-x: hidden;
   }
 
+  /* Numa tela de dados, dígito que não alinha em coluna é ruído. */
+  table,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
   ::-webkit-scrollbar {
     width: 5px;
     height: 5px;
@@ -28,33 +61,33 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #e0dcd0;
+    background: #cfd5de;
     border-radius: 99px;
   }
 
   .dark ::-webkit-scrollbar-thumb {
-    background: #3a3a3a;
+    background: #333944;
   }
 }
 
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: #e0dcd0 transparent;
+    scrollbar-color: #cfd5de transparent;
   }
 
-  /* Lift sutil no hover — cards premium */
+  /* Realce sutil no hover. Sem translateY: numa UI densa card que pula é
+     ruído — a resposta ao cursor vem da borda e do fundo. */
   .hover-lift {
-    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease, border-color 0.25s ease;
-    will-change: transform;
+    transition: box-shadow 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
   }
   .hover-lift:hover {
-    transform: translateY(-3px);
+    @apply border-zinc-300 shadow-card-md dark:border-zinc-700;
   }
 
   /* Texto com gradiente da marca (âmbar → laranja) */
   .gradient-text {
-    background-image: linear-gradient(135deg, #ffb000 0%, #ff8f00 100%);
+    background-image: linear-gradient(145deg, #ffb000 0%, #ff8f00 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
