@@ -25,7 +25,7 @@ import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging } from './core/lake.js'
 import { reloadConnections } from './connectors/store.js'
-import { ensureApiMetricsDataset, ensureApiSummaryDerived, ensureApiMetricsDashboard } from './modules/catalog/apiMetricsDataset.js'
+import { ensureApiMetricsDataset, ensureApiSummaryDerived, ensureApiMetricsDashboard, ensureApiRuntimeWidget } from './modules/catalog/apiMetricsDataset.js'
 
 // Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
 // middleware de erro — sem isto, um único erro de SQL derruba a API inteira
@@ -108,6 +108,8 @@ if (isDbAvailable()) {
     console.warn(`[api-metrics] derivado falhou: ${(e as Error).message}`))
   await ensureApiMetricsDashboard().catch((e) =>
     console.warn(`[api-metrics] dashboard falhou: ${(e as Error).message}`))
+  await ensureApiRuntimeWidget().catch((e) =>
+    console.warn(`[api-metrics] widget de latência no tempo falhou: ${(e as Error).message}`))
 }
 startScheduler() // sync diário na madrugada (ETL_HOUR)
 startHealthChecks() // Fase 3: monitor de uptime a cada 60s

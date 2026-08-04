@@ -160,3 +160,43 @@ export async function ensureApiMetricsDashboard(): Promise<void> {
     console.warn(`[api-metrics] dashboard falhou: ${(e as Error).message}`)
   }
 }
+
+// Adiciona (idempotente) o gráfico de LATÊNCIA (run time) AO LONGO DO TEMPO ao
+// painel "Saúde das APIs" — a tendência da média de duration_ms por período.
+// Complementa a latência média/P95/P99 por endpoint (que são por endpoint, não
+// no tempo). Roda a cada boot; só insere se ainda não existir.
+export async function ensureApiRuntimeWidget(): Promise<void> {
+  if (!isDbAvailable()) return
+  const TITLE = 'Latência média ao longo do tempo (ms)'
+  try {
+    const tenants = (await db.query('select id, slug from tenants')).rows
+    for (const t of tenants) {
+      const dash = (await db.query(
+        `select id from dashboards where tenant_id = $1 and name = 'Saúde das APIs'`, [t.id],
+      )).rows[0]
+      if (!dash) continue
+      const ds = (await db.query(
+        `select id from datasets where tenant_id = $1 and connection_id = 'datahub-meta' and object_name = 'api_call_metrics'`, [t.id],
+      )).rows[0]
+      if (!ds) continue
+      const exists = (await db.query(`select 1 from widgets where dashboard_id = $1 and title = $2`, [dash.id, TITLE])).rows[0]
+      if (exists) continue
+
+      // Garante uma aba (o painel pode ter sido criado antes do modelo de abas).
+      let tab = (await db.query(`select id from dashboard_tabs where dashboard_id = $1 order by sort_order limit 1`, [dash.id])).rows[0]
+      if (!tab) {
+        tab = (await db.query(`insert into dashboard_tabs (dashboard_id, label, sort_order) values ($1, 'Geral', 0) returning id`, [dash.id])).rows[0]
+        await db.query(`update widgets set tab_id = $2 where dashboard_id = $1 and tab_id is null`, [dash.id, tab.id])
+      }
+      await db.query(
+        `insert into widgets (dashboard_id, tab_id, dataset_id, title, type, dimension, metric, filters, size, sort_order)
+         values ($1, $2, $3, $4, 'line', 'created_at', $5, '[]', 'lg',
+           coalesce((select max(sort_order) + 1 from widgets where dashboard_id = $1), 0))`,
+        [dash.id, tab.id, ds.id, TITLE, JSON.stringify({ field: 'duration_ms', agg: 'avg' })],
+      )
+      console.log(`[api-metrics] widget "${TITLE}" adicionado (tenant ${t.slug}).`)
+    }
+  } catch (e) {
+    console.warn(`[api-metrics] widget de latência no tempo falhou: ${(e as Error).message}`)
+  }
+}
