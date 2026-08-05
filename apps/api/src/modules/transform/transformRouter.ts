@@ -9,7 +9,8 @@ import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { enqueueSync } from '../sync/ingest.js'
-import { validateTransformSql, previewDerived, assertNoDerivedCycle } from './derive.js'
+import { validateTransformSql, previewDerived, assertNoDerivedCycle, assertReferencesAllowed } from './derive.js'
+import type { AccessUser } from '../../core/access.js'
 
 export const transformRouter = Router()
 
@@ -24,18 +25,22 @@ function slugify(name: string): string {
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'derivado'
 }
 
-// Valida o SQL de ponta a ponta: guard + denylist + execução real (LIMIT 50).
-// Devolve o erro amigável do DuckDB quando o SQL não compila.
-async function tryPreview(tenant: string, sql: string) {
+// Valida o SQL de ponta a ponta: guard + denylist + permissão + execução real
+// (LIMIT 50). Devolve o erro amigável do DuckDB quando o SQL não compila.
+//
+// O `user` não é opcional aqui de propósito: é ele que impede alguém de
+// alcançar um conjunto restrito só escrevendo o slug no SQL.
+async function tryPreview(user: AccessUser, sql: string) {
   validateTransformSql(sql)
-  return previewDerived(tenant, sql)
+  await assertReferencesAllowed(user.tenant, sql, user)
+  return previewDerived(user.tenant, sql, user)
 }
 
 transformRouter.post('/derived/preview', ...editorOnly, async (req, res) => {
   const { sql } = req.body ?? {}
   if (!sql || typeof sql !== 'string') return res.status(400).json({ error: 'Informe o SQL.' })
   try {
-    res.json(await tryPreview(req.user!.tenant, sql))
+    res.json(await tryPreview(req.user!, sql))
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }
@@ -45,7 +50,7 @@ transformRouter.post('/derived', ...editorOnly, async (req, res) => {
   const { name, description, sql } = req.body ?? {}
   if (!name || !sql) return res.status(400).json({ error: 'name e sql são obrigatórios.' })
   try {
-    await tryPreview(req.user!.tenant, String(sql))
+    await tryPreview(req.user!, String(sql))
   } catch (e) {
     return res.status(400).json({ error: (e as Error).message })
   }
@@ -91,7 +96,7 @@ transformRouter.patch('/derived/:id', ...editorOnly, async (req, res) => {
   const { name, description, sql } = req.body ?? {}
   if (sql != null) {
     try {
-      await tryPreview(req.user!.tenant, String(sql))
+      await tryPreview(req.user!, String(sql))
       await assertNoDerivedCycle(req.user!.tenant, ds.slug, String(sql)) // cadeias sem ciclo
     } catch (e) {
       return res.status(400).json({ error: (e as Error).message })

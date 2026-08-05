@@ -52,6 +52,10 @@ export const config = {
     // Máx. de consultas SIMULTÂNEAS no motor; o excedente espera em fila. Evita
     // que um dashboard com muitos widgets (ou vários usuários) dê pico de carga.
     maxConcurrency: Math.max(1, Number(process.env.DUCK_MAX_CONCURRENCY) || 6),
+    // Pista separada para carga AD-HOC (notebook, prévia de derivado, base de
+    // atributos de modelo). Menor de propósito: uma consulta exploratória
+    // grande não pode ocupar os slots dos painéis.
+    maxAdhocConcurrency: Math.max(1, Number(process.env.DUCK_MAX_ADHOC_CONCURRENCY) || 2),
   },
 }
 

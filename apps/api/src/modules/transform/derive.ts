@@ -13,6 +13,7 @@ import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet, clearParquet, dirBytes, uploadToGcs } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { assertReadOnly, stripNoise } from '../../core/guard.js'
+import { accessibleDatasetIds, type AccessUser } from '../../core/access.js'
 import type { FieldType } from '@datahub/shared'
 
 // Além do guard read-only: bloqueia funções do DuckDB que alcançam o sistema
@@ -35,24 +36,69 @@ export interface LakeRef {
   glob: string
 }
 
+export interface LakeRefOptions {
+  /** Evita um derivado referenciar a si mesmo (leria a versão anterior). */
+  excludeSlug?: string
+  /**
+   * Quando presente, só entram conjuntos que ESTE usuário pode ler.
+   *
+   * Sem isto, qualquer pessoa que escreva SQL aqui alcança todo conjunto do
+   * tenant só digitando o slug — inclusive os restritos por dataset_grants.
+   * A regra: caminho INTERATIVO (prévia, onde a pessoa digita SQL livre) passa
+   * o usuário; caminho de EXECUÇÃO de uma definição já salva e validada
+   * (materialização, treino) roda com o tenant inteiro, como o scheduler.
+   */
+  user?: AccessUser
+}
+
 // Conjuntos do tenant (FONTE ou DERIVADO) que já têm Parquet no lake e podem
-// ser referenciados. Derivados agora entram → cadeias (derivado sobre derivado);
-// a ordem de atualização é resolvida por ordenação topológica no scheduler.
-// `excludeSlug` evita um derivado referenciar a si mesmo (leria a versão antiga).
-export async function lakeRefs(tenantSlug: string, excludeSlug?: string): Promise<LakeRef[]> {
+// ser referenciados. Derivados entram também → cadeias (derivado sobre
+// derivado); a ordem de atualização é resolvida por ordenação topológica no
+// scheduler.
+export async function lakeRefs(tenantSlug: string, opts: LakeRefOptions = {}): Promise<LakeRef[]> {
   const rows = (await db.query(
-    `select d.slug from datasets d join tenants t on t.id = d.tenant_id
+    `select d.id, d.slug from datasets d join tenants t on t.id = d.tenant_id
       where t.slug = $1 and d.kind in ('source', 'derived')`,
     [tenantSlug],
   )).rows
+
+  const allowed = opts.user ? await accessibleDatasetIds(opts.user) : null
+
   const refs: LakeRef[] = []
   for (const r of rows) {
     const slug = String(r.slug)
-    if (excludeSlug && slug === excludeSlug) continue
+    if (opts.excludeSlug && slug === opts.excludeSlug) continue
+    if (allowed && !allowed.has(String(r.id))) continue
     const dir = datasetDir(tenantSlug, slug)
     if (listParquet(dir).length) refs.push({ slug, glob: parquetGlob(dir) })
   }
   return refs
+}
+
+// Trava de AUTORIA: o SQL salvo só pode referenciar conjuntos que o autor
+// alcança. É o par da regra acima — a execução confia na definição justamente
+// porque a autoria foi conferida aqui.
+export async function assertReferencesAllowed(
+  tenantSlug: string, sql: string, user: AccessUser,
+): Promise<void> {
+  const all = (await db.query(
+    `select d.slug from datasets d join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and d.kind in ('source', 'derived')`,
+    [tenantSlug],
+  )).rows.map((r) => String(r.slug))
+
+  const referenced = referencedSlugs(sql, all)
+  if (!referenced.length) return
+
+  const allowed = await lakeRefs(tenantSlug, { user })
+  const allowedSet = new Set(allowed.map((r) => r.slug))
+  const denied = referenced.filter((s) => !allowedSet.has(s))
+  if (denied.length) {
+    throw new Error(
+      `Você não tem acesso a: ${denied.join(', ')}. ` +
+      'Peça a concessão ao dono do conjunto antes de referenciá-lo.',
+    )
+  }
 }
 
 // ── Cadeias de derivados: dependências, ordenação e ciclos ─────
@@ -167,13 +213,15 @@ function friendlyDuckError(e: Error, refs: LakeRef[]): Error {
 
 // Amostra do resultado (LIMIT 50) — validação/preview antes de criar/salvar.
 export async function previewDerived(
-  tenantSlug: string, sql: string,
+  tenantSlug: string, sql: string, user?: AccessUser,
 ): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
   validateTransformSql(sql)
-  const refs = await lakeRefs(tenantSlug)
+  // Prévia é caminho INTERATIVO: o usuário digita SQL livre, então só enxerga
+  // os conjuntos que ele pode ler.
+  const refs = await lakeRefs(tenantSlug, { user })
   const wrapped = buildLakeSql(sql, refs)
   try {
-    const res = await duckQuery(`select * from (${wrapped}) as __p limit 50`, [], { timeoutMs: config.duck.queryTimeoutMs })
+    const res = await duckQuery(`select * from (${wrapped}) as __p limit 50`, [], { timeoutMs: config.duck.queryTimeoutMs, adhoc: true })
     return { columns: res.columns, rows: res.rows }
   } catch (e) {
     throw friendlyDuckError(e as Error, refs)
@@ -233,7 +281,7 @@ export async function materializeDerived(ds: {
     validateTransformSql(ds.transformSql)
     // Exclui o próprio slug: um derivado não referencia a si mesmo (leria a
     // versão anterior). Cadeias derivado→derivado usam os demais materializados.
-    const refs = await lakeRefs(ds.tenantSlug, ds.slug)
+    const refs = await lakeRefs(ds.tenantSlug, { excludeSlug: ds.slug })
     const wrapped = buildLakeSql(ds.transformSql, refs)
 
     const partFs = join(dir, `part-${run.id}.parquet`)

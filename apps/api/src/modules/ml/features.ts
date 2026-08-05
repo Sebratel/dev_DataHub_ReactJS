@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { duckQuery } from '../query/duck.js'
 import { lakeRefs, buildLakeSql, validateTransformSql } from '../transform/derive.js'
+import type { AccessUser } from '../../core/access.js'
 import type { Matrix } from './algorithms.js'
 
 export type FeatureKind = 'numeric' | 'onehot'
@@ -62,12 +63,15 @@ function asNumber(v: unknown): number | null {
 // Roda o SQL de atributos sobre o lake, com o mesmo guard dos derivados
 // (somente leitura, sem alcançar o sistema de arquivos) e um teto de linhas.
 export async function runFeatureSql(
-  tenantSlug: string, sql: string, maxRows: number,
+  tenantSlug: string, sql: string, maxRows: number, user?: AccessUser,
 ): Promise<Record<string, unknown>[]> {
   validateTransformSql(sql)
-  const refs = await lakeRefs(tenantSlug)
+  // Com `user`, só os conjuntos que ele pode ler entram (caminho interativo da
+  // prévia). Sem, roda com o tenant inteiro — treino e predição executam uma
+  // definição cuja autoria já foi conferida em assertReferencesAllowed.
+  const refs = await lakeRefs(tenantSlug, { user })
   const wrapped = buildLakeSql(sql, refs)
-  const res = await duckQuery(`select * from (${wrapped}) as __ml limit ${Math.max(1, Math.floor(maxRows))}`)
+  const res = await duckQuery(`select * from (${wrapped}) as __ml limit ${Math.max(1, Math.floor(maxRows))}`, [], { adhoc: true })
   return res.rows
 }
 

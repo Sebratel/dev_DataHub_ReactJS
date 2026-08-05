@@ -33,25 +33,49 @@ export interface DuckResult {
 
 export interface DuckOptions {
   timeoutMs?: number // só nas consultas interativas; ausente = sem limite (background)
+  /**
+   * Carga AD-HOC — SQL livre de notebook, prévia de derivado, base de atributos
+   * de modelo. Tem pista própria e menor.
+   */
+  adhoc?: boolean
 }
 
-// ── Limitador de concorrência (semáforo FIFO) ──────────────────────────────
+// ── Limitador de concorrência (semáforo FIFO, em duas pistas) ──────────────
 // No máximo `maxConcurrency` consultas executam ao mesmo tempo; o excedente
 // espera na fila. Protege o servidor de um pico (dashboard com muitos widgets,
-// vários usuários) sem derrubar nada — só serializa o excesso. O sync roda uma
-// por vez em background, então ocupa no máximo um slot.
+// vários usuários) sem derrubar nada — só serializa o excesso.
+//
+// Duas pistas porque as cargas têm formas diferentes: um painel dispara muitas
+// consultas PEQUENAS e previsíveis; um notebook dispara UMA consulta grande e
+// imprevisível. Numa fila só, três analistas explorando ocupariam todos os
+// slots e os painéis de todo mundo entrariam atrás deles. A pista ad-hoc é
+// menor de propósito: quem explora espera, quem consulta painel não trava.
 const MAX_CONCURRENCY = config.duck.maxConcurrency
-let active = 0
-const waiters: Array<() => void> = []
+const MAX_ADHOC = config.duck.maxAdhocConcurrency
 
-function acquireSlot(): Promise<void> {
-  if (active < MAX_CONCURRENCY) { active++; return Promise.resolve() }
-  return new Promise<void>((resolve) => waiters.push(resolve))
+interface Lane { active: number; max: number; waiters: Array<() => void> }
+const lanes: Record<'normal' | 'adhoc', Lane> = {
+  normal: { active: 0, max: MAX_CONCURRENCY, waiters: [] },
+  adhoc: { active: 0, max: MAX_ADHOC, waiters: [] },
 }
-function releaseSlot(): void {
-  const next = waiters.shift()
+
+function acquireSlot(lane: Lane): Promise<void> {
+  if (lane.active < lane.max) { lane.active++; return Promise.resolve() }
+  return new Promise<void>((resolve) => lane.waiters.push(resolve))
+}
+function releaseSlot(lane: Lane): void {
+  const next = lane.waiters.shift()
   if (next) next() // passa o slot adiante sem zerar o contador
-  else active--
+  else lane.active--
+}
+
+// Ocupação atual das pistas — para o painel de monitoramento e para diagnóstico.
+export function engineLoad(): { normal: number; adhoc: number; queued: number } {
+  return {
+    normal: lanes.normal.active,
+    adhoc: lanes.adhoc.active,
+    queued: lanes.normal.waiters.length + lanes.adhoc.waiters.length,
+  }
 }
 
 // Traduz erros do motor para mensagens acionáveis ao usuário.
@@ -69,9 +93,10 @@ function friendlyEngineError(e: Error): Error {
 export async function duckQuery(
   sql: string, params: unknown[] = [], opts: DuckOptions = {},
 ): Promise<DuckResult> {
-  // Espera um slot: o timeout da consulta só começa a contar quando ela de fato
-  // executa (abaixo), não enquanto aguarda na fila.
-  await acquireSlot()
+  // Espera um slot na pista certa: o timeout da consulta só começa a contar
+  // quando ela de fato executa (abaixo), não enquanto aguarda na fila.
+  const lane = opts.adhoc ? lanes.adhoc : lanes.normal
+  await acquireSlot(lane)
   try {
     const conn: DuckDBConnection = await (await getInstance()).connect()
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -111,6 +136,6 @@ export async function duckQuery(
       conn.closeSync()
     }
   } finally {
-    releaseSlot()
+    releaseSlot(lane)
   }
 }

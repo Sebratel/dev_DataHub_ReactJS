@@ -5,7 +5,7 @@ import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
-import { validateTransformSql } from '../transform/derive.js'
+import { validateTransformSql, assertReferencesAllowed } from '../transform/derive.js'
 import { runFeatureSql, buildSchema } from './features.js'
 import { trainModel, queueDepth, type ModelRow } from './train.js'
 import { loadPromoted, scoreBatch, scoreRows } from './predict.js'
@@ -109,9 +109,12 @@ function readInput(body: Record<string, unknown>) {
   if (!Number.isInteger(holdoutPct) || holdoutPct < 5 || holdoutPct > 50) {
     throw new Error('A fatia de validação deve ficar entre 5% e 50%.')
   }
+  // Teto de 500k, não 2M: runFeatureSql materializa as linhas como OBJETOS JS
+  // antes de virarem matriz de floats. 2M linhas largas estouram o heap do Node
+  // muito antes de o DuckDB reclamar (ele derrama para disco, o Node não).
   const maxRows = Number(body.maxRows ?? 200_000)
-  if (!Number.isInteger(maxRows) || maxRows < 100 || maxRows > 2_000_000) {
-    throw new Error('O teto de linhas deve ficar entre 100 e 2.000.000.')
+  if (!Number.isInteger(maxRows) || maxRows < 100 || maxRows > 500_000) {
+    throw new Error('O teto de linhas deve ficar entre 100 e 500.000.')
   }
   const retrain = String(body.retrain ?? 'manual')
   if (!['manual', 'daily', 'weekly'].includes(retrain)) throw new Error('Cadência de retreino inválida.')
@@ -128,6 +131,7 @@ function readInput(body: Record<string, unknown>) {
 mlRouter.post('/', ...editorOnly, async (req, res) => {
   try {
     const i = readInput(req.body ?? {})
+    await assertReferencesAllowed(req.user!.tenant, i.featureSql, req.user!)
     const row = (await db.query(
       `insert into ml_models
          (tenant_id, slug, name, description, task, algorithm, feature_sql, target_column,
@@ -146,6 +150,7 @@ mlRouter.post('/', ...editorOnly, async (req, res) => {
 mlRouter.put('/:slug', ...editorOnly, async (req, res) => {
   try {
     const i = readInput({ ...req.body, slug: req.body?.slug ?? req.params.slug })
+    await assertReferencesAllowed(req.user!.tenant, i.featureSql, req.user!)
     const row = (await db.query(
       `update ml_models m set
          slug = $3, name = $4, description = $5, task = $6, algorithm = $7,
@@ -187,7 +192,8 @@ mlRouter.post('/preview', ...editorOnly, async (req, res) => {
     const excluded = Array.isArray(req.body?.excludedColumns) ? req.body.excludedColumns.map(String) : []
     if (!target) throw new Error('Informe a coluna alvo.')
 
-    const rows = await runFeatureSql(req.user!.tenant, sql, 5_000)
+    await assertReferencesAllowed(req.user!.tenant, sql, req.user!)
+    const rows = await runFeatureSql(req.user!.tenant, sql, 5_000, req.user!)
     const schema = buildSchema(rows, target, task, excluded)
     res.json({
       sampledRows: rows.length,
