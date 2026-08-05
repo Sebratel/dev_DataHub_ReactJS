@@ -151,7 +151,7 @@ export default function AiWidgetPanel({ dashboardId, tabId, onClose, onAdded }: 
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"><X size={18} /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex-1 overflow-y-auto p-3.5">
           {/* Escopo: quais conjuntos a IA pode usar nesta tela (vazio = todos). */}
           {datasets.length > 0 && (
             <div className="mb-3">

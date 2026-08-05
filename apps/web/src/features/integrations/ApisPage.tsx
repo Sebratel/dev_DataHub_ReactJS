@@ -60,9 +60,9 @@ export default function ApisPage() {
 
   return (
     <div className="mx-auto max-w-7xl">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <h1 className="flex items-center gap-2 text-[17px] font-semibold tracking-tight">
             <Webhook size={22} className="text-accent" /> APIs
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
@@ -83,7 +83,7 @@ export default function ApisPage() {
 
       {/* Fila de aprovação (admin) */}
       {isAdmin && pending.length > 0 && (
-        <div className="mt-5 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/20">
+        <div className="mt-5 rounded-xl border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/20">
           <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
             <Clock size={15} /> {pending.length} API(s) de escrita aguardando sua aprovação
           </p>
@@ -162,7 +162,7 @@ function ProductCard({ p, isAdmin, ownEmail, onEdit, onDelete, onToggle }: {
   }
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex items-center gap-3">
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${METHOD_CLS[p.method] ?? ''}`}>{p.method}</span>
         <div className="min-w-0 flex-1">
@@ -260,8 +260,8 @@ function ApiBuilder({ initial, onClose, onSaved }: { initial: ApiProduct | null;
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl bg-white p-5 shadow-xl dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl bg-white p-3.5 shadow-xl dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-semibold">{isEdit ? 'Editar API' : 'Nova API'}</h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"><X size={17} /></button>

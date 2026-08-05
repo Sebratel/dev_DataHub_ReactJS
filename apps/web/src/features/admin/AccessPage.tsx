@@ -18,7 +18,7 @@ export default function AccessPage() {
   const [tab, setTab] = useState<'users' | 'teams'>('users')
   return (
     <div className="mx-auto max-w-7xl">
-      <h1 className="text-2xl font-semibold">Usuários e Acessos</h1>
+      <h1 className="text-[17px] font-semibold">Usuários e Acessos</h1>
       <p className="mt-1 text-sm text-zinc-500">
         Papéis dos usuários e times para conceder acesso aos conjuntos de dados.
       </p>
@@ -35,7 +35,7 @@ export default function AccessPage() {
           </button>
         ))}
       </div>
-      <div className="mt-6">{tab === 'users' ? <UsersTab /> : <TeamsTab />}</div>
+      <div className="mt-4">{tab === 'users' ? <UsersTab /> : <TeamsTab />}</div>
     </div>
   )
 }
@@ -169,7 +169,7 @@ function TeamsTab() {
         {teams === null && <p className="text-sm text-zinc-500">Carregando…</p>}
         {teams?.length === 0 && <p className="text-sm text-zinc-500">Nenhum time criado. Crie o primeiro acima.</p>}
         {teams?.map((t) => (
-          <div key={t.id} className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <div key={t.id} className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
             <UsersRound size={18} className="text-secondary" />
             <div className="min-w-0 flex-1">
               <p className="font-medium">{t.name}</p>
@@ -225,8 +225,8 @@ function MembersDialog({ team, onClose }: { team: TeamRow; onClose: () => void }
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-3.5 shadow-xl dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-semibold">Membros — {team.name}</h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"><X size={17} /></button>

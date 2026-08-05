@@ -95,7 +95,7 @@ export default function LoginPage() {
 
       <div className="relative z-10 flex min-h-svh w-full flex-col pb-16 lg:flex-row lg:items-center lg:pb-20">
         {/* Bloco de marca */}
-        <div className="order-1 flex flex-col gap-4 px-6 pt-10 text-[#fff] lg:min-h-svh lg:flex-1 lg:justify-end lg:pb-32 lg:pl-10 lg:pr-6 lg:pt-0 xl:pl-14">
+        <div className="order-1 flex flex-col gap-3 px-4 pt-10 text-[#fff] lg:min-h-svh lg:flex-1 lg:justify-end lg:pb-32 lg:pl-10 lg:pr-6 lg:pt-0 xl:pl-14">
           <motion.div
             className="flex items-center gap-3 drop-shadow-md"
             initial={reduced ? false : { opacity: 0, x: -14 }}
@@ -103,10 +103,10 @@ export default function LoginPage() {
             transition={{ duration: 0.5, ease: EASE }}
           >
             <img src={LOGO} alt="" width={44} height={44} className="h-11 w-11 rounded-full object-contain ring-1 ring-[#fff]/40 shadow-lg" aria-hidden />
-            <span className="text-base font-extrabold uppercase tracking-[0.24em] text-[#fff] drop-shadow-[0_2px_8px_rgba(0,0,0,0.7)] sm:text-lg">Data Hub Sebratel</span>
+            <span className="text-[13px] font-extrabold uppercase tracking-[0.24em] text-[#fff] drop-shadow-[0_2px_8px_rgba(0,0,0,0.7)] sm:text-[14px]">Data Hub Sebratel</span>
           </motion.div>
           <motion.h2
-            className="max-w-xl text-balance text-2xl font-bold leading-[1.15] tracking-tight text-[#fff] drop-shadow-[0_2px_12px_rgba(0,0,0,0.75)] sm:text-3xl lg:text-[2rem] xl:text-4xl"
+            className="max-w-xl text-balance text-[17px] font-bold leading-[1.15] tracking-tight text-[#fff] drop-shadow-[0_2px_12px_rgba(0,0,0,0.75)] sm:text-[19px] lg:text-[2rem] xl:text-4xl"
             initial={reduced ? false : { opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.08, ease: EASE }}
@@ -114,7 +114,7 @@ export default function LoginPage() {
             Todos os dados da operação, <span className="text-[#FFC107]">em um só lugar.</span>
           </motion.h2>
           <motion.p
-            className="max-w-md text-sm leading-relaxed text-[#fff] drop-shadow-[0_1px_8px_rgba(0,0,0,0.8)] sm:text-base"
+            className="max-w-md text-sm leading-relaxed text-[#fff] drop-shadow-[0_1px_8px_rgba(0,0,0,0.8)] sm:text-[13px]"
             initial={reduced ? false : { opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.16, ease: EASE }}
@@ -124,7 +124,7 @@ export default function LoginPage() {
         </div>
 
         {/* Card de login */}
-        <div className="order-2 flex w-full flex-1 flex-col items-center justify-center px-4 py-10 sm:px-6 lg:w-[min(100%,460px)] lg:flex-none lg:px-8 xl:pr-16 motion-safe:-translate-x-5 lg:motion-safe:-translate-x-12">
+        <div className="order-2 flex w-full flex-1 flex-col items-center justify-center px-4 py-10 sm:px-4 lg:w-[min(100%,460px)] lg:flex-none lg:px-8 xl:pr-16 motion-safe:-translate-x-5 lg:motion-safe:-translate-x-12">
           <motion.div
             className="relative z-10 w-full max-w-[440px]"
             initial={reduced ? false : { opacity: 0, y: 36, scale: 0.96, filter: 'blur(10px)' }}
@@ -138,19 +138,19 @@ export default function LoginPage() {
             >
               <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/45 to-transparent" />
 
-              <div className="relative space-y-6 p-7 sm:p-8">
+              <div className="relative space-y-4 p-7 sm:p-8">
                 <header className="space-y-2">
                   <span className="inline-flex rounded-full border border-amber-300/70 bg-amber-100 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-amber-900">
                     Data Hub Sebratel
                   </span>
-                  <h1 className="text-2xl font-bold tracking-tight text-on-surface sm:text-[1.65rem]">Acessar plataforma</h1>
+                  <h1 className="text-[17px] font-bold tracking-tight text-on-surface sm:text-[1.65rem]">Acessar plataforma</h1>
                   <p className="text-sm leading-relaxed text-neutral-700">
                     Acesso com conta Google para controle de permissões por papel.
                   </p>
                 </header>
 
                 {/* Domínio liberado nesta fase */}
-                <div className="rounded-2xl border border-amber-300/80 bg-[#FFFBEB] p-4 shadow-sm">
+                <div className="rounded-2xl border border-amber-300/80 bg-[#FFFBEB] p-3 shadow-sm">
                   <div className="flex gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-400/50 bg-amber-100/80 text-primary">
                       <Shield className="h-5 w-5" strokeWidth={2} aria-hidden />

@@ -169,7 +169,7 @@ export default function AiPage() {
   ]
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-7xl gap-4">
+    <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-7xl gap-3">
       {/* Conversas */}
       <aside className="hidden w-56 shrink-0 flex-col md:flex">
         <button onClick={() => void newConversation()}
@@ -201,11 +201,11 @@ export default function AiPage() {
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-zinc-950">
                 <Sparkles size={22} />
               </div>
-              <h1 className="mt-4 text-xl font-semibold">Assistente de Dados</h1>
+              <h1 className="mt-4 text-[15px] font-semibold">Assistente de Dados</h1>
               <p className="mt-1 max-w-md text-sm text-zinc-500">
                 Pergunte em linguagem natural, {user?.name.split(' ')[0]} — eu consulto os conjuntos de dados e monto gráficos.
               </p>
-              <div className="mt-6 grid gap-2">
+              <div className="mt-4 grid gap-2">
                 {SUGGESTIONS.map((s) => (
                   <button key={s} onClick={() => setInput(s)}
                     className="rounded-full border border-zinc-200 px-4 py-1.5 text-sm text-zinc-600 hover:border-accent hover:text-accent dark:border-zinc-700 dark:text-zinc-400">
@@ -216,7 +216,7 @@ export default function AiPage() {
             </div>
           )}
 
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-2.5">
             {messages.map((m) => (
               <div key={m.id} className={clsx('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                 <div className={clsx('max-w-[85%] rounded-2xl px-4 py-2.5 text-sm',

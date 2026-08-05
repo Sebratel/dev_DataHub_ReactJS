@@ -91,7 +91,7 @@ function Onboarding({ isAdmin, isEditor, name }: { isAdmin: boolean; isEditor: b
   const steps = isAdmin ? ADMIN_STEPS : isEditor ? EDITOR_STEPS : []
   return (
     <div className="mt-3.5">
-      <div className="rounded-2xl border border-accent-line bg-accent-soft p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="rounded-2xl border border-accent-line bg-accent-soft p-3.5 dark:border-zinc-800 dark:bg-zinc-900">
         <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">Vamos começar</h2>
         <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-zinc-600 dark:text-zinc-400">
           {isAdmin
@@ -107,7 +107,7 @@ function Onboarding({ isAdmin, isEditor, name }: { isAdmin: boolean; isEditor: b
           {steps.map((s, i) => <OnboardingStep key={s.title} n={i + 1} step={s} />)}
         </div>
       ) : (
-        <div className="mt-3 flex items-start gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mt-3 flex items-start gap-3 rounded-2xl border border-zinc-200 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent-ink dark:bg-zinc-800 dark:text-secondary">
             <Clock size={16} strokeWidth={1.5} />
           </div>
@@ -377,7 +377,7 @@ export default function HomePage() {
                     </Link>
                   ))}
                   {dashboards.length === 0 && (
-                    <p className="px-3 py-4 text-center text-[11.5px] text-zinc-500">
+                    <p className="px-3 py-2.5 text-center text-[11.5px] text-zinc-500">
                       Nenhum painel ainda — <Link to="/dashboards" className="font-medium text-info hover:underline dark:text-info-dark">crie o primeiro</Link>.
                     </p>
                   )}

@@ -215,7 +215,7 @@ export default function ExplorerPage() {
   }
 
   if (error && !dataset) {
-    return <p className="rounded-lg bg-red-50 p-4 text-sm text-red-600 dark:bg-red-950/40">{error}</p>
+    return <p className="rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>
   }
   if (!dataset) return <p className="text-sm text-zinc-500">Carregando…</p>
 
@@ -226,7 +226,7 @@ export default function ExplorerPage() {
       <Link to={`/datasets/${slug}`} className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
         <ArrowLeft size={14} /> {dataset.name}
       </Link>
-      <h1 className="text-xl font-semibold">Explorador — {dataset.name}</h1>
+      <h1 className="text-[15px] font-semibold">Explorador — {dataset.name}</h1>
 
       {/* Toolbar */}
       <div className="mt-4 flex flex-wrap items-center gap-2">

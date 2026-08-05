@@ -157,11 +157,11 @@ export default function DashboardPage() {
     navigate('/dashboards')
   }
 
-  if (error) return <p className="rounded-lg bg-red-50 p-4 text-sm text-red-600 dark:bg-red-950/40">{error}</p>
+  if (error) return <p className="rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>
   if (!dash) return <p className="text-sm text-zinc-500">Carregando…</p>
 
   return (
-    <div ref={rootRef} className={present ? 'min-h-screen overflow-auto bg-white p-6 dark:bg-zinc-950' : 'mx-auto max-w-7xl'}>
+    <div ref={rootRef} className={present ? 'min-h-screen overflow-auto bg-white p-4 dark:bg-zinc-950' : 'mx-auto max-w-7xl'}>
       {!present && (
         <Link to="/dashboards" className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
           <ArrowLeft size={14} /> Dashboards
@@ -169,7 +169,7 @@ export default function DashboardPage() {
       )}
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">{dash.name}</h1>
+          <h1 className="text-[17px] font-semibold">{dash.name}</h1>
           {dash.description && !present && <p className="mt-1 text-sm text-zinc-500">{dash.description}</p>}
         </div>
         <div className="flex shrink-0 gap-2">
@@ -236,7 +236,7 @@ export default function DashboardPage() {
       <FilterBar filters={tabFilterDefs} values={filterValues} onChange={setFilterValues} />
 
       {displayWidgets.length === 0 ? (
-        <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
+        <div className="mt-5 rounded-xl border border-dashed border-zinc-300 p-12 text-center text-sm text-zinc-500 dark:border-zinc-700">
           Aba vazia. {editable ? 'Clique em "Widget" para adicionar o primeiro gráfico.' : ''}
         </div>
       ) : (

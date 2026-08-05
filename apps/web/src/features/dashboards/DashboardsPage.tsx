@@ -36,7 +36,7 @@ export default function DashboardsPage() {
     <div className="mx-auto max-w-screen-2xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Dashboards</h1>
+          <h1 className="text-[17px] font-semibold">Dashboards</h1>
           <p className="mt-1 text-sm text-zinc-500">Indicadores e gráficos sobre os conjuntos de dados.</p>
         </div>
         {canCreate && (
@@ -48,17 +48,17 @@ export default function DashboardsPage() {
       </div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
-      {dashboards === null && !error && <p className="mt-6 text-sm text-zinc-500">Carregando…</p>}
+      {dashboards === null && !error && <p className="mt-4 text-sm text-zinc-500">Carregando…</p>}
       {dashboards?.length === 0 && (
-        <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+        <div className="mt-5 rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
           Nenhum dashboard ainda.{canCreate ? ' Crie o primeiro!' : ''}
         </div>
       )}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {dashboards?.map((d) => (
           <Link key={d.id} to={`/dashboards/${d.id}`}
-            className="group rounded-xl border border-zinc-200 bg-white p-5 transition hover:border-accent hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            className="group rounded-xl border border-zinc-200 bg-white p-3.5 transition hover:border-accent hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <LayoutDashboard size={18} className="text-accent" />
             <h2 className="mt-3 font-medium group-hover:text-accent">{d.name}</h2>
             <p className="mt-1 text-xs text-zinc-500">

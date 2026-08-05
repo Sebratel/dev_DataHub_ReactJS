@@ -83,7 +83,7 @@ export default function MetricsPage() {
     <div className="mx-auto max-w-6xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Biblioteca de Métricas</h1>
+          <h1 className="text-[17px] font-semibold">Biblioteca de Métricas</h1>
           <p className="mt-1 text-sm text-zinc-500">Definições únicas, reutilizáveis em dashboards e pela IA — com filtros embutidos.</p>
         </div>
         {canEdit && (
@@ -105,19 +105,19 @@ export default function MetricsPage() {
         />
       )}
 
-      {metrics === null && !error && <p className="mt-6 text-sm text-zinc-500">Carregando…</p>}
+      {metrics === null && !error && <p className="mt-4 text-sm text-zinc-500">Carregando…</p>}
       {metrics?.length === 0 && !form && (
-        <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+        <div className="mt-5 rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
           Nenhuma métrica ainda. {canEdit ? 'Crie a primeira — ela ficará disponível nos dashboards.' : 'Peça a um editor para criar.'}
         </div>
       )}
 
       {[...byDataset.entries()].map(([dsName, list]) => (
-        <div key={dsName} className="mt-6">
+        <div key={dsName} className="mt-4">
           <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-400">{dsName}</h2>
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             {list.map((m) => (
-              <div key={m.id} className="flex items-start gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+              <div key={m.id} className="flex items-start gap-3 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent dark:bg-zinc-800">
                   <Ruler size={15} />
                 </div>
@@ -219,7 +219,7 @@ function MetricForm({ initial, datasets, onClose, onSaved }: {
   const valid = name.trim() && dataset && field
 
   return (
-    <div className="mt-5 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="mt-5 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-semibold">{isEdit ? `Editar métrica “${initial!.name}”` : 'Nova métrica'}</h2>
         <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"><X size={17} /></button>

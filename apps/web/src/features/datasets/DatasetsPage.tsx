@@ -25,7 +25,7 @@ function DatasetCard({ d }: { d: DatasetSummary }) {
   const fresh = !!d.lastSyncAt && Date.now() - new Date(d.lastSyncAt).getTime() < 26 * 3600_000
   return (
     <Link to={`/datasets/${d.slug}`}
-      className={clsx('hover-lift group flex flex-col rounded-2xl border bg-white p-5 shadow-card hover:shadow-card-md dark:bg-zinc-900',
+      className={clsx('hover-lift group flex flex-col rounded-2xl border bg-white p-3.5 shadow-card hover:shadow-card-md dark:bg-zinc-900',
         d.official
           ? 'border-accent/40 ring-1 ring-accent/20 hover:border-accent'
           : 'border-zinc-200 hover:border-accent dark:border-zinc-800')}>
@@ -119,9 +119,9 @@ export default function DatasetsPage() {
 
   return (
     <div className="mx-auto max-w-screen-2xl">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Datasets</h1>
+          <h1 className="text-[17px] font-semibold tracking-tight">Datasets</h1>
           <p className="mt-1 text-sm text-zinc-500">Dados publicados e prontos para explorar — fontes e calculados.</p>
         </div>
         {canEdit && (
@@ -133,7 +133,7 @@ export default function DatasetsPage() {
       </div>
 
       {/* Filtro Todos / Fontes / Calculados (tudo é dataset). */}
-      <div className="mt-6 flex flex-wrap items-center gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         {FILTERS.map(({ k, label, count }) => (
           <button key={k} onClick={() => setFilter(k)}
             className={clsx('flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors',
@@ -155,10 +155,10 @@ export default function DatasetsPage() {
       </div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
-      {datasets === null && !error && <p className="mt-6 text-sm text-zinc-500">Carregando catálogo…</p>}
+      {datasets === null && !error && <p className="mt-4 text-sm text-zinc-500">Carregando catálogo…</p>}
 
       {filtered?.length === 0 && (
-        <div className="mt-8 flex flex-col items-center rounded-2xl border border-dashed border-zinc-300 p-12 text-center dark:border-zinc-700">
+        <div className="mt-5 flex flex-col items-center rounded-2xl border border-dashed border-zinc-300 p-12 text-center dark:border-zinc-700">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800">
             {filter === 'derived' ? <GitMerge size={22} /> : <Boxes size={22} />}
           </div>
@@ -166,7 +166,7 @@ export default function DatasetsPage() {
         </div>
       )}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {filtered?.map((d) => <DatasetCard key={d.id} d={d} />)}
       </div>
     </div>

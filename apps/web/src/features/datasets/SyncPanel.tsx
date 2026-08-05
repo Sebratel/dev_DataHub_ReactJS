@@ -104,7 +104,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
   const numericOrDateFields = dataset.fields.filter((f) => !f.hidden && (f.type === 'number' || f.type === 'date'))
 
   return (
-    <div className="mt-8 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="mt-5 rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-900">
       <h2 className="text-sm font-medium uppercase tracking-wider text-zinc-400">Sincronização com o lake (admin)</h2>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="text-sm">

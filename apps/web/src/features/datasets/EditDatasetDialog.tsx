@@ -40,8 +40,8 @@ export default function EditDatasetDialog({ id, name, description, tags, onSaved
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4 animate-fade-in" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-card-lg dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3 animate-fade-in" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-3.5 shadow-card-lg dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-semibold">Editar conjunto</h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"><X size={17} /></button>

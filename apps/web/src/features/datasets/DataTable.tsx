@@ -26,16 +26,16 @@ export default function DataTable({ dataset }: { dataset: DatasetDetail }) {
   const labelByKey = new Map(dataset.fields.map((f) => [f.key, f.label]))
 
   if (busy) {
-    return <p className="mt-8 flex items-center gap-2 text-sm text-zinc-500"><Loader2 size={14} className="animate-spin" /> Consultando o lake…</p>
+    return <p className="mt-5 flex items-center gap-2 text-sm text-zinc-500"><Loader2 size={14} className="animate-spin" /> Consultando o lake…</p>
   }
   if (error) {
-    return <p className="mt-8 rounded-lg bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">{error}</p>
+    return <p className="mt-5 rounded-lg bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">{error}</p>
   }
   if (!result) return null
 
   return (
     <>
-      <h2 className="mt-8 text-sm font-medium uppercase tracking-wider text-zinc-400">
+      <h2 className="mt-5 text-sm font-medium uppercase tracking-wider text-zinc-400">
         Dados
         <span className="ml-2 normal-case tracking-normal text-zinc-400">
           {result.total !== undefined && `${result.total.toLocaleString('pt-BR')} registros · `}

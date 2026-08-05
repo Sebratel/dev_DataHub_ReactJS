@@ -103,7 +103,7 @@ export default function ConnectionsPage() {
     <div className="mx-auto max-w-7xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Conexões</h1>
+          <h1 className="text-[17px] font-semibold">Conexões</h1>
           <p className="mt-1 text-sm text-zinc-500">
             Fontes de dados do hub. As fixas vêm do servidor (.env); as gerenciadas você cadastra aqui (senha criptografada, nunca exibida).
           </p>
@@ -126,10 +126,10 @@ export default function ConnectionsPage() {
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
 
-      <div className="mt-6 grid gap-3">
+      <div className="mt-4 grid gap-3">
         {connections === null && !error && <p className="text-sm text-zinc-500">Verificando fontes…</p>}
         {connections?.map((c) => (
-          <div key={c.id} className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <div key={c.id} className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex items-center gap-3">
               {c.status === 'ok' && <CheckCircle2 size={18} className="text-emerald-500" />}
               {c.status === 'error' && <XCircle size={18} className="text-red-500" />}

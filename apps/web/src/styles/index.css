@@ -51,6 +51,15 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Ícones em traço fino no app inteiro. O lucide-react emite
+     stroke-width="2" quando ninguém pede outra coisa — então mirar nesse valor
+     converte só os ícones "padrão" e preserva qualquer peso escolhido de
+     propósito (1.4 no rail, 1.8 numa seta pequena). Uma regra em vez de um
+     strokeWidth em cada uma das centenas de chamadas. */
+  svg.lucide[stroke-width='2'] {
+    stroke-width: 1.5;
+  }
+
   ::-webkit-scrollbar {
     width: 5px;
     height: 5px;

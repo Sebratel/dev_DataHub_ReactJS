@@ -294,9 +294,9 @@ export default function WidgetEditorPanel({ metrics, initial, onClose, onSubmit,
           <button onClick={() => setTab('format')} className={seg(tab === 'format')}>Formato</button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-3">
           {tab === 'data' && (
-            <div className="grid gap-4">
+            <div className="grid gap-3">
               <div>
                 <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Tipo de visual</span>
                 <div className="grid grid-cols-4 gap-1.5">
@@ -378,7 +378,7 @@ export default function WidgetEditorPanel({ metrics, initial, onClose, onSubmit,
           )}
 
           {tab === 'mods' && !isText && (
-            <div className="grid gap-4">
+            <div className="grid gap-3">
               <label className="text-sm">
                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Top N (limite)</span>
                 <input type="number" min={1} max={1000} value={limit} onChange={(e) => setLimit(e.target.value)} className={sel} placeholder="ex.: 10 (vazio = padrão)" />
@@ -447,7 +447,7 @@ export default function WidgetEditorPanel({ metrics, initial, onClose, onSubmit,
                     <label className="text-sm"><span className="mb-1 block text-xs text-zinc-500">Linha de meta (opcional)</span>
                       <input type="number" value={targetV} onChange={(e) => setTargetV(e.target.value)} className={sel} placeholder="ex.: 1000" /></label>
                   )}
-                  <div className="flex flex-wrap gap-4 text-sm">
+                  <div className="flex flex-wrap gap-3 text-sm">
                     <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} /> Rótulos de dados</label>
                     <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={showLegend} onChange={(e) => setShowLegend(e.target.checked)} /> Legenda</label>
                   </div>

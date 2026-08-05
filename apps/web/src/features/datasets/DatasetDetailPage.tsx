@@ -48,7 +48,7 @@ function StatTile({ icon: Icon, label, value, accent }: {
       <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-400">
         <Icon size={12} /> {label}
       </div>
-      <div className="mt-1 flex items-center gap-2 text-lg font-semibold tabular-nums">
+      <div className="mt-1 flex items-center gap-2 text-[14px] font-semibold tabular-nums">
         {value}{accent}
       </div>
     </div>
@@ -110,7 +110,7 @@ export default function DatasetDetailPage() {
   if (error && !dataset) {
     return (
       <div className="mx-auto max-w-6xl">
-        <p className="rounded-lg bg-red-50 p-4 text-sm text-red-600 dark:bg-red-950/40">{error}</p>
+        <p className="rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>
       </div>
     )
   }
@@ -183,14 +183,14 @@ export default function DatasetDetailPage() {
       </nav>
 
       {/* Cabeçalho */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3.5">
           <div className={clsx('flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-card',
             derived ? 'bg-gradient-brand text-[#1a1a1a]' : 'bg-accent-soft text-accent dark:bg-zinc-800')}>
             {derived ? <GitMerge size={22} /> : <Database size={22} />}
           </div>
           <div className="min-w-0">
-            <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
+            <h1 className="flex items-center gap-2.5 text-[17px] font-semibold tracking-tight">
               <span className="truncate">{dataset.name}</span>
               {dataset.official && <OfficialBadge size="md" />}
               <span className={clsx('shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
@@ -277,20 +277,20 @@ export default function DatasetDetailPage() {
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
 
       {/* Faixa de metadados */}
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile icon={Rows3} label="Registros" value={fmtInt(dataset.rowCount)} />
         <StatTile icon={Columns3} label="Campos" value={visibleFields.length} />
         <StatTile icon={Clock} label="Última sincronização"
-          value={<span className="text-base font-medium">{relativeTime(dataset.lastSyncAt)}</span>}
+          value={<span className="text-[13px] font-medium">{relativeTime(dataset.lastSyncAt)}</span>}
           accent={dataset.lastSyncAt
             ? <span className={clsx('h-2 w-2 rounded-full', fresh ? 'bg-emerald-500' : 'bg-amber-500')} />
             : <span className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600" />} />
         <StatTile icon={derived ? GitMerge : Database} label="Tipo"
-          value={<span className="text-base font-medium">{derived ? 'Calculado' : 'Fonte'}</span>} />
+          value={<span className="text-[13px] font-medium">{derived ? 'Calculado' : 'Fonte'}</span>} />
       </div>
 
       {/* Campos (schema) */}
-      <section className="mt-8">
+      <section className="mt-5">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">Campos</h2>
           {isAdmin && (
@@ -358,9 +358,9 @@ export default function DatasetDetailPage() {
 
       {/* SQL do derivado (editores/admins) */}
       {derived && dataset.transformSql != null && (
-        <section className="mt-8">
+        <section className="mt-5">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">SQL da transformação</h2>
-          <pre className="overflow-x-auto rounded-xl border border-zinc-200 bg-white p-4 font-mono text-xs leading-relaxed shadow-card dark:border-zinc-800 dark:bg-zinc-950">
+          <pre className="overflow-x-auto rounded-xl border border-zinc-200 bg-white p-3 font-mono text-xs leading-relaxed shadow-card dark:border-zinc-800 dark:bg-zinc-950">
             {dataset.transformSql}
           </pre>
         </section>
@@ -374,7 +374,7 @@ export default function DatasetDetailPage() {
 
       {/* Preview ao vivo da fonte (admin) */}
       {preview && (
-        <section className="mt-8">
+        <section className="mt-5">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-zinc-400">
             Amostra (50 primeiras linhas, sensíveis mascarados)
           </h2>
@@ -410,8 +410,8 @@ export default function DatasetDetailPage() {
           tags={dataset.tags} onSaved={load} onClose={() => setShowEdit(false)} />
       )}
       {confirmDelete && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4 animate-fade-in" onClick={() => setConfirmDelete(false)}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-card-lg dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3 animate-fade-in" onClick={() => setConfirmDelete(false)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-3.5 shadow-card-lg dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/40">
                 <AlertTriangle size={18} />

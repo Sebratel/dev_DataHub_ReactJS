@@ -122,16 +122,16 @@ export default function DerivedDatasetPage() {
           <GitMerge size={22} />
         </div>
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{editingId ? 'Editar dataset calculado' : 'Novo dataset calculado'}</h1>
+          <h1 className="text-[17px] font-semibold tracking-tight">{editingId ? 'Editar dataset calculado' : 'Novo dataset calculado'}</h1>
           <p className="text-sm text-zinc-500">Junte e trate datasets já sincronizados — roda no lake, sem pesar nas fontes.</p>
         </div>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_300px]">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_300px]">
         {/* Formulário */}
         <div className="space-y-4">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
-            <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-2xl border border-zinc-200 bg-white p-3.5 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-sm">
                 <span className="mb-1 block text-xs font-medium text-zinc-500">Nome</span>
                 <input value={name} onChange={(e) => setName(e.target.value)}
@@ -174,7 +174,7 @@ export default function DerivedDatasetPage() {
           </div>
 
           {preview && (
-            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-3.5 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">
                 Amostra do resultado ({preview.rows.length} linha{preview.rows.length === 1 ? '' : 's'}, máx. 50)
               </h2>
@@ -201,7 +201,7 @@ export default function DerivedDatasetPage() {
         </div>
 
         {/* Ajudante: conjuntos e campos disponíveis */}
-        <aside className="h-fit rounded-2xl border border-zinc-200 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
+        <aside className="h-fit rounded-2xl border border-zinc-200 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Datasets disponíveis</h2>
           <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-500">
             <Info size={13} className="mt-0.5 shrink-0" />

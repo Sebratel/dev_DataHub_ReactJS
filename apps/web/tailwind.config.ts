@@ -26,16 +26,22 @@ export default {
         'on-surface': '#0e1116',
         'on-surface-variant': '#525b69',
 
-        // Chrome da sidebar — grafite fixo nos DOIS temas (padrão Datadog /
+        // Chrome da sidebar — carvão fixo nos DOIS temas (padrão Datadog /
         // Atlas: o chrome não muda, só o conteúdo). Fora da escala zinc de
         // propósito, para nunca ser arrastado por um ajuste de tema.
+        //
+        // O tom é derivado do LARANJA DA MARCA (matiz ~34°) com saturação quase
+        // zerada: fica um carvão sutilmente quente, não um grafite azulado. É o
+        // que faz o âmbar do item ativo parecer da mesma família em vez de um
+        // adesivo colado num chrome frio. Só o chrome é quente — o conteúdo
+        // continua neutro-frio, que é o que mantém número e texto legíveis.
         rail: {
-          DEFAULT: '#15171b',
-          raised: '#1d2026',
-          active: '#272b33',
-          ink: '#e8eaee',
-          muted: '#8d95a3',
-          faint: '#5d6573',
+          DEFAULT: '#1a1714',
+          raised: '#241f1a',
+          active: '#312a22',
+          ink: '#ece8e2',
+          muted: '#a1998f',
+          faint: '#6d655c',
         },
 
         // Neutros FRIOS sobrescrevendo a escala zinc: todo o app já usa

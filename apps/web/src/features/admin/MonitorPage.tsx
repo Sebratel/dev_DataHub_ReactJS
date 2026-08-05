@@ -71,9 +71,9 @@ export default function MonitorPage() {
 
   return (
     <div className="mx-auto max-w-screen-2xl">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <h1 className="flex items-center gap-2 text-[17px] font-semibold tracking-tight">
             <Activity size={22} className="text-accent" /> Monitoramento
           </h1>
           <p className="mt-1 text-sm text-zinc-500">Uptime e latência de endpoints. O servidor pinga a cada minuto os que estão vencidos e registra no painel "Saúde das APIs".</p>

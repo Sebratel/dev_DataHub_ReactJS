@@ -179,7 +179,7 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
       const cc = condColor(v, style.conditionalRules)
       return (
         <div className="flex h-full flex-col items-start justify-center px-1">
-          <span className="text-3xl font-semibold tabular-nums" style={cc ? { color: cc } : undefined}>{fmt(rows[0]?.[VALUE])}</span>
+          <span className="text-[19px] font-semibold tabular-nums" style={cc ? { color: cc } : undefined}>{fmt(rows[0]?.[VALUE])}</span>
         </div>
       )
     }
@@ -257,7 +257,7 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
   const heightCls = isText ? 'h-40' : widget.type === 'kpi' ? 'h-24' : (widget.type === 'pie' || widget.type === 'funnel') ? 'h-64' : 'h-56'
 
   return (
-    <div className={clsx('flex flex-col rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900', fill && 'h-full')}>
+    <div className={clsx('flex flex-col rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900', fill && 'h-full')}>
       <div className="mb-2 flex items-center gap-1.5">
         {editable && (
           <span {...dragHandleProps} className={clsx('text-zinc-300 dark:text-zinc-600', fill ? 'widget-drag cursor-grab' : 'cursor-grab')} title="Arrastar">

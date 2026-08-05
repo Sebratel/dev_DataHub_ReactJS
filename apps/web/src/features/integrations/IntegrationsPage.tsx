@@ -90,7 +90,7 @@ export default function IntegrationsPage() {
     <div className="mx-auto max-w-6xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Integrações</h1>
+          <h1 className="text-[17px] font-semibold">Integrações</h1>
           <p className="mt-1 text-sm text-zinc-500">
             Tokens de leitura para Power BI, Google Sheets, Excel e API REST.
           </p>
@@ -107,7 +107,7 @@ export default function IntegrationsPage() {
 
       {/* Token recém-criado — única exibição */}
       {newToken && (
-        <div className="mt-5 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-950/30">
+        <div className="mt-5 rounded-xl border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/30">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
             Copie o token agora — ele não será mostrado novamente:
           </p>
@@ -125,7 +125,7 @@ export default function IntegrationsPage() {
       )}
 
       {showForm && (
-        <div className="mt-5 grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="mt-5 grid gap-3 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
           <label className="text-sm">
             <span className="mb-1 block text-xs text-zinc-500">Nome (ex.: Power BI — Diretoria)</span>
             <input value={fName} onChange={(e) => setFName(e.target.value)}
@@ -169,7 +169,7 @@ export default function IntegrationsPage() {
       )}
 
       {/* Tokens existentes */}
-      <div className="mt-6 grid gap-2">
+      <div className="mt-4 grid gap-2">
         {credentials === null && !error && <p className="text-sm text-zinc-500">Carregando…</p>}
         {credentials?.length === 0 && (
           <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
@@ -177,7 +177,7 @@ export default function IntegrationsPage() {
           </div>
         )}
         {credentials?.map((c) => (
-          <div key={c.id} className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <div key={c.id} className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
             <Plug size={16} className={c.revoked ? 'text-zinc-300' : 'text-accent'} />
             <div className="min-w-0 flex-1">
               <p className={`font-medium ${c.revoked ? 'text-zinc-400 line-through' : ''}`}>{c.name}</p>
@@ -197,14 +197,14 @@ export default function IntegrationsPage() {
       </div>
 
       {/* Exemplos de uso */}
-      <h2 className="mt-8 text-sm font-medium uppercase tracking-wider text-zinc-400">Como conectar</h2>
+      <h2 className="mt-5 text-sm font-medium uppercase tracking-wider text-zinc-400">Como conectar</h2>
       <div className="mt-3 grid gap-3">
         {[
           { title: 'API REST (JSON paginado)', hint: 'Suporta ?limit=&offset= — ideal para scripts e apps.', url: restUrl, key: 'rest' },
           { title: 'Google Sheets / Excel (CSV)', hint: 'No Sheets: =IMPORTDATA("url"). No Excel: Dados → Da Web.', url: csvUrl, key: 'csv' },
           { title: 'Power BI (Web connector)', hint: 'Obter Dados → Web → cole a URL JSON. O Power BI expande as linhas.', url: restUrl, key: 'pbi' },
         ].map((ex) => (
-          <div key={ex.key} className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <div key={ex.key} className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
             <p className="text-sm font-medium">{ex.title}</p>
             <p className="mt-0.5 text-xs text-zinc-500">{ex.hint}</p>
             <div className="mt-2 flex items-center gap-2">
