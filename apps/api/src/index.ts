@@ -19,6 +19,9 @@ import { aiWidgetsRouter } from './modules/dashboards/aiWidgetsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { productsRouter } from './modules/integrations/productsRouter.js'
+import { gatewayRouter } from './modules/gateway/gatewayRouter.js'
+import { gatewayProxyRouter } from './modules/gateway/proxy.js'
+import { reloadUpstreams } from './modules/gateway/upstreams.js'
 import { accessRouter } from './modules/admin/accessRouter.js'
 import { monitorRouter } from './modules/admin/monitorRouter.js'
 import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
@@ -38,6 +41,13 @@ process.on('uncaughtException', (err) => {
 })
 
 const app = express()
+
+// ORDEM IMPORTA: o proxy do gateway precisa do corpo CRU para repassar ao
+// upstream sem interpretar. Se o express.json() rodasse antes, ele consumiria o
+// stream e o proxy encaminharia corpo vazio. Por isso o gateway vem primeiro e
+// aplica o próprio express.raw() internamente.
+app.use('/api/public/v1/gw', gatewayProxyRouter)
+
 app.use(express.json({ limit: '4mb' }))
 
 // CORS — necessário em dev (Vite em outra porta); em produção o nginx faz
@@ -84,6 +94,7 @@ app.use('/api/v1/dashboards', dashboardsRouter)
 app.use('/api/v1/ai', aiRouter)
 app.use('/api/v1/credentials', credentialsRouter)
 app.use('/api/v1/products', productsRouter) // construtor de APIs (GET+POST, self-service)
+app.use('/api/v1/gateway', gatewayRouter) // plano de controle: upstreams e política
 app.use('/api/public/v1', publicRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
@@ -101,6 +112,10 @@ try {
 if (isDbAvailable()) {
   await reloadConnections().catch((e) =>
     console.warn(`[connections] carga inicial falhou: ${(e as Error).message}`))
+  // Registro de upstreams do gateway no cache de processo (o proxy não pode ir
+  // ao banco a cada requisição).
+  await reloadUpstreams().catch((e) =>
+    console.warn(`[gateway] carga inicial de upstreams falhou: ${(e as Error).message}`))
   // Painel de saúde das APIs "de graça": provisiona o dataset de métricas.
   await ensureApiMetricsDataset().catch((e) =>
     console.warn(`[api-metrics] provisionamento falhou: ${(e as Error).message}`))

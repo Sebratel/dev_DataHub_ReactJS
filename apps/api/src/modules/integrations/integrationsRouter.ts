@@ -15,6 +15,9 @@ import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 import { executeWrite, type WriteColumn } from '../../connectors/writeProducts.js'
+import {
+  admit, isDenied, readToken, recordCall, requestIdOf, sendDenied, type Consumer,
+} from '../gateway/policy.js'
 
 function requireDb(_req: Request, res: Response, next: NextFunction): void {
   if (!isDbAvailable()) { res.status(503).json({ error: 'Banco de metadados indisponível.' }); return }
@@ -68,44 +71,53 @@ credentialsRouter.delete('/:id', requireAuth({ role: 'editor' }), requireDb, asy
 // ─── API pública (token) ───────────────────────────────────────
 export const publicRouter = Router()
 
-// Monitoramento automático: TODA chamada da API pública (as APIs que os devs
-// pegam em Integrações) é registrada em api_call_metrics → painel "Saúde das
-// APIs". Best-effort: nunca atrapalha a resposta. O handler enriquece via
-// res.locals (consumidor/token, dataset, nº de linhas).
-function monitorPublicApi(req: Request, res: Response, next: NextFunction): void {
+// PORTÃO ÚNICO de toda a API pública. Antes cada endpoint repetia a checagem de
+// token — e nenhum deles tinha limite de uso, então um consumidor em laço
+// ocupava os slots do motor de consulta e derrubava a latência dos painéis.
+// Agora: autentica → rate limit → quota, num lugar só (gateway/policy.ts).
+//
+// A telemetria sai daqui também, com atribuição por credential_id (a coluna
+// connection_id segue recebendo o NOME do consumidor para não quebrar os
+// painéis existentes que já leem dela).
+function publicGate(req: Request, res: Response, next: NextFunction): void {
   const started = Date.now()
+  const requestId = requestIdOf(req)
+  res.setHeader('X-Request-Id', requestId)
+
   res.on('finish', () => {
-    const status = res.statusCode
-    const bytes = Number(res.getHeader('content-length')) || 0
-    const locals = res.locals as { consumer?: string; dataSlug?: string; rows?: number }
-    void db.query(
-      `insert into api_call_metrics (dataset_slug, connection_id, endpoint, status, ok, duration_ms, rows, bytes, error, check_type)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'public')`,
-      [locals.dataSlug ?? null, locals.consumer ?? null, (req.originalUrl || '').split('?')[0],
-       status, status < 400, Date.now() - started, locals.rows ?? null, bytes,
-       status >= 400 ? `HTTP ${status}` : null],
-    ).catch(() => { /* métrica é best-effort */ })
+    const locals = res.locals as { consumer?: Consumer; dataSlug?: string; rows?: number }
+    recordCall({
+      checkType: 'public',
+      requestId,
+      method: req.method,
+      endpoint: (req.originalUrl || '').split('?')[0],
+      status: res.statusCode,
+      durationMs: Date.now() - started,
+      credentialId: locals.consumer?.id ?? null,
+      consumerName: locals.consumer?.name ?? null,
+      datasetSlug: locals.dataSlug ?? null,
+      rows: locals.rows ?? null,
+      bytes: Number(res.getHeader('content-length')) || 0,
+      error: res.statusCode >= 400 ? `HTTP ${res.statusCode}` : null,
+      ip: req.ip ?? null,
+    })
   })
-  next()
+
+  if (!isDbAvailable()) { res.status(503).json({ error: 'Serviço indisponível.' }); return }
+
+  void admit(readToken(req)).then((result) => {
+    if (isDenied(result)) return sendDenied(res, result)
+    res.locals.consumer = result
+    next()
+  }).catch((e: Error) => {
+    res.status(500).json({ error: `Falha ao validar o token: ${e.message}` })
+  })
 }
-publicRouter.use(monitorPublicApi)
+publicRouter.use(publicGate)
 
 publicRouter.get('/datasets/:slug/rows', async (req, res) => {
-  if (!isDbAvailable()) return res.status(503).json({ error: 'Serviço indisponível.' })
-  const token = String(req.query.token ?? req.headers['x-api-token'] ?? '')
-  if (!token) return res.status(401).json({ error: 'Token ausente (?token=… ou header X-Api-Token).' })
-
-  const cred = (await db.query(
-    `select c.*, t.slug as tenant_slug from api_credentials c
-      join tenants t on t.id = c.tenant_id where c.token_hash = $1`,
-    [hash(token)],
-  )).rows[0]
-  if (!cred || cred.revoked) return res.status(401).json({ error: 'Token inválido ou revogado.' })
-  if (cred.expires_at && new Date(cred.expires_at) < new Date()) {
-    return res.status(401).json({ error: 'Token expirado.' })
-  }
-  res.locals.consumer = cred.name // quem chamou (p/ o monitoramento)
-  const slugs = (cred.dataset_slugs as string[]) ?? []
+  const cred = res.locals.consumer as Consumer
+  const slugs = cred.datasetSlugs
   if (slugs.length && !slugs.includes(req.params.slug)) {
     return res.status(403).json({ error: 'Este token não tem acesso a este conjunto de dados.' })
   }
@@ -113,11 +125,11 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
   const ds = (await db.query(
     `select d.* from datasets d join tenants t on t.id = d.tenant_id
       where t.slug = $1 and d.slug = $2`,
-    [cred.tenant_slug, req.params.slug],
+    [cred.tenantSlug, req.params.slug],
   )).rows[0]
   if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
   res.locals.dataSlug = ds.slug
-  const dir = datasetDir(String(cred.tenant_slug), String(ds.slug))
+  const dir = datasetDir(String(cred.tenantSlug), String(ds.slug))
   if (!listParquet(dir).length) return res.status(409).json({ error: 'Conjunto ainda não sincronizado.' })
 
   const fields = (await db.query(
@@ -163,20 +175,9 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
 // definição aprovada. UPDATE/DELETE exigem filtro (where) e respeitam o teto de
 // linhas (transação + rollback). Auditado + monitorado (middleware do publicRouter).
 publicRouter.all('/w/:slug', async (req, res) => {
-  if (!isDbAvailable()) return res.status(503).json({ error: 'Serviço indisponível.' })
-  const token = String(req.query.token ?? req.headers['x-api-token'] ?? '')
-  if (!token) return res.status(401).json({ error: 'Token ausente (?token=… ou header X-Api-Token).' })
+  const cred = res.locals.consumer as Consumer
 
-  const cred = (await db.query(
-    `select c.*, t.slug as tenant_slug from api_credentials c
-      join tenants t on t.id = c.tenant_id where c.token_hash = $1`,
-    [hash(token)],
-  )).rows[0]
-  if (!cred || cred.revoked) return res.status(401).json({ error: 'Token inválido ou revogado.' })
-  if (cred.expires_at && new Date(cred.expires_at) < new Date()) return res.status(401).json({ error: 'Token expirado.' })
-  res.locals.consumer = cred.name
-
-  const writeSlugs = (cred.write_slugs as string[]) ?? []
+  const writeSlugs = cred.writeSlugs
   if (!writeSlugs.includes(req.params.slug)) {
     return res.status(403).json({ error: 'Este token não tem acesso a este produto de escrita.' })
   }
@@ -184,7 +185,7 @@ publicRouter.all('/w/:slug', async (req, res) => {
   // rascunhos/pendentes de aprovação do admin NUNCA executam.
   const p = (await db.query(
     `select * from api_products where tenant_id = $1 and slug = $2 and kind = 'write' and status = 'active' and enabled`,
-    [cred.tenant_id, req.params.slug],
+    [cred.tenantId, req.params.slug],
   )).rows[0]
   if (!p) return res.status(404).json({ error: 'API de escrita não encontrada, desativada ou ainda não aprovada.' })
   res.locals.dataSlug = p.slug
@@ -221,7 +222,7 @@ publicRouter.all('/w/:slug', async (req, res) => {
     await db.query(
       `insert into audit_logs (tenant_id, user_email, action, resource_type, resource_id, detail, ip)
        values ($1, $2, $3, 'api_product', $4, $5, $6)`,
-      [cred.tenant_id, cred.name, `api-product.${op}`, p.slug,
+      [cred.tenantId, cred.name, `api-product.${op}`, p.slug,
        JSON.stringify({ affected: result.rowCount, method: req.method }), req.ip ?? null],
     )
     res.status(op === 'insert' ? 201 : 200).json({ ok: true, op, affected: result.rowCount, returned: result.rows[0] ?? null })
@@ -234,38 +235,27 @@ publicRouter.all('/w/:slug', async (req, res) => {
 // Endpoint nomeado que o dev configurou (paginação page/offset + filtros fixos).
 // Roda como NÃO-admin (sensíveis mascarados); o token precisa alcançar o dataset.
 publicRouter.get('/p/:slug', async (req, res) => {
-  if (!isDbAvailable()) return res.status(503).json({ error: 'Serviço indisponível.' })
-  const token = String(req.query.token ?? req.headers['x-api-token'] ?? '')
-  if (!token) return res.status(401).json({ error: 'Token ausente (?token=… ou header X-Api-Token).' })
-
-  const cred = (await db.query(
-    `select c.*, t.slug as tenant_slug from api_credentials c
-      join tenants t on t.id = c.tenant_id where c.token_hash = $1`,
-    [hash(token)],
-  )).rows[0]
-  if (!cred || cred.revoked) return res.status(401).json({ error: 'Token inválido ou revogado.' })
-  if (cred.expires_at && new Date(cred.expires_at) < new Date()) return res.status(401).json({ error: 'Token expirado.' })
-  res.locals.consumer = cred.name
+  const cred = res.locals.consumer as Consumer
 
   const p = (await db.query(
     `select * from api_products where tenant_id = $1 and slug = $2 and kind = 'read' and status = 'active' and enabled`,
-    [cred.tenant_id, req.params.slug],
+    [cred.tenantId, req.params.slug],
   )).rows[0]
   if (!p) return res.status(404).json({ error: 'API de leitura não encontrada ou desativada.' })
 
   // O token precisa alcançar o dataset por trás do produto (escopo de leitura).
-  const allowed = (cred.dataset_slugs as string[]) ?? []
+  const allowed = cred.datasetSlugs
   if (allowed.length && !allowed.includes(String(p.dataset_slug))) {
     return res.status(403).json({ error: 'Este token não tem acesso ao dataset desta API.' })
   }
 
   const ds = (await db.query(
     `select d.* from datasets d join tenants t on t.id = d.tenant_id where t.slug = $1 and d.slug = $2`,
-    [cred.tenant_slug, p.dataset_slug],
+    [cred.tenantSlug, p.dataset_slug],
   )).rows[0]
   if (!ds) return res.status(404).json({ error: 'Dataset da API não encontrado.' })
   res.locals.dataSlug = ds.slug
-  const dir = datasetDir(String(cred.tenant_slug), String(ds.slug))
+  const dir = datasetDir(String(cred.tenantSlug), String(ds.slug))
   if (!listParquet(dir).length) return res.status(409).json({ error: 'Dataset ainda não sincronizado.' })
 
   const fields = (await db.query(
