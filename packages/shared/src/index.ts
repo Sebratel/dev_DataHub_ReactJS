@@ -368,6 +368,108 @@ export interface GatewayUsage {
   calls_today: number
 }
 
+// ── Modelos preditivos ────────────────────────────────────────
+// Os tipos abaixo espelham as linhas cruas do Postgres (snake_case), como já é
+// o caso do consumo do gateway — o router devolve `m.*` sem remapear.
+export type MlTask = 'binary' | 'regression'
+export type MlAlgorithm = 'logistic' | 'linear'
+export type MlRetrain = 'manual' | 'daily' | 'weekly'
+
+export interface MlBinaryMetrics {
+  auc: number
+  accuracy: number
+  precision: number
+  recall: number
+  f1: number
+  confusion: { tp: number; fp: number; tn: number; fn: number }
+  positiveRate: number
+}
+export interface MlRegressionMetrics {
+  rmse: number
+  mae: number
+  r2: number
+  meanActual: number
+}
+export type MlMetrics = Partial<MlBinaryMetrics & MlRegressionMetrics>
+
+export interface MlImportance { feature: string; weight: number; abs: number }
+
+export interface MlModel {
+  id: string
+  slug: string
+  name: string
+  description: string
+  task: MlTask
+  algorithm: MlAlgorithm
+  feature_sql: string | null
+  target_column: string | null
+  excluded_columns: string[]
+  holdout_pct: number
+  max_rows: number
+  retrain: MlRetrain
+  hyperparams: Record<string, unknown>
+  owner_email: string
+  promoted_version_id: string | null
+  created_at: string
+  updated_at: string
+  // Agregados da listagem
+  promoted_version?: number | null
+  promoted_metrics?: MlMetrics | null
+  promoted_at?: string | null
+  rows_trained?: number | null
+  version_count?: number
+  last_run_status?: 'running' | 'done' | 'error' | 'canceled' | null
+  last_run_error?: string | null
+  last_run_at?: string | null
+}
+
+export interface MlVersion {
+  id: string
+  version: number
+  metrics: MlMetrics
+  importances: MlImportance[] | null
+  rows_trained: number | null
+  rows_holdout: number | null
+  trained_ms: number | null
+  status: string
+  note: string | null
+  created_by: string
+  created_at: string
+  promoted: boolean
+}
+
+export interface MlRun {
+  id: string
+  status: 'running' | 'done' | 'error' | 'canceled'
+  trigger: 'manual' | 'schedule'
+  rows: number | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+// Prévia dos atributos: o que vira coluna do modelo e o que foi descartado —
+// mostrado ANTES de treinar, para o vazamento de alvo aparecer cedo.
+export interface MlFeaturePreview {
+  sampledRows: number
+  columns: string[]
+  features: string[]
+  featureCount: number
+  dropped: { column: string; reason: string }[]
+  sample: Record<string, unknown>[]
+}
+
+export interface MlTrainOutcome {
+  runId: string
+  versionId: string
+  version: number
+  metrics: MlMetrics
+  rowsTrained: number
+  rowsHoldout: number
+  dropped: { column: string; reason: string }[]
+  skippedRows: number
+}
+
 // ── Auth ──────────────────────────────────────────────────────
 export interface SessionUser {
   email: string

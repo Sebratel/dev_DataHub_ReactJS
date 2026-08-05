@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, Plug, ShieldCheck, ScrollText,
-  Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Radio,
+  Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Radio, Brain,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
@@ -44,6 +44,7 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
     title: 'Construir',
     items: [
       { to: '/ai', label: 'Assistente IA', icon: Sparkles },
+      { to: '/models', label: 'Modelos', icon: Brain, role: 'editor' },
       { to: '/integrations', label: 'Integrações', icon: Plug },
       { to: '/apis', label: 'APIs', icon: Webhook, role: 'editor' },
       { to: '/gateway', label: 'Gateway', icon: Radio, role: 'editor' },
@@ -66,7 +67,7 @@ const CRUMB: Record<string, string> = {
   integrations: 'Integrações', admin: 'Administração', connections: 'Conexões',
   monitor: 'Monitoramento', 'write-products': 'APIs de Escrita', access: 'Usuários e Acessos',
   audit: 'Auditoria', derived: 'Calculado', new: 'Novo', apis: 'APIs', explore: 'Explorador',
-  gateway: 'Gateway',
+  gateway: 'Gateway', models: 'Modelos',
 }
 
 function NavItem({ to, label, icon: Icon, end }: NavEntry) {
