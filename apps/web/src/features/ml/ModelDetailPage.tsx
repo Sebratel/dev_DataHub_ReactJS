@@ -108,11 +108,11 @@ export default function ModelDetailPage() {
   }
 
   if (loading) {
-    return <div className="mx-auto max-w-[1440px]"><div className="h-[420px] animate-pulse rounded-2xl bg-zinc-100 dark:bg-zinc-900" /></div>
+    return <div className="mx-auto min-w-0 max-w-[1600px]"><div className="h-[420px] animate-pulse rounded-2xl bg-zinc-100 dark:bg-zinc-900" /></div>
   }
   if (!model) {
     return (
-      <div className="mx-auto max-w-[1440px]">
+      <div className="mx-auto min-w-0 max-w-[1600px]">
         <p className="text-[12px] text-zinc-500">{error ?? 'Modelo não encontrado.'}</p>
         <Link to="/models" className="mt-2 inline-block text-[12px] font-medium text-info hover:underline dark:text-info-dark">Voltar</Link>
       </div>
@@ -125,7 +125,7 @@ export default function ModelDetailPage() {
   const maxAbs = importances.length ? Math.max(...importances.map((i) => i.abs)) : 1
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="mx-auto min-w-0 max-w-[1600px]">
       <Link to="/models" className="inline-flex items-center gap-1 text-[11.5px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
         <ArrowLeft size={12} strokeWidth={1.8} /> Modelos
       </Link>

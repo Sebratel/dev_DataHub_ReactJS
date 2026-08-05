@@ -203,11 +203,11 @@ export default function NotebookPage() {
   }
 
   if (loading) {
-    return <div className="mx-auto max-w-[1440px]"><div className="h-[420px] animate-pulse rounded-2xl bg-zinc-100 dark:bg-zinc-900" /></div>
+    return <div className="mx-auto min-w-0 max-w-[1600px]"><div className="h-[420px] animate-pulse rounded-2xl bg-zinc-100 dark:bg-zinc-900" /></div>
   }
   if (!nb) {
     return (
-      <div className="mx-auto max-w-[1440px]">
+      <div className="mx-auto min-w-0 max-w-[1600px]">
         <p className="text-[12px] text-zinc-500">{error ?? 'Notebook não encontrado.'}</p>
         <Link to="/notebooks" className="mt-2 inline-block text-[12px] font-medium text-info hover:underline dark:text-info-dark">Voltar</Link>
       </div>
@@ -215,7 +215,7 @@ export default function NotebookPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="mx-auto min-w-0 max-w-[1600px]">
       <Link to="/notebooks" className="inline-flex items-center gap-1 text-[11.5px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
         <ArrowLeft size={12} strokeWidth={1.8} /> Notebooks
       </Link>

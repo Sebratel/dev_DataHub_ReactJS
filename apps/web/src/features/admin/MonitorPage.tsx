@@ -70,7 +70,7 @@ export default function MonitorPage() {
   const inp = 'rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-950'
 
   return (
-    <div className="mx-auto max-w-screen-2xl">
+    <div className="mx-auto min-w-0 max-w-[1600px]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-[17px] font-semibold tracking-tight">

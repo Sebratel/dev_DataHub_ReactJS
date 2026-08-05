@@ -118,7 +118,7 @@ export default function GatewayPage() {
   ]
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="mx-auto min-w-0 max-w-[1600px]">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-[17px] font-semibold tracking-tight">Gateway de APIs</h1>

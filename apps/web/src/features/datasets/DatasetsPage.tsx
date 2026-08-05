@@ -1,81 +1,55 @@
-// Catálogo de Datasets — tudo é dataset: FONTES (ingeridas das origens) e
-// CALCULADOS (SQL sobre o lake, com selo). Lista única + filtro. O usuário só vê
-// nomes amigáveis e apenas os datasets a que tem acesso (o backend já filtra).
+// Catálogo de conjuntos — tudo é conjunto: FONTES (ingeridas das origens) e
+// CALCULADOS (SQL sobre o lake). O usuário só vê os que pode ler.
+//
+// Era uma grade de cards; virou tabela densa. Numa grade cabem ~12 conjuntos na
+// tela e cada card repete rótulo ("campos", "registros"); numa tabela cabem 25+
+// e o rótulo aparece uma vez, no cabeçalho. Com 248 conjuntos a diferença deixa
+// de ser estética: comparar frescor entre linhas só funciona em coluna.
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Boxes, GitMerge, Database, Search, Plus } from 'lucide-react'
-import clsx from 'clsx'
+import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock } from 'lucide-react'
 import type { DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import OfficialBadge from '@/components/OfficialBadge'
+import { Page, PageHeader, Toolbar, SearchInput, FilterChips, EmptyState, ErrorBanner, TableSkeleton } from '@/components/ui/Page'
+import KpiBar, { type Kpi } from '@/components/ui/KpiBar'
+import { Card, CardHead } from '@/components/ui/Card'
+import { Pill } from '@/components/ui/Pill'
+import TierBadge, { tierOf } from '@/components/ui/TierBadge'
+import { DataGrid, Th, Tr, Td, EntityCell } from '@/components/ui/DataGrid'
 
-function relativeTime(iso: string | null): string {
-  if (!iso) return 'Nunca sincronizado'
-  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
-  if (min < 60) return `sincronizado há ${Math.max(1, min)} min`
-  const h = Math.floor(min / 60)
-  if (h < 24) return `sincronizado há ${h} h`
-  const d = Math.floor(h / 24)
-  return `sincronizado há ${d} dia${d > 1 ? 's' : ''}`
+function hoursSince(iso: string | null): number | null {
+  if (!iso) return null
+  const h = (Date.now() - new Date(iso).getTime()) / 3_600_000
+  return Number.isFinite(h) ? h : null
+}
+function freshnessLabel(h: number | null): string {
+  if (h === null) return '—'
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`
+  if (h < 48) return `${Math.round(h)} h`
+  return `${Math.round(h / 24)} d`
+}
+function freshnessTone(h: number | null): 'ok' | 'warn' | 'crit' | 'neutral' {
+  if (h === null) return 'neutral'
+  if (h <= 26) return 'ok'
+  if (h <= 72) return 'warn'
+  return 'crit'
+}
+function compact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} M`
+  if (n >= 1_000) return `${(n / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} k`
+  return n.toLocaleString('pt-BR')
 }
 
-function DatasetCard({ d }: { d: DatasetSummary }) {
-  const derived = d.kind === 'derived'
-  const fresh = !!d.lastSyncAt && Date.now() - new Date(d.lastSyncAt).getTime() < 26 * 3600_000
-  return (
-    <Link to={`/datasets/${d.slug}`}
-      className={clsx('hover-lift group flex flex-col rounded-2xl border bg-white p-3.5 shadow-card hover:shadow-card-md dark:bg-zinc-900',
-        d.official
-          ? 'border-accent/40 ring-1 ring-accent/20 hover:border-accent'
-          : 'border-zinc-200 hover:border-accent dark:border-zinc-800')}>
-      <div className="flex items-start gap-3">
-        <div className={clsx('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
-          derived ? 'bg-gradient-brand text-[#1a1a1a]' : 'bg-accent-soft text-accent dark:bg-zinc-800')}>
-          {derived ? <GitMerge size={18} /> : <Database size={18} />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <h2 className="truncate font-semibold group-hover:text-accent">{d.name}</h2>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {derived && (
-                <span className="rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-semibold text-[#1a1a1a]">calculado</span>
-              )}
-              {d.official && <OfficialBadge />}
-            </div>
-          </div>
-          <p className="mt-0.5 line-clamp-2 text-sm text-zinc-500">{d.description || 'Sem descrição.'}</p>
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-        <span className="font-medium tabular-nums">{d.fieldCount} campos</span>
-        {d.rowCount !== null && <span className="tabular-nums">· {d.rowCount.toLocaleString('pt-BR')} registros</span>}
-      </div>
-
-      {d.tags.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {d.tags.map((t) => (
-            <span key={t} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800">{t}</span>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-3 flex items-center gap-1.5 border-t border-zinc-100 pt-3 text-[11px] text-zinc-400 dark:border-zinc-800">
-        <span className={clsx('h-1.5 w-1.5 rounded-full',
-          !d.lastSyncAt ? 'bg-zinc-300 dark:bg-zinc-600' : fresh ? 'bg-emerald-500' : 'bg-amber-500')} />
-        {relativeTime(d.lastSyncAt)}
-      </div>
-    </Link>
-  )
-}
+type Filter = 'all' | 'source' | 'derived' | 'official'
 
 export default function DatasetsPage() {
   const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<'all' | 'source' | 'derived'>('all')
+  const [filter, setFilter] = useState<Filter>('all')
 
   useEffect(() => {
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
@@ -83,92 +57,164 @@ export default function DatasetsPage() {
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar o catálogo.'))
   }, [])
 
-  const counts = useMemo(() => ({
-    all: datasets?.length ?? 0,
-    source: datasets?.filter((d) => d.kind === 'source').length ?? 0,
-    derived: datasets?.filter((d) => d.kind === 'derived').length ?? 0,
-  }), [datasets])
+  const stats = useMemo(() => {
+    const list = datasets ?? []
+    const ages = list.map((d) => hoursSince(d.lastSyncAt)).filter((h): h is number => h !== null).sort((a, b) => a - b)
+    return {
+      all: list.length,
+      source: list.filter((d) => d.kind === 'source').length,
+      derived: list.filter((d) => d.kind === 'derived').length,
+      official: list.filter((d) => d.official).length,
+      rows: list.reduce((s, d) => s + (d.rowCount ?? 0), 0),
+      median: ages.length ? ages[Math.floor(ages.length / 2)] : null,
+      stale: ages.filter((h) => h > 26).length,
+    }
+  }, [datasets])
 
-  const filtered = datasets
-    ?.filter((d) => {
-      if (filter !== 'all' && d.kind !== filter) return false
-      const q = query.toLowerCase()
-      return !q || d.name.toLowerCase().includes(q) || d.description.toLowerCase().includes(q)
-        || d.tags.some((t) => t.toLowerCase().includes(q))
+  const filtered = useMemo(() => (datasets ?? [])
+    .filter((d) => {
+      if (filter === 'source' && d.kind !== 'source') return false
+      if (filter === 'derived' && d.kind !== 'derived') return false
+      if (filter === 'official' && !d.official) return false
+      const q = query.toLowerCase().trim()
+      return !q || d.name.toLowerCase().includes(q) || d.slug.toLowerCase().includes(q)
+        || d.description.toLowerCase().includes(q) || d.tags.some((t) => t.toLowerCase().includes(q))
     })
     // Oficiais primeiro (fonte de verdade da diretoria), depois por nome.
-    .sort((a, b) => Number(b.official) - Number(a.official) || a.name.localeCompare(b.name))
+    .sort((a, b) => Number(b.official) - Number(a.official) || a.name.localeCompare(b.name)),
+  [datasets, filter, query])
 
-  // Estado vazio ciente do papel: viewer sem NENHUM acesso vê orientação clara
-  // (o acesso é fechado por padrão), não a mensagem de "nada publicado".
+  // Estado vazio ciente do papel: viewer sem NENHUM acesso recebe orientação
+  // clara (o acesso é fechado por padrão), não "nada publicado".
   const emptyMessage = query
     ? 'Nada encontrado para essa busca.'
-    : !canEdit && (datasets?.length ?? 0) === 0
-      ? 'Você ainda não tem acesso a nenhum dataset. Peça a um administrador para incluir você (ou o seu time) nos datasets de que precisa.'
+    : !canEdit && stats.all === 0
+      ? 'Você ainda não tem acesso a nenhum conjunto. Peça a um administrador para incluir você (ou o seu time) nos conjuntos de que precisa.'
       : filter === 'derived'
-        ? (canEdit ? 'Nenhum dataset calculado ainda. Crie um com “Novo calculado”.' : 'Nenhum dataset calculado disponível para você.')
+        ? (canEdit ? 'Nenhum conjunto calculado ainda.' : 'Nenhum conjunto calculado disponível para você.')
         : filter === 'source'
-          ? (canEdit ? 'Nenhuma fonte publicada. Publique em Administração › Conexões.' : 'Nenhuma fonte disponível para você.')
-          : (canEdit ? 'Nenhum dataset ainda. Publique uma fonte em Conexões ou crie um calculado.' : 'Nenhum dataset disponível para você.')
+          ? (canEdit ? 'Nenhuma fonte publicada. Publique em Conexões.' : 'Nenhuma fonte disponível para você.')
+          : filter === 'official'
+            ? 'Nenhum conjunto marcado como oficial.'
+            : (canEdit ? 'Nenhum conjunto ainda. Publique uma fonte em Conexões ou crie um calculado.' : 'Nenhum conjunto disponível para você.')
 
-  const FILTERS = [
-    { k: 'all' as const, label: 'Todos', count: counts.all },
-    { k: 'source' as const, label: 'Fontes', count: counts.source },
-    { k: 'derived' as const, label: 'Calculados', count: counts.derived },
+  const kpis: Kpi[] = [
+    { label: 'Conjuntos', icon: Boxes, value: String(stats.all), foot: `${stats.source} fontes · ${stats.derived} calculados` },
+    { label: 'Linhas no lake', icon: Layers, value: compact(stats.rows), foot: 'materializadas em Parquet' },
+    {
+      label: 'Frescor mediano', icon: Clock,
+      value: stats.median !== null ? freshnessLabel(stats.median) : '—',
+      foot: stats.stale ? `${stats.stale} atrasado(s)` : 'todos em dia',
+    },
+    { label: 'Camada ouro', icon: BadgeCheck, value: String(stats.official), foot: 'certificados pela diretoria' },
   ]
 
   return (
-    <div className="mx-auto max-w-screen-2xl">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[17px] font-semibold tracking-tight">Datasets</h1>
-          <p className="mt-1 text-sm text-zinc-500">Dados publicados e prontos para explorar — fontes e calculados.</p>
-        </div>
+    <Page>
+      <PageHeader
+        icon={Boxes}
+        title="Conjuntos de dados"
+        subtitle="Publicados e prontos para explorar — fontes e calculados, sobre o lake."
+      >
         {canEdit && (
-          <Link to="/datasets/derived/new"
-            className="flex shrink-0 items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-zinc-950 shadow-card transition-colors hover:bg-accent-hover">
-            <Plus size={15} /> Novo calculado
+          <Link
+            to="/datasets/derived/new"
+            className="flex h-[30px] items-center gap-1.5 rounded-lg bg-accent px-3 text-[12px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover active:scale-95"
+          >
+            <Plus size={14} strokeWidth={2} /> Novo calculado
           </Link>
         )}
-      </div>
+      </PageHeader>
 
-      {/* Filtro Todos / Fontes / Calculados (tudo é dataset). */}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {FILTERS.map(({ k, label, count }) => (
-          <button key={k} onClick={() => setFilter(k)}
-            className={clsx('flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors',
-              filter === k
-                ? 'border-accent bg-accent-soft font-semibold text-accent dark:bg-zinc-800'
-                : 'border-zinc-200 text-zinc-500 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700')}>
-            {k === 'source' && <Database size={14} />}
-            {k === 'derived' && <GitMerge size={14} />}
-            {label}
-            <span className="rounded-full bg-zinc-200/70 px-1.5 text-[11px] font-medium text-zinc-500 dark:bg-zinc-700/60">{count}</span>
-          </button>
-        ))}
-        <div className="relative ml-auto min-w-[180px] flex-1 sm:max-w-xs">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar datasets…"
-            className="w-full rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-900" />
-        </div>
-      </div>
+      {error && <ErrorBanner message={error} />}
 
-      {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
-      {datasets === null && !error && <p className="mt-4 text-sm text-zinc-500">Carregando catálogo…</p>}
+      {datasets === null && !error ? <TableSkeleton /> : (
+        <div className="flex flex-col gap-2.5">
+          <KpiBar items={kpis} />
 
-      {filtered?.length === 0 && (
-        <div className="mt-5 flex flex-col items-center rounded-2xl border border-dashed border-zinc-300 p-12 text-center dark:border-zinc-700">
-          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800">
-            {filter === 'derived' ? <GitMerge size={22} /> : <Boxes size={22} />}
-          </div>
-          <p className="max-w-md text-sm text-zinc-500">{emptyMessage}</p>
+          <Toolbar>
+            <FilterChips
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { key: 'all', label: 'Todos', count: stats.all },
+                { key: 'source', label: 'Fontes', count: stats.source, icon: Database },
+                { key: 'derived', label: 'Calculados', count: stats.derived, icon: GitMerge },
+                { key: 'official', label: 'Oficiais', count: stats.official, icon: BadgeCheck },
+              ]}
+            />
+            <SearchInput value={query} onChange={setQuery} placeholder="Buscar por nome, slug ou etiqueta…" />
+          </Toolbar>
+
+          <Card>
+            <CardHead icon={Boxes} title="Catálogo" sub={`${filtered.length} de ${stats.all}`} />
+            {filtered.length === 0 ? (
+              <EmptyState
+                icon={filter === 'derived' ? GitMerge : Boxes}
+                message={emptyMessage}
+                action={canEdit && !query ? (
+                  <Link to="/datasets/derived/new" className="text-[12px] font-medium text-info hover:underline dark:text-info-dark">
+                    Criar um calculado
+                  </Link>
+                ) : undefined}
+              />
+            ) : (
+              <DataGrid>
+                <thead>
+                  <tr>
+                    <Th>Conjunto</Th>
+                    <Th className="w-[92px]">Camada</Th>
+                    <Th className="w-[104px]">Tipo</Th>
+                    <Th right className="w-[104px]">Registros</Th>
+                    <Th right className="w-[76px]">Campos</Th>
+                    <Th className="w-[84px]">Frescor</Th>
+                    <Th className="w-[96px]">Estado</Th>
+                    <Th className="w-[150px]">Dono</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((d) => {
+                    const h = hoursSince(d.lastSyncAt)
+                    const tone = freshnessTone(h)
+                    return (
+                      <Tr key={d.id}>
+                        <Td>
+                          <Link to={`/datasets/${d.slug}`} className="block hover:text-info dark:hover:text-info-dark">
+                            <EntityCell name={d.name} slug={d.description || d.slug}>
+                              {d.kind === 'derived'
+                                ? <GitMerge size={13} strokeWidth={1.5} className="shrink-0 text-zinc-400" />
+                                : <Database size={13} strokeWidth={1.5} className="shrink-0 text-zinc-400" />}
+                            </EntityCell>
+                          </Link>
+                        </Td>
+                        <Td><TierBadge tier={tierOf(d.kind, d.official)} /></Td>
+                        <Td>
+                          <span className="flex items-center gap-1.5">
+                            <span className="text-[11.5px] text-zinc-500">
+                              {d.kind === 'derived' ? 'calculado' : 'fonte'}
+                            </span>
+                            {d.official && <OfficialBadge />}
+                          </span>
+                        </Td>
+                        <Td right muted>{d.rowCount !== null ? d.rowCount.toLocaleString('pt-BR') : '—'}</Td>
+                        <Td right muted>{d.fieldCount}</Td>
+                        <Td muted>{freshnessLabel(h)}</Td>
+                        <Td>
+                          {tone === 'ok' && <Pill tone="ok">em dia</Pill>}
+                          {tone === 'warn' && <Pill tone="warn">atrasado</Pill>}
+                          {tone === 'crit' && <Pill tone="crit">parado</Pill>}
+                          {tone === 'neutral' && <Pill>sem sync</Pill>}
+                        </Td>
+                        <Td muted>{d.ownerEmail ? d.ownerEmail.split('@')[0] : '—'}</Td>
+                      </Tr>
+                    )
+                  })}
+                </tbody>
+              </DataGrid>
+            )}
+          </Card>
         </div>
       )}
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-        {filtered?.map((d) => <DatasetCard key={d.id} d={d} />)}
-      </div>
-    </div>
+    </Page>
   )
 }

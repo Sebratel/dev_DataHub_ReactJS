@@ -113,7 +113,7 @@ export default function DerivedDatasetPage() {
   const inputCls = 'w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-950'
 
   return (
-    <div className="mx-auto max-w-7xl animate-fade-in">
+    <div className="mx-auto min-w-0 max-w-[1600px] animate-fade-in">
       <Link to="/datasets" className="mb-4 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
         <ArrowLeft size={14} /> Catálogo
       </Link>
@@ -127,9 +127,9 @@ export default function DerivedDatasetPage() {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_300px]">
+      <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         {/* Formulário */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <div className="rounded-2xl border border-zinc-200 bg-white p-3.5 shadow-card dark:border-zinc-800 dark:bg-zinc-900">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-sm">

@@ -169,7 +169,7 @@ export default function AiPage() {
   ]
 
   return (
-    <div className="mx-auto flex h-[calc(100vh-7rem)] max-w-7xl gap-3">
+    <div className="mx-auto flex h-[calc(100vh-7rem)] min-w-0 max-w-[1600px] gap-3">
       {/* Conversas */}
       <aside className="hidden w-56 shrink-0 flex-col md:flex">
         <button onClick={() => void newConversation()}

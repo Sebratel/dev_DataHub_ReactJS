@@ -4,9 +4,13 @@
 // ONDE title = 'instalação' E cliente = X". O compilador os aplica como
 // FILTER (WHERE …) na agregação — a métrica carrega a própria condição.
 import { useEffect, useState } from 'react'
-import { Ruler, Plus, Trash2, Loader2, Filter, X, Pencil } from 'lucide-react'
+import { Ruler, Plus, Trash2, Loader2, Filter, X, Pencil, Boxes } from 'lucide-react'
 import type { Metric, DatasetSummary, DatasetDetail, Aggregation, QueryFilter } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { Page, PageHeader, Toolbar, SearchInput, EmptyState, ErrorBanner, TableSkeleton, PrimaryButton } from '@/components/ui/Page'
+import KpiBar, { type Kpi } from '@/components/ui/KpiBar'
+import { Card, CardHead } from '@/components/ui/Card'
+import { DataGrid, Th, Tr, Td, EntityCell } from '@/components/ui/DataGrid'
 import { useAuthStore } from '@/store/authStore'
 import { useConfirm } from '@/components/Dialogs'
 
@@ -48,6 +52,7 @@ export default function MetricsPage() {
   const [metrics, setMetrics] = useState<Metric[] | null>(null)
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
   const [form, setForm] = useState<Metric | 'new' | null>(null)
 
   function load() {
@@ -79,22 +84,32 @@ export default function MetricsPage() {
     byDataset.set(m.datasetName, [...(byDataset.get(m.datasetName) ?? []), m])
   }
 
-  return (
-    <div className="mx-auto max-w-6xl">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[17px] font-semibold">Biblioteca de Métricas</h1>
-          <p className="mt-1 text-sm text-zinc-500">Definições únicas, reutilizáveis em dashboards e pela IA — com filtros embutidos.</p>
-        </div>
-        {canEdit && (
-          <button onClick={() => setForm('new')}
-            className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover">
-            <Plus size={15} /> Nova métrica
-          </button>
-        )}
-      </div>
+  const list = metrics ?? []
+  const filtered = list.filter((m) => {
+    const q = query.toLowerCase().trim()
+    return !q || m.name.toLowerCase().includes(q) || m.datasetName.toLowerCase().includes(q)
+      || m.fieldKey.toLowerCase().includes(q)
+  })
+  const withFilters = list.filter((m) => m.filters?.length > 0).length
+  const datasetsUsed = new Set(list.map((m) => m.datasetName)).size
 
-      {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
+  const kpis: Kpi[] = [
+    { label: 'Métricas', icon: Ruler, value: String(list.length), foot: 'definidas uma vez, usadas em tudo' },
+    { label: 'Conjuntos cobertos', icon: Boxes, value: String(datasetsUsed), foot: `de ${datasets.length} disponíveis` },
+    { label: 'Com filtro embutido', icon: Filter, value: String(withFilters), foot: 'recorte já na definição' },
+  ]
+
+  return (
+    <Page>
+      <PageHeader
+        icon={Ruler}
+        title="Biblioteca de métricas"
+        subtitle="Definições únicas, reutilizáveis em painéis e pela IA — com filtros embutidos."
+      >
+        {canEdit && <PrimaryButton icon={Plus} onClick={() => setForm('new')}>Nova métrica</PrimaryButton>}
+      </PageHeader>
+
+      {error && <ErrorBanner message={error} />}
 
       {form && (
         <MetricForm
@@ -105,50 +120,84 @@ export default function MetricsPage() {
         />
       )}
 
-      {metrics === null && !error && <p className="mt-4 text-sm text-zinc-500">Carregando…</p>}
-      {metrics?.length === 0 && !form && (
-        <div className="mt-5 rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          Nenhuma métrica ainda. {canEdit ? 'Crie a primeira — ela ficará disponível nos dashboards.' : 'Peça a um editor para criar.'}
+      {metrics === null && !error ? <TableSkeleton /> : (
+        <div className="flex flex-col gap-2.5">
+          <KpiBar items={kpis} />
+
+          <Toolbar>
+            <SearchInput value={query} onChange={setQuery} placeholder="Buscar métrica, conjunto ou campo…" />
+          </Toolbar>
+
+          <Card>
+            <CardHead icon={Ruler} title="Todas as métricas" sub={`${filtered.length} de ${list.length}`} />
+            {filtered.length === 0 ? (
+              <EmptyState
+                icon={Ruler}
+                message={query
+                  ? 'Nada encontrado para essa busca.'
+                  : `Nenhuma métrica ainda. ${canEdit ? 'Crie a primeira — ela fica disponível nos painéis e para a IA.' : 'Peça a um editor para criar.'}`}
+                action={canEdit && !query
+                  ? <button onClick={() => setForm('new')} className="text-[12px] font-medium text-info hover:underline dark:text-info-dark">Criar métrica</button>
+                  : undefined}
+              />
+            ) : (
+              <DataGrid>
+                <thead>
+                  <tr>
+                    <Th>Métrica</Th>
+                    <Th className="w-[170px]">Conjunto</Th>
+                    <Th className="w-[190px]">Cálculo</Th>
+                    <Th className="w-[104px]">Formato</Th>
+                    <Th>Filtros embutidos</Th>
+                    {canEdit && <Th className="w-[72px]" />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((m) => (
+                    <Tr key={m.id}>
+                      <Td>
+                        <EntityCell name={m.name}>
+                          <Ruler size={13} strokeWidth={1.5} className="shrink-0 text-zinc-400" />
+                        </EntityCell>
+                      </Td>
+                      <Td muted>{m.datasetName}</Td>
+                      <Td muted>
+                        <span className="text-zinc-700 dark:text-zinc-300">{AGG_LABEL[m.agg]}</span>
+                        {' de '}
+                        <span className="font-mono text-[10.5px]">{m.fieldKey}</span>
+                      </Td>
+                      <Td muted>{FORMAT_LABEL[m.format]}</Td>
+                      <Td>
+                        {m.filters?.length > 0
+                          ? <span className="flex items-start gap-1 text-[11px] text-zinc-500">
+                              <Filter size={11} className="mt-0.5 shrink-0" />
+                              <span className="min-w-0">{filtersSummary(m.filters, (k) => k)}</span>
+                            </span>
+                          : <span className="text-[11px] text-zinc-400">nenhum</span>}
+                      </Td>
+                      {canEdit && (
+                        <Td>
+                          <span className="flex items-center justify-end gap-0.5">
+                            <button onClick={() => setForm(m)} title="Editar métrica"
+                              className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100">
+                              <Pencil size={13} />
+                            </button>
+                            <button onClick={() => remove(m)} title="Excluir"
+                              className="rounded p-1 text-zinc-400 transition-colors hover:bg-crit-soft hover:text-crit dark:hover:bg-crit/15">
+                              <Trash2 size={13} />
+                            </button>
+                          </span>
+                        </Td>
+                      )}
+                    </Tr>
+                  ))}
+                </tbody>
+              </DataGrid>
+            )}
+          </Card>
         </div>
       )}
-
-      {[...byDataset.entries()].map(([dsName, list]) => (
-        <div key={dsName} className="mt-4">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-400">{dsName}</h2>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            {list.map((m) => (
-              <div key={m.id} className="flex items-start gap-3 rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent dark:bg-zinc-800">
-                  <Ruler size={15} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{m.name}</p>
-                  <p className="text-xs text-zinc-500">
-                    {AGG_LABEL[m.agg]} de {m.fieldKey} · {FORMAT_LABEL[m.format]}
-                  </p>
-                  {m.filters?.length > 0 && (
-                    <p className="mt-1 flex items-start gap-1 text-[11px] text-secondary">
-                      <Filter size={11} className="mt-0.5 shrink-0" />
-                      <span className="min-w-0">{filtersSummary(m.filters, (k) => k)}</span>
-                    </p>
-                  )}
-                </div>
-                {canEdit && (
-                  <div className="flex shrink-0 gap-1">
-                    <button onClick={() => setForm(m)} className="text-zinc-300 hover:text-accent dark:text-zinc-600" title="Editar métrica">
-                      <Pencil size={14} />
-                    </button>
-                    <button onClick={() => remove(m)} className="text-zinc-300 hover:text-red-500 dark:text-zinc-600" title="Excluir">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
+    </Page>
   )
 }
 

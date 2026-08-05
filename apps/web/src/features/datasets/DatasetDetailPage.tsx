@@ -109,14 +109,14 @@ export default function DatasetDetailPage() {
 
   if (error && !dataset) {
     return (
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto min-w-0 max-w-[1600px]">
         <p className="rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>
       </div>
     )
   }
   if (!dataset) {
     return (
-      <div className="mx-auto flex max-w-5xl items-center gap-2 text-sm text-zinc-500">
+      <div className="mx-auto flex min-w-0 max-w-[1600px] items-center gap-2 text-sm text-zinc-500">
         <Loader2 size={15} className="animate-spin" /> Carregando…
       </div>
     )
@@ -172,7 +172,7 @@ export default function DatasetDetailPage() {
   const menuItem = 'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800'
 
   return (
-    <div className="mx-auto max-w-6xl animate-fade-in">
+    <div className="mx-auto min-w-0 max-w-[1600px] animate-fade-in">
       {/* Trilha */}
       <nav className="mb-4 flex items-center gap-1.5 text-sm text-zinc-500">
         <Link to="/datasets" className="inline-flex items-center gap-1.5 hover:text-accent">

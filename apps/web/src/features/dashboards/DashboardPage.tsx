@@ -161,7 +161,7 @@ export default function DashboardPage() {
   if (!dash) return <p className="text-sm text-zinc-500">Carregando…</p>
 
   return (
-    <div ref={rootRef} className={present ? 'min-h-screen overflow-auto bg-white p-4 dark:bg-zinc-950' : 'mx-auto max-w-7xl'}>
+    <div ref={rootRef} className={present ? 'min-h-screen overflow-auto bg-white p-4 dark:bg-zinc-950' : 'mx-auto min-w-0 max-w-[1600px]'}>
       {!present && (
         <Link to="/dashboards" className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-accent">
           <ArrowLeft size={14} /> Dashboards

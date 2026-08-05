@@ -80,7 +80,7 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl">
+    <div className="mx-auto min-w-0 max-w-[1600px]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-[17px] font-semibold tracking-tight">
