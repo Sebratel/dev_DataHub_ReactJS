@@ -14,6 +14,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   Play, Plus, Trash2, ArrowLeft, Loader2, AlertTriangle, Database,
   Boxes, ChevronDown, ChevronRight, Type, Table2, Check, Lock, Users, Download,
+  Braces, Square,
 } from 'lucide-react'
 import type {
   Notebook, NotebookCell, NotebookCatalogEntry, NotebookRunResult,
@@ -24,14 +25,24 @@ import { Pill } from '@/components/ui/Pill'
 import { DataGrid, Th, Tr, Td } from '@/components/ui/DataGrid'
 import SqlEditor from './SqlEditor'
 import Markdown from './markdown'
+import { usePython, type PythonResult } from './usePython'
 
 interface CellState {
   running: boolean
   result: NotebookRunResult | null
   error: string | null
+  /** Saída da célula Python (stdout + valor da última expressão). */
+  python?: PythonResult | null
 }
 
 const newId = () => `c${Math.random().toString(36).slice(2, 9)}`
+
+// O contrato da célula Python em duas linhas: `df` já vem pronto da célula SQL
+// acima. É o que evita a pergunta "como eu pego os dados aqui dentro?".
+const PY_PLACEHOLDER = [
+  '# df traz o resultado da célula SQL acima (pandas.DataFrame)',
+  'print(df.describe())',
+].join('\n')
 
 export default function NotebookPage() {
   const { slug = '' } = useParams()
@@ -44,6 +55,8 @@ export default function NotebookPage() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [editingMd, setEditingMd] = useState<Record<string, boolean>>({})
   const [materializing, setMaterializing] = useState<string | null>(null)
+
+  const python = usePython()
 
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
   // Ref com o valor corrente: o debounce dispara depois, e ler o estado
@@ -132,6 +145,28 @@ export default function NotebookPage() {
     }
   }
 
+  // A célula Python recebe o resultado da célula SQL EXECUTADA mais próxima
+  // acima dela — o mesmo modelo do BigQuery: o SQL roda no motor, o Python roda
+  // sobre o resultado. Sem isso a pessoa teria que colar dados no código.
+  function upstreamData(cellId: string): NotebookRunResult | null {
+    if (!nb) return null
+    const idx = nb.cells.findIndex((c) => c.id === cellId)
+    for (let i = idx - 1; i >= 0; i--) {
+      const c = nb.cells[i]
+      if (c.kind !== 'sql') continue
+      const r = state[c.id]?.result
+      if (r) return r
+    }
+    return null
+  }
+
+  async function runPython(cell: NotebookCell) {
+    const data = upstreamData(cell.id)
+    setState((s) => ({ ...s, [cell.id]: { running: true, result: null, error: null, python: null } }))
+    const r = await python.run(cell.source, data ? { columns: data.columns, rows: data.rows } : null)
+    setState((s) => ({ ...s, [cell.id]: { running: false, result: null, error: null, python: r } }))
+  }
+
   async function materialize(cell: NotebookCell) {
     const name = window.prompt('Nome do conjunto a criar a partir desta célula:')
     if (!name?.trim()) return
@@ -218,10 +253,27 @@ export default function NotebookPage() {
             return (
               <Card key={cell.id}>
                 <CardHead
-                  icon={cell.kind === 'markdown' ? Type : Table2}
-                  title={cell.kind === 'markdown' ? 'Texto' : 'SQL'}
-                  sub={st?.result ? `${st.result.rows.length} linha(s) · ${st.result.ms} ms` : undefined}
+                  icon={cell.kind === 'markdown' ? Type : cell.kind === 'python' ? Braces : Table2}
+                  title={cell.kind === 'markdown' ? 'Texto' : cell.kind === 'python' ? 'Python' : 'SQL'}
+                  sub={
+                    st?.result ? `${st.result.rows.length} linha(s) · ${st.result.ms} ms`
+                      : cell.kind === 'python' ? (upstreamData(cell.id) ? 'df da célula SQL acima' : 'sem dados acima')
+                      : undefined
+                  }
                 >
+                  {cell.kind === 'python' && (
+                    st?.running ? (
+                      <button onClick={python.cancel}
+                        className="flex items-center gap-1 rounded-lg border border-crit/40 px-2.5 py-1 text-[10.5px] font-semibold text-crit transition-colors hover:bg-crit-soft dark:text-crit-dark">
+                        <Square size={10} strokeWidth={2.4} /> Parar
+                      </button>
+                    ) : (
+                      <button onClick={() => void runPython(cell)} disabled={!cell.source.trim()}
+                        className="flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1 text-[10.5px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover disabled:opacity-50">
+                        <Play size={11} strokeWidth={2.2} /> Executar
+                      </button>
+                    )
+                  )}
                   {cell.kind === 'sql' && (
                     <>
                       {st?.result && st.result.rows.length > 0 && (
@@ -258,7 +310,19 @@ export default function NotebookPage() {
                   )}
                 </CardHead>
 
-                {cell.kind === 'sql' ? (
+                {cell.kind === 'python' ? (
+                  <textarea
+                    value={cell.source}
+                    readOnly={!canEdit}
+                    onChange={(e) => patchCell(cell.id, { source: e.target.value })}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void runPython(cell) }
+                    }}
+                    spellCheck={false}
+                    placeholder={PY_PLACEHOLDER}
+                    className="min-h-[96px] w-full resize-y border-none bg-transparent px-3 py-2 font-mono text-[11.5px] leading-relaxed outline-none focus:ring-0"
+                  />
+                ) : cell.kind === 'sql' ? (
                   <SqlEditor
                     value={cell.source}
                     readOnly={!canEdit}
@@ -277,6 +341,35 @@ export default function NotebookPage() {
                     {cell.source.trim()
                       ? <Markdown source={cell.source} />
                       : <p className="text-[11.5px] italic text-zinc-400">Célula de texto vazia.</p>}
+                  </div>
+                )}
+
+                {cell.kind === 'python' && st?.running && python.status && (
+                  <p className="flex items-center gap-1.5 border-t border-zinc-200 px-3 py-2 text-[11px] text-zinc-500 dark:border-zinc-800">
+                    <Loader2 size={11} className="animate-spin" /> {python.status}
+                  </p>
+                )}
+
+                {st?.python && (
+                  <div className="border-t border-zinc-200 dark:border-zinc-800">
+                    {st.python.stdout && (
+                      <pre className="m-0 max-h-[300px] overflow-auto whitespace-pre-wrap px-3 py-2 font-mono text-[11px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                        {st.python.stdout}
+                      </pre>
+                    )}
+                    {st.python.repr && (
+                      <pre className="m-0 max-h-[300px] overflow-auto whitespace-pre-wrap border-t border-zinc-200 px-3 py-2 font-mono text-[11px] leading-relaxed text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+                        {st.python.repr}
+                      </pre>
+                    )}
+                    {st.python.error && (
+                      <pre className="m-0 max-h-[300px] overflow-auto whitespace-pre-wrap bg-crit-soft px-3 py-2 font-mono text-[11px] leading-relaxed text-crit dark:bg-crit/10 dark:text-crit-dark">
+                        {st.python.error}
+                      </pre>
+                    )}
+                    {!st.python.stdout && !st.python.repr && !st.python.error && (
+                      <p className="px-3 py-2 text-[11.5px] text-zinc-500">Executou sem saída.</p>
+                    )}
                   </div>
                 )}
 
@@ -327,6 +420,10 @@ export default function NotebookPage() {
               <button onClick={() => addCell('sql')}
                 className="flex items-center gap-1.5 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-[11.5px] font-medium text-zinc-500 transition-colors hover:border-accent hover:text-zinc-900 dark:border-zinc-700 dark:hover:text-zinc-100">
                 <Plus size={13} strokeWidth={2} /> Célula SQL
+              </button>
+              <button onClick={() => addCell('python')}
+                className="flex items-center gap-1.5 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-[11.5px] font-medium text-zinc-500 transition-colors hover:border-accent hover:text-zinc-900 dark:border-zinc-700 dark:hover:text-zinc-100">
+                <Braces size={13} strokeWidth={2} /> Célula Python
               </button>
               <button onClick={() => addCell('markdown')}
                 className="flex items-center gap-1.5 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-[11.5px] font-medium text-zinc-500 transition-colors hover:border-accent hover:text-zinc-900 dark:border-zinc-700 dark:hover:text-zinc-100">
