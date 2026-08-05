@@ -11,6 +11,8 @@ import AuditPage from '@/features/admin/AuditPage'
 import MonitorPage from '@/features/admin/MonitorPage'
 import ApisPage from '@/features/integrations/ApisPage'
 import GatewayPage from '@/features/gateway/GatewayPage'
+import NotebooksPage from '@/features/notebooks/NotebooksPage'
+import NotebookPage from '@/features/notebooks/NotebookPage'
 import ModelsPage from '@/features/ml/ModelsPage'
 import ModelDetailPage from '@/features/ml/ModelDetailPage'
 import DatasetsPage from '@/features/datasets/DatasetsPage'
@@ -42,6 +44,8 @@ const router = createBrowserRouter([
       { path: 'integrations', element: <IntegrationsPage /> },
       { path: 'apis', element: <ApisPage /> },
       { path: 'gateway', element: <GatewayPage /> },
+      { path: 'notebooks', element: <NotebooksPage /> },
+      { path: 'notebooks/:slug', element: <NotebookPage /> },
       { path: 'models', element: <ModelsPage /> },
       { path: 'models/:slug', element: <ModelDetailPage /> },
       { path: 'admin/connections', element: <ConnectionsPage /> },

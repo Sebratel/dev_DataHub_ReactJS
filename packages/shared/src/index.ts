@@ -368,6 +368,52 @@ export interface GatewayUsage {
   calls_today: number
 }
 
+// ── Notebooks ─────────────────────────────────────────────────
+// Célula de notebook. `python` está reservado no tipo mas ainda não executa —
+// entra com o runtime Pyodide (WebAssembly, no navegador).
+export type NotebookCellKind = 'sql' | 'markdown' | 'python'
+
+export interface NotebookCell {
+  id: string
+  kind: NotebookCellKind
+  source: string
+  name?: string
+}
+
+export interface NotebookSummary {
+  id: string
+  slug: string
+  name: string
+  description: string
+  visibility: 'private' | 'tenant'
+  owner_email: string
+  cell_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface Notebook extends Omit<NotebookSummary, 'cell_count'> {
+  cells: NotebookCell[]
+}
+
+// Conjunto referenciável dentro de uma célula SQL. `alias` é como se escreve
+// (slug com underscore) — a diferença entre os dois já causou confusão.
+export interface NotebookCatalogEntry {
+  slug: string
+  alias: string
+  name: string
+  kind: 'source' | 'derived'
+  rowCount: number | null
+  fieldCount: number
+}
+
+export interface NotebookRunResult {
+  columns: string[]
+  rows: Record<string, unknown>[]
+  truncated: boolean
+  ms: number
+}
+
 // ── Modelos preditivos ────────────────────────────────────────
 // Os tipos abaixo espelham as linhas cruas do Postgres (snake_case), como já é
 // o caso do consumo do gateway — o router devolve `m.*` sem remapear.
