@@ -1,9 +1,12 @@
-// Layout base: rail de navegação em GRAFITE + header superior fixo (breadcrumb
+// Layout base: rail de navegação em CARVÃO + header superior fixo (breadcrumb
 // + estado do motor + menu de usuário) sobre um canvas cinza-frio.
 //
 // O rail é escuro nos DOIS temas — padrão das plataformas de monitoramento: o
-// chrome é constante e o conteúdo é que muda. Isso dá à sidebar o papel de
-// moldura, e libera o âmbar da marca para ser acento de verdade.
+// chrome é constante e o conteúdo é que muda. O tom vem do matiz do laranja da
+// marca com a saturação quase zerada (ver `rail` no tailwind.config), então o
+// âmbar do item ativo parece da mesma família em vez de um adesivo num chrome
+// frio. Quente no chrome, frio no conteúdo — é o conteúdo que precisa de
+// neutralidade para número e texto ficarem legíveis.
 //
 // A navegação é AGRUPADA por intenção (Explorar / Construir / Operar) em vez de
 // uma lista plana: com 10+ destinos a lista plana obriga a ler tudo toda vez.
@@ -11,7 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, Plug, ShieldCheck, ScrollText,
-  Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database,
+  Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Radio,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
@@ -43,6 +46,7 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
       { to: '/ai', label: 'Assistente IA', icon: Sparkles },
       { to: '/integrations', label: 'Integrações', icon: Plug },
       { to: '/apis', label: 'APIs', icon: Webhook, role: 'editor' },
+      { to: '/gateway', label: 'Gateway', icon: Radio, role: 'editor' },
     ],
   },
   {
@@ -62,6 +66,7 @@ const CRUMB: Record<string, string> = {
   integrations: 'Integrações', admin: 'Administração', connections: 'Conexões',
   monitor: 'Monitoramento', 'write-products': 'APIs de Escrita', access: 'Usuários e Acessos',
   audit: 'Auditoria', derived: 'Calculado', new: 'Novo', apis: 'APIs', explore: 'Explorador',
+  gateway: 'Gateway',
 }
 
 function NavItem({ to, label, icon: Icon, end }: NavEntry) {

@@ -328,6 +328,46 @@ export interface ApiProduct {
   createdAt: string
 }
 
+// ── Gateway de APIs ───────────────────────────────────────────
+// Upstream: uma API interna que JÁ EXISTE e passa a ser servida atrás do
+// gateway, ganhando token, quota, tempo limite e telemetria sem que o serviço
+// de trás precise mudar nada.
+export type GatewayAuthMode = 'none' | 'bearer' | 'header' | 'basic'
+export type GatewayUpstreamStatus = 'pending' | 'active' | 'rejected'
+
+export interface GatewayUpstream {
+  id: string
+  slug: string          // prefixo público: /api/public/v1/gw/<slug>/…
+  name: string
+  description: string
+  baseUrl: string
+  authMode: GatewayAuthMode
+  authHeader: string | null
+  methods: string[]
+  timeoutMs: number
+  stripPrefix: boolean
+  forwardHeaders: string[]
+  status: GatewayUpstreamStatus
+  enabled: boolean
+  ownerEmail: string
+  reviewedBy: string | null
+  reviewedAt: string | null
+  createdAt: string
+  /** O segredo do upstream nunca trafega — só se ele existe. */
+  hasSecret: boolean
+}
+
+// Consumo do dia por token — alimenta o painel de tráfego do gateway.
+export interface GatewayUsage {
+  id: string
+  name: string
+  rate_limit_per_min: number | null
+  quota_per_day: number | null
+  /** Upstreams que este token alcança — opt-in explícito, vazio = nenhum. */
+  upstream_slugs: string[]
+  calls_today: number
+}
+
 // ── Auth ──────────────────────────────────────────────────────
 export interface SessionUser {
   email: string

@@ -107,7 +107,7 @@ gatewayRouter.put('/credentials/:id/policy', ...adminOnly, async (req, res) => {
 // Consumo do dia — alimenta a tela de tokens ("quanto já gastei do meu teto").
 gatewayRouter.get('/usage', ...editorOnly, async (req, res) => {
   const rows = (await db.query(
-    `select c.id, c.name, c.rate_limit_per_min, c.quota_per_day,
+    `select c.id, c.name, c.rate_limit_per_min, c.quota_per_day, c.upstream_slugs,
             coalesce(u.calls, 0) as calls_today
        from api_credentials c
        join tenants t on t.id = c.tenant_id
