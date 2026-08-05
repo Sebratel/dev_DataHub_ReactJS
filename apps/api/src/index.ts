@@ -22,6 +22,7 @@ import { productsRouter } from './modules/integrations/productsRouter.js'
 import { gatewayRouter } from './modules/gateway/gatewayRouter.js'
 import { gatewayProxyRouter } from './modules/gateway/proxy.js'
 import { reloadUpstreams } from './modules/gateway/upstreams.js'
+import { mlRouter } from './modules/ml/mlRouter.js'
 import { accessRouter } from './modules/admin/accessRouter.js'
 import { monitorRouter } from './modules/admin/monitorRouter.js'
 import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
@@ -95,6 +96,7 @@ app.use('/api/v1/ai', aiRouter)
 app.use('/api/v1/credentials', credentialsRouter)
 app.use('/api/v1/products', productsRouter) // construtor de APIs (GET+POST, self-service)
 app.use('/api/v1/gateway', gatewayRouter) // plano de controle: upstreams e política
+app.use('/api/v1/ml', mlRouter) // modelos preditivos: registro, treino e predicao
 app.use('/api/public/v1', publicRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))

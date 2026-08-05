@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "rag": "tsx src/scripts/rag.ts",
     "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ml:smoke": "tsx src/dev/mlSmoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
