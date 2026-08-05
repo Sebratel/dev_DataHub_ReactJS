@@ -26,22 +26,25 @@ export default {
         'on-surface': '#0e1116',
         'on-surface-variant': '#525b69',
 
-        // Chrome da sidebar — carvão fixo nos DOIS temas (padrão Datadog /
-        // Atlas: o chrome não muda, só o conteúdo). Fora da escala zinc de
-        // propósito, para nunca ser arrastado por um ajuste de tema.
+        // Chrome da sidebar — GRAFITE NEUTRO, e agora sensível ao tema.
         //
-        // O tom é derivado do LARANJA DA MARCA (matiz ~34°) com saturação quase
-        // zerada: fica um carvão sutilmente quente, não um grafite azulado. É o
-        // que faz o âmbar do item ativo parecer da mesma família em vez de um
-        // adesivo colado num chrome frio. Só o chrome é quente — o conteúdo
-        // continua neutro-frio, que é o que mantém número e texto legíveis.
+        // Duas tentativas anteriores erraram por motivos opostos: o grafite
+        // azulado não tinha relação com a marca, e o carvão quente deixava a
+        // barra amarronzada. A resposta é neutro puro: a presença da marca vem
+        // do LARANJA no item ativo e no logo, não de tingir o bloco inteiro.
+        //
+        // Sensível ao tema porque no escuro um rail fixo ficava MAIS CLARO que
+        // o conteúdo — hierarquia invertida, a barra parecia flutuar. Agora, no
+        // claro ele contrasta com o conteúdo; no escuro ele é a camada mais
+        // funda, e recua. Valores em styles/index.css.
         rail: {
-          DEFAULT: '#1a1714',
-          raised: '#241f1a',
-          active: '#312a22',
-          ink: '#ece8e2',
-          muted: '#a1998f',
-          faint: '#6d655c',
+          DEFAULT: 'var(--rail)',
+          raised: 'var(--rail-raised)',
+          active: 'var(--rail-active)',
+          edge: 'var(--rail-edge)',
+          ink: 'var(--rail-ink)',
+          muted: 'var(--rail-muted)',
+          faint: 'var(--rail-faint)',
         },
 
         // Neutros FRIOS sobrescrevendo a escala zinc: todo o app já usa
@@ -49,17 +52,20 @@ export default {
         // Claro: 50–300 superfícies e bordas, 400–700 tinta.
         // Escuro: 800–950 bordas, cards e fundo.
         zinc: {
-          50: '#f4f5f7', // fundo do app
-          100: '#eceef2', // hover / fill sutil
-          200: '#e2e5eb', // borda padrão
-          300: '#cfd5de', // borda forte, tracejado
-          400: '#8d96a4', // microtexto, rótulo fraco
-          500: '#6b7482', // texto mutado (workhorse)
-          600: '#525b69',
-          700: '#3a424e',
-          800: '#262b33', // dark: borda / hover
-          900: '#15181d', // dark: card
-          950: '#0d0f13', // dark: fundo
+          50: '#f5f6f7', // fundo do app
+          100: '#eeeff1', // hover / fill sutil
+          200: '#e3e4e8', // borda padrão
+          300: '#d0d2d7', // borda forte, tracejado
+          400: '#8f939b', // microtexto, rótulo fraco
+          500: '#6d717a', // texto mutado (workhorse)
+          600: '#53575f', // (claro) texto de corpo
+          700: '#3b3e45',
+          // No escuro as três últimas estavam próximas demais: canvas #0d0f13 e
+          // card #15181d quase se confundiam, e o resultado era um mar de preto
+          // sem hierarquia. Agora há distância real entre fundo, card e borda.
+          800: '#2e3036', // dark: borda / hover
+          900: '#1f2126', // dark: card
+          950: '#16171a', // dark: fundo
         },
 
         // Estado — reservado. Nunca reaproveitar como cor de série.

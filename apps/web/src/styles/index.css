@@ -7,6 +7,17 @@
      — Tailwind não alcança atributo de SVG. Mesmos valores do tailwind.config;
      mudar lá exige mudar aqui. */
   :root {
+    /* Rail — grafite NEUTRO. No claro ele contrasta com o conteúdo branco e
+       enquadra a tela; a `edge` é a borda que separa os dois planos (sem ela
+       o bloco escuro colava no conteúdo). */
+    --rail: #212226;
+    --rail-raised: #2b2d32;
+    --rail-active: #363940;
+    --rail-edge: #14151800;
+    --rail-ink: #e9eaec;
+    --rail-muted: #9ba0a8;
+    --rail-faint: #71767e;
+
     --surface: #ffffff;
     --series-1: #3b6fe0;
     --series-2: #0e9f8f;
@@ -19,7 +30,19 @@
   }
 
   .dark {
-    --surface: #15181d;
+    /* No escuro o rail é a camada MAIS FUNDA — mais escuro que o canvas. Com o
+       valor fixo anterior ele ficava mais claro que o conteúdo e a barra
+       parecia flutuar por cima, invertendo a hierarquia. Aqui ele recua, e a
+       `edge` clara devolve a separação que a diferença de tom sozinha não dá. */
+    --rail: #0f1012;
+    --rail-raised: #191a1e;
+    --rail-active: #262930;
+    --rail-edge: #2e3036;
+    --rail-ink: #e4e6e9;
+    --rail-muted: #949aa3;
+    --rail-faint: #6b7079;
+
+    --surface: #1f2126;
     --series-1: #5b8cf0;
     --series-2: #0fa394;
     --series-3: #9575f5;

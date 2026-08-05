@@ -188,7 +188,7 @@ export default function AppShell() {
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50 dark:bg-zinc-950">
       {/* ── Rail grafite ─────────────────────────────────────────── */}
-      <aside className="flex w-[216px] shrink-0 flex-col bg-rail text-rail-ink">
+      <aside className="flex w-[216px] shrink-0 flex-col border-r border-rail-edge bg-rail text-rail-ink">
         <div className="flex h-[46px] shrink-0 items-center gap-2.5 border-b border-rail-raised px-3">
           <img src="/logo-circular-sebratel.png" alt="" className="h-[22px] w-[22px] shrink-0 rounded-md" />
           <div className="min-w-0 leading-tight">
