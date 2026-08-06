@@ -6,7 +6,8 @@ import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
-import { getProvider, type AiMessage } from './provider.js'
+import type { AiMessage } from './provider.js'
+import { activeProvider } from './providerStore.js'
 import { AI_TOOLS, executeTool } from './tools.js'
 
 export const aiRouter = Router()
@@ -84,11 +85,9 @@ aiRouter.delete('/conversations/:id', ...authed, async (req, res) => {
 
 // ─── Mensagem + loop agêntico (SSE) ────────────────────────────
 aiRouter.post('/conversations/:id/messages', ...authed, async (req, res) => {
-  const provider = getProvider()
-  if (!provider.isConfigured()) {
-    return res.status(503).json({
-      error: 'IA não configurada: defina ANTHROPIC_API_KEY no .env do servidor.',
-    })
+  const provider = activeProvider(req.user!.tenant)
+  if (!provider?.isConfigured()) {
+    return res.status(503).json({ error: 'IA não configurada. Um administrador precisa cadastrar um provedor em Administração › Provedores de IA (Anthropic, OpenAI ou Gemini).' })
   }
   const text = String((req.body ?? {}).text ?? '').trim()
   if (!text) return res.status(400).json({ error: 'Mensagem vazia.' })

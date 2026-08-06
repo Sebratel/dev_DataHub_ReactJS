@@ -7,7 +7,8 @@ import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
-import { getProvider, type AiMessage } from '../ai/provider.js'
+import type { AiMessage } from '../ai/provider.js'
+import { activeProvider } from '../ai/providerStore.js'
 import { WIDGET_BUILDER_TOOLS, executeTool } from '../ai/tools.js'
 
 export const aiWidgetsRouter = Router()
@@ -51,9 +52,9 @@ async function canEditDashboard(req: Request, dashboardId: string): Promise<bool
 }
 
 aiWidgetsRouter.post('/:id/ai/build', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
-  const provider = getProvider()
-  if (!provider.isConfigured()) {
-    return res.status(503).json({ error: 'IA não configurada: defina ANTHROPIC_API_KEY no .env do servidor.' })
+  const provider = activeProvider(req.user!.tenant)
+  if (!provider?.isConfigured()) {
+    return res.status(503).json({ error: 'IA não configurada. Um administrador precisa cadastrar um provedor em Administração › Provedores de IA (Anthropic, OpenAI ou Gemini).' })
   }
   if (!(await canEditDashboard(req, req.params.id))) {
     return res.status(403).json({ error: 'Apenas o dono (ou admin) pode construir widgets.' })

@@ -368,6 +368,41 @@ export interface GatewayUsage {
   calls_today: number
 }
 
+// ── Provedores de IA ──────────────────────────────────────────
+// Cadastrados na plataforma, não no .env. 'openai' fala o dialeto Chat
+// Completions, então cobre também Azure, Groq, OpenRouter e locais — basta
+// trocar a baseUrl.
+export type AiProviderKind = 'anthropic' | 'openai' | 'gemini'
+
+export interface AiProvider {
+  id: string
+  name: string
+  kind: AiProviderKind
+  model: string
+  baseUrl: string | null
+  /** Últimos 4 caracteres da chave — só para reconhecimento. */
+  keyHint: string | null
+  maxTokens: number
+  effort: string | null
+  enabled: boolean
+  isDefault: boolean
+  lastTestAt: string | null
+  lastTestOk: boolean | null
+  lastTestError: string | null
+  lastTestMs: number | null
+  ownerEmail: string
+  createdAt: string
+  /** A chave existe? O valor jamais trafega. */
+  hasKey: boolean
+}
+
+export interface AiProviderTestResult {
+  ok: boolean
+  ms: number
+  error?: string
+  sample?: string
+}
+
 // ── Notebooks ─────────────────────────────────────────────────
 // Célula de notebook. `python` está reservado no tipo mas ainda não executa —
 // entra com o runtime Pyodide (WebAssembly, no navegador).

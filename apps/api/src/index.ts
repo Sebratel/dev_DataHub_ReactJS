@@ -17,6 +17,8 @@ import { metricsRouter } from './modules/metrics/metricsRouter.js'
 import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
 import { aiWidgetsRouter } from './modules/dashboards/aiWidgetsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
+import { aiProvidersRouter } from './modules/ai/aiProvidersRouter.js'
+import { reloadAiProviders } from './modules/ai/providerStore.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { productsRouter } from './modules/integrations/productsRouter.js'
 import { gatewayRouter } from './modules/gateway/gatewayRouter.js'
@@ -93,6 +95,7 @@ app.use('/api/v1/dashboards', aiWidgetsRouter) // rota /:id/ai/build — antes d
 app.use('/api/v1/dashboards', dashboardsRouter)
 
 // Chat IA e integrações.
+app.use('/api/v1/ai/providers', aiProvidersRouter) // provedores de IA geridos pela tela
 app.use('/api/v1/ai', aiRouter)
 app.use('/api/v1/credentials', credentialsRouter)
 app.use('/api/v1/products', productsRouter) // construtor de APIs (GET+POST, self-service)
@@ -120,6 +123,9 @@ if (isDbAvailable()) {
   // ao banco a cada requisição).
   await reloadUpstreams().catch((e) =>
     console.warn(`[gateway] carga inicial de upstreams falhou: ${(e as Error).message}`))
+  // Provedores de IA cadastrados na tela (a chave sai do .env).
+  await reloadAiProviders().catch((e) =>
+    console.warn(`[ai] carga inicial de provedores falhou: ${(e as Error).message}`))
   // Painel de saúde das APIs "de graça": provisiona o dataset de métricas.
   await ensureApiMetricsDataset().catch((e) =>
     console.warn(`[api-metrics] provisionamento falhou: ${(e as Error).message}`))
