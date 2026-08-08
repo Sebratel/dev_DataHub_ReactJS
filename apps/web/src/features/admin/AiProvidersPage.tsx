@@ -289,6 +289,7 @@ export default function AiProvidersPage() {
 
       {editing && (
         <ProviderDialog
+          secretConfigured={secretConfigured}
           initial={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); void load() }}
@@ -313,8 +314,10 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function ProviderDialog({ initial, onClose, onSaved }: {
+function ProviderDialog({ initial, secretConfigured, onClose, onSaved }: {
   initial: AiProvider | null
+  /** Sem CONNECTIONS_SECRET nao ha como cifrar a chave — bloqueia o salvar. */
+  secretConfigured: boolean
   onClose: () => void
   onSaved: () => void
 }) {
@@ -450,6 +453,17 @@ function ProviderDialog({ initial, onClose, onSaved }: {
             </label>
           </div>
 
+          {!secretConfigured && (
+            <p className="mt-3 flex items-start gap-1.5 rounded-lg bg-warn-soft px-2.5 py-2 text-[11.5px] leading-relaxed text-warn dark:bg-warn/15 dark:text-warn-dark">
+              <KeyRound size={13} className="mt-px shrink-0" />
+              <span>
+                <b>Não é possível salvar ainda.</b> Falta <code className="font-mono">CONNECTIONS_SECRET</code> na
+                stack — é a chave que cifra a chave do provedor em repouso. Defina uma string longa e aleatória
+                (<code className="font-mono">openssl rand -base64 48</code>), faça o redeploy e volte aqui.
+              </span>
+            </p>
+          )}
+
           {err && (
             <p className="mt-3 flex items-start gap-1.5 rounded-lg bg-crit-soft px-2.5 py-2 text-[11.5px] leading-relaxed text-crit dark:bg-crit/15 dark:text-crit-dark">
               <AlertTriangle size={13} className="mt-px shrink-0" /> {err}
@@ -461,7 +475,7 @@ function ProviderDialog({ initial, onClose, onSaved }: {
           <button onClick={onClose} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
             Cancelar
           </button>
-          <button onClick={() => void save()} disabled={saving || !name || !model || (!isEdit && !apiKey)}
+          <button onClick={() => void save()} disabled={saving || !secretConfigured || !name || !model || (!isEdit && !apiKey)}
             className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover disabled:opacity-50">
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} strokeWidth={2.4} />}
             {isEdit ? 'Salvar' : 'Cadastrar'}

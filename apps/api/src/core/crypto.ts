@@ -8,7 +8,14 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:
 function key(): Buffer {
   const secret = process.env.CONNECTIONS_SECRET
   if (!secret) {
-    throw new Error('CONNECTIONS_SECRET ausente — defina no .env/stack para gerenciar conexões com senha.')
+    // Mensagem acionável: quem cai aqui está numa tela tentando salvar um
+    // segredo, e precisa saber o que fazer — não só o que faltou.
+    throw new Error(
+      'CONNECTIONS_SECRET ausente. É a chave que cifra segredos em repouso ' +
+      '(senhas de conexão, chaves de provedor de IA, credenciais de upstream). ' +
+      'Defina uma string longa e aleatória na stack (ex.: openssl rand -base64 48) ' +
+      'e faça o redeploy. Guarde-a: trocá-la torna ilegível tudo que já foi cifrado.',
+    )
   }
   return createHash('sha256').update(secret).digest() // 32 bytes
 }

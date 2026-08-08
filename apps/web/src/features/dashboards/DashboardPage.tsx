@@ -258,6 +258,7 @@ export default function DashboardPage() {
             <div key={w.id} className={previewWidget?.id === w.id ? 'rounded-xl ring-2 ring-accent ring-offset-2 ring-offset-white dark:ring-offset-zinc-950' : undefined}>
               <WidgetCard
                 widget={w}
+                dashboardId={dash.id}
                 metrics={metrics}
                 editable={editMode && editable && !present && previewWidget?.id !== w.id}
                 fill

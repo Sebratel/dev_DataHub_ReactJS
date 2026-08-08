@@ -10,6 +10,8 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import type { AiMessage } from '../ai/provider.js'
 import { activeProvider } from '../ai/providerStore.js'
 import { WIDGET_BUILDER_TOOLS, executeTool } from '../ai/tools.js'
+import { generateInsight } from './insights.js'
+import type { QueryDef } from '@datahub/shared'
 
 export const aiWidgetsRouter = Router()
 
@@ -113,5 +115,25 @@ aiWidgetsRouter.post('/:id/ai/build', requireAuth({ role: 'editor' }), requireDb
     send('error', { error: (e as Error).message })
   } finally {
     res.end()
+  }
+})
+
+// ─── Insight do widget ─────────────────────────────────────────
+// O gráfico mostra O QUE aconteceu; isto diz O QUE ISSO SIGNIFICA. Só LEITURA
+// do conjunto é exigida (requireAuth simples) — quem enxerga os números pode
+// pedir a leitura deles. A permissão de verdade é conferida em generateInsight.
+aiWidgetsRouter.post('/:id/widgets/:widgetId/insight', requireAuth(), requireDb, async (req, res) => {
+  const def = (req.body ?? {}).query as QueryDef | undefined
+  if (!def || typeof def !== 'object') {
+    return res.status(400).json({ error: 'Consulta do widget ausente.' })
+  }
+  try {
+    const insight = await generateInsight(
+      req.user!, req.params.id, req.params.widgetId, def,
+      (req.body ?? {}).force === true,
+    )
+    res.json(insight)
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
   }
 })

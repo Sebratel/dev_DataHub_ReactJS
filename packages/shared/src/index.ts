@@ -368,6 +368,19 @@ export interface GatewayUsage {
   calls_today: number
 }
 
+// ── Insight de widget ─────────────────────────────────────────
+// Leitura de IA sobre UM gráfico: o que os números significam.
+export interface WidgetInsight {
+  headline: string
+  bullets: string[]
+  tone: 'positive' | 'attention' | 'neutral'
+  provider: string
+  model: string
+  tookMs: number
+  /** true = mesmos dados de antes, texto veio do cache (sem custo). */
+  cached: boolean
+}
+
 // ── Provedores de IA ──────────────────────────────────────────
 // Cadastrados na plataforma, não no .env. 'openai' fala o dialeto Chat
 // Completions, então cobre também Azure, Groq, OpenRouter e locais — basta

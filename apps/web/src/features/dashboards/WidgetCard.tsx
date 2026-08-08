@@ -9,9 +9,9 @@ import {
   PieChart, Pie, Cell, ScatterChart, Scatter, FunnelChart, Funnel,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, LabelList, ReferenceLine,
 } from 'recharts'
-import { GripVertical, Loader2, Maximize2, Minimize2, Pencil, Trash2 } from 'lucide-react'
+import { GripVertical, Loader2, Maximize2, Minimize2, Pencil, Trash2, Sparkles, AlertTriangle, TrendingUp, RefreshCw, X } from 'lucide-react'
 import clsx from 'clsx'
-import type { Widget, QueryResult, Metric, ConditionalRule, QueryFilter } from '@datahub/shared'
+import type { Widget, QueryResult, Metric, ConditionalRule, QueryFilter, WidgetInsight } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { palette, vizTokens, formatValue } from '@/lib/viz'
 import { useThemeStore } from '@/store/themeStore'
@@ -34,6 +34,8 @@ function condColor(v: number, rules?: ConditionalRule[]): string | undefined {
 
 interface Props {
   widget: Widget
+  /** Necessário para pedir o insight (a rota e por painel). */
+  dashboardId?: string
   metrics: Metric[]
   editable: boolean
   onDelete: () => void
@@ -46,13 +48,20 @@ interface Props {
   refreshKey?: number
 }
 
-export default function WidgetCard({ widget, metrics, editable, onDelete, onResize, onEdit, dragHandleProps, fill, dashboardPalette, extraFilters, refreshKey }: Props) {
+export default function WidgetCard({ widget, dashboardId, metrics, editable, onDelete, onResize, onEdit, dragHandleProps, fill, dashboardPalette, extraFilters, refreshKey }: Props) {
   const theme = useThemeStore((s) => s.theme)
   const style = widget.style ?? {}
   const base = style.palette?.length ? style.palette : (dashboardPalette?.length ? dashboardPalette : palette(theme))
   const tokens = vizTokens(theme)
   const [result, setResult] = useState<QueryResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Insight da IA. Fica FECHADO por padrao: e uma leitura sob demanda, nao um
+  // enfeite — gerar para todo widget ao abrir o painel gastaria uma chamada ao
+  // provedor por grafico, toda vez.
+  const [insight, setInsight] = useState<WidgetInsight | null>(null)
+  const [insightOpen, setInsightOpen] = useState(false)
+  const [insightLoading, setInsightLoading] = useState(false)
+  const [insightError, setInsightError] = useState<string | null>(null)
 
   const metricDef = 'metric' in (widget.metric ?? {})
     ? metrics.find((m) => m.slug === (widget.metric as { metric: string }).metric)
@@ -254,6 +263,24 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
     return renderAxisChart()
   }
 
+  async function askInsight(force = false) {
+    const def = buildWidgetQuery(widget, extraFilters)
+    if (!def || !dashboardId) return
+    setInsightOpen(true)
+    setInsightLoading(true)
+    setInsightError(null)
+    try {
+      setInsight(await api<WidgetInsight>(
+        `/api/v1/dashboards/${dashboardId}/widgets/${widget.id}/insight`,
+        { method: 'POST', body: JSON.stringify({ query: def, force }) },
+      ))
+    } catch (e) {
+      setInsightError(e instanceof Error ? e.message : 'Falha ao gerar o insight.')
+    } finally {
+      setInsightLoading(false)
+    }
+  }
+
   const heightCls = isText ? 'h-40' : widget.type === 'kpi' ? 'h-24' : (widget.type === 'pie' || widget.type === 'funnel') ? 'h-64' : 'h-56'
 
   return (
@@ -268,6 +295,17 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
           <h3 className="truncate text-sm font-medium">{widget.title || metricDef?.name || 'Widget'}</h3>
           {style.subtitle && <p className="truncate text-[11px] text-zinc-400">{style.subtitle}</p>}
         </div>
+        {!isText && dashboardId && (
+          <button
+            onClick={() => (insightOpen ? setInsightOpen(false) : void askInsight())}
+            disabled={insightLoading || !result}
+            title="Analisar com IA"
+            className={clsx('rounded p-1 transition-colors disabled:opacity-40',
+              insightOpen ? 'text-accent' : 'text-zinc-300 hover:text-accent dark:text-zinc-600')}
+          >
+            {insightLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+          </button>
+        )}
         {editable && (
           <span className="flex gap-1">
             {onEdit && (
@@ -291,6 +329,59 @@ export default function WidgetCard({ widget, metrics, editable, onDelete, onResi
         )}
         {isText ? renderChart() : (result && !error && renderChart())}
       </div>
+
+      {insightOpen && (
+        <div className="mt-2 shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 dark:border-zinc-800 dark:bg-zinc-950/40">
+          <div className="mb-1 flex items-center gap-1.5">
+            {insight?.tone === 'attention'
+              ? <AlertTriangle size={12} className="shrink-0 text-warn dark:text-warn-dark" />
+              : insight?.tone === 'positive'
+                ? <TrendingUp size={12} className="shrink-0 text-ok dark:text-ok-dark" />
+                : <Sparkles size={12} className="shrink-0 text-accent" />}
+            <span className="text-[9.5px] font-semibold uppercase tracking-[0.09em] text-zinc-500">
+              Leitura da IA
+            </span>
+            <span className="ml-auto flex items-center gap-1">
+              {insight && (
+                <button onClick={() => void askInsight(true)} disabled={insightLoading}
+                  title="Gerar de novo" className="rounded p-0.5 text-zinc-400 hover:text-zinc-900 disabled:opacity-40 dark:hover:text-zinc-100">
+                  <RefreshCw size={11} />
+                </button>
+              )}
+              <button onClick={() => setInsightOpen(false)} title="Fechar"
+                className="rounded p-0.5 text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100">
+                <X size={11} />
+              </button>
+            </span>
+          </div>
+
+          {insightLoading && (
+            <p className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+              <Loader2 size={11} className="animate-spin" /> Lendo os números…
+            </p>
+          )}
+          {insightError && <p className="text-[11px] leading-relaxed text-crit dark:text-crit-dark">{insightError}</p>}
+
+          {insight && !insightLoading && (
+            <>
+              <p className="text-[12px] font-medium leading-relaxed">{insight.headline}</p>
+              {insight.bullets.length > 0 && (
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  {insight.bullets.map((b, i) => (
+                    <li key={i} className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">{b}</li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-1.5 text-[9.5px] text-zinc-400">
+                {insight.cached
+                  ? 'mesmos dados de antes — texto reaproveitado'
+                  : `${insight.provider} · ${insight.model} · ${insight.tookMs} ms`}
+                {' · '}gerado por IA, confira antes de decidir
+              </p>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }
