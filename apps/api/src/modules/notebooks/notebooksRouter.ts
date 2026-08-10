@@ -58,6 +58,7 @@ interface NotebookRow {
   id: string
   slug: string
   owner_email: string
+  visibility: 'private' | 'tenant'
   cells: unknown
   [k: string]: unknown
 }
@@ -213,6 +214,114 @@ notebooksRouter.delete('/:slug', ...authed, async (req, res) => {
   }
   await db.query('delete from notebooks where id = $1', [nb.id])
   await audit(req, 'notebooks.delete', { type: 'notebook', id: req.params.slug })
+  res.json({ ok: true })
+})
+
+// ── Compartilhamento ─────────────────────────────────────────────────────
+// Mesmo modelo dos painéis: visibilidade (privado/time) + concessões por e-mail
+// ou por time. Diferença de tabela: notebook_grants tem chave COMPOSTA em vez
+// de id, então a remoção é por e-mail/time — evita uma migration só para ganhar
+// uma coluna de id.
+//
+// Só o DONO (ou admin) compartilha. Quem recebeu acesso de edição pode editar o
+// notebook, mas não redistribuí-lo — senão o dono perde o controle de quem vê.
+async function isOwner(user: AccessUser, nb: NotebookRow): Promise<boolean> {
+  return nb.owner_email === user.email || user.roles.includes('admin')
+}
+
+notebooksRouter.get('/:slug/shares', ...authed, async (req, res) => {
+  const nb = await findReadable(req.user!, req.params.slug)
+  if (!nb) return res.status(404).json({ error: 'Notebook não encontrado.' })
+
+  const grants = (await db.query(
+    `select g.grantee_email, g.team_id, g.can_edit, tm.name as team_name
+       from notebook_grants g left join teams tm on tm.id = g.team_id
+      where g.notebook_id = $1 order by g.created_at`,
+    [nb.id],
+  )).rows.map((g) => ({
+    teamId: g.team_id ? String(g.team_id) : null,
+    teamName: (g.team_name as string | null) ?? null,
+    email: (g.grantee_email as string | null) ?? null,
+    canEdit: g.can_edit === true,
+  }))
+
+  const teams = (await db.query(
+    `select id, name from teams where tenant_id = (select id from tenants where slug = $1) order by name`,
+    [req.user!.tenant],
+  )).rows.map((t) => ({ id: String(t.id), name: String(t.name) }))
+
+  res.json({
+    visibility: nb.visibility,
+    ownerEmail: nb.owner_email,
+    canShare: await isOwner(req.user!, nb),
+    teams,
+    grants,
+  })
+})
+
+notebooksRouter.post('/:slug/shares', ...authed, async (req, res) => {
+  const nb = await findReadable(req.user!, req.params.slug)
+  if (!nb) return res.status(404).json({ error: 'Notebook não encontrado.' })
+  if (!(await isOwner(req.user!, nb))) {
+    return res.status(403).json({ error: 'Só o dono (ou um administrador) pode compartilhar.' })
+  }
+
+  const { teamId, email } = req.body ?? {}
+  const canEdit = (req.body ?? {}).canEdit === true
+  const hasTeam = !!teamId
+  const hasEmail = !!email
+  if (hasTeam === hasEmail) {
+    return res.status(400).json({ error: 'Informe exatamente um: um time OU um e-mail.' })
+  }
+
+  try {
+    if (hasTeam) {
+      const ok = (await db.query(
+        'select 1 from teams where id = $1 and tenant_id = (select id from tenants where slug = $2)',
+        [teamId, req.user!.tenant],
+      )).rows[0]
+      if (!ok) return res.status(400).json({ error: 'Time não encontrado neste tenant.' })
+      await db.query(
+        `insert into notebook_grants (notebook_id, team_id, can_edit) values ($1, $2, $3)
+         on conflict (notebook_id, team_id) where team_id is not null
+         do update set can_edit = excluded.can_edit`,
+        [nb.id, String(teamId), canEdit],
+      )
+    } else {
+      const addr = String(email).toLowerCase().trim()
+      if (!/^[^@\s]+@[^@\s]+$/.test(addr)) return res.status(400).json({ error: 'Informe um e-mail válido.' })
+      if (addr === nb.owner_email) return res.status(400).json({ error: 'O dono já tem acesso total.' })
+      await db.query(
+        `insert into notebook_grants (notebook_id, grantee_email, can_edit) values ($1, $2, $3)
+         on conflict (notebook_id, grantee_email) where grantee_email is not null
+         do update set can_edit = excluded.can_edit`,
+        [nb.id, addr, canEdit],
+      )
+    }
+    await audit(req, 'notebooks.share', { type: 'notebook', id: req.params.slug },
+      { teamId: teamId ?? null, email: email ?? null, canEdit })
+    res.status(201).json({ ok: true })
+  } catch (e) { fail(res, e) }
+})
+
+// Remoção por e-mail OU time (a tabela não tem id próprio).
+notebooksRouter.delete('/:slug/shares', ...authed, async (req, res) => {
+  const nb = await findReadable(req.user!, req.params.slug)
+  if (!nb) return res.status(404).json({ error: 'Notebook não encontrado.' })
+  if (!(await isOwner(req.user!, nb))) {
+    return res.status(403).json({ error: 'Só o dono (ou um administrador) pode alterar o compartilhamento.' })
+  }
+  const email = typeof req.query.email === 'string' ? req.query.email.toLowerCase() : null
+  const teamId = typeof req.query.teamId === 'string' ? req.query.teamId : null
+  if (!email && !teamId) return res.status(400).json({ error: 'Informe o e-mail ou o time a remover.' })
+
+  await db.query(
+    email
+      ? `delete from notebook_grants where notebook_id = $1 and grantee_email = $2`
+      : `delete from notebook_grants where notebook_id = $1 and team_id = $2`,
+    [nb.id, email ?? teamId],
+  )
+  await audit(req, 'notebooks.unshare', { type: 'notebook', id: req.params.slug }, { email, teamId })
   res.json({ ok: true })
 })
 

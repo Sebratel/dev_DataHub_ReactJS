@@ -14,7 +14,7 @@ import { Link, useParams } from 'react-router-dom'
 import {
   Play, Plus, Trash2, ArrowLeft, Loader2, AlertTriangle, Database,
   Boxes, ChevronDown, ChevronRight, Type, Table2, Check, Lock, Users, Download,
-  Braces, Square,
+  Braces, Square, Share2,
 } from 'lucide-react'
 import type {
   Notebook, NotebookCell, NotebookCatalogEntry, NotebookRunResult,
@@ -23,6 +23,7 @@ import { api, ApiError } from '@/lib/api'
 import { Card, CardHead } from '@/components/ui/Card'
 import { Pill } from '@/components/ui/Pill'
 import { DataGrid, Th, Tr, Td } from '@/components/ui/DataGrid'
+import ShareNotebookDialog from './ShareNotebookDialog'
 import SqlEditor from './SqlEditor'
 import Markdown from './markdown'
 import { usePython, type PythonResult } from './usePython'
@@ -55,6 +56,7 @@ export default function NotebookPage() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [editingMd, setEditingMd] = useState<Record<string, boolean>>({})
   const [materializing, setMaterializing] = useState<string | null>(null)
+  const [sharing, setSharing] = useState(false)
 
   const python = usePython()
 
@@ -242,8 +244,25 @@ export default function NotebookPage() {
               {nb.visibility === 'tenant' ? 'Time' : 'Privado'}
             </button>
           )}
+          {/* Aberto a quem só lê também: saber quem mais enxerga esta análise
+              é parte de decidir o que escrever nela. */}
+          <button
+            onClick={() => setSharing(true)}
+            title="Gerenciar acessos"
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[11.5px] font-medium text-zinc-600 transition-colors hover:border-zinc-300 dark:border-zinc-700 dark:text-zinc-300"
+          >
+            <Share2 size={12} strokeWidth={1.6} /> Acessos
+          </button>
         </div>
       </div>
+
+      {sharing && (
+        <ShareNotebookDialog
+          slug={slug}
+          onClose={() => setSharing(false)}
+          onVisibility={(v) => setNb((cur) => (cur ? { ...cur, visibility: v } : cur))}
+        />
+      )}
 
       <div className="mt-3 grid items-start gap-2.5 xl:grid-cols-[minmax(0,1fr)_268px]">
         {/* Células */}
