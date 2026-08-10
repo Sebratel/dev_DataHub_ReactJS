@@ -24,6 +24,10 @@ import { DataGrid, Th, Tr, Td, EntityCell } from '@/components/ui/DataGrid'
 
 // Modelos sugeridos por provedor. É lista de atalho, não trava: o campo aceita
 // qualquer texto, porque catálogo de modelo muda mais rápido que deploy.
+// ATENÇÃO ao mexer aqui: `models` são EXEMPLOS de formato de id, não um
+// catálogo. Catálogo de modelo muda mais rápido que deploy — o gemini-2.5-pro
+// desta lista saiu de circulação para chaves novas pouco depois de escrita. A
+// fonte da verdade é "Buscar modelos da minha chave", que pergunta ao provedor.
 const KINDS: {
   key: AiProviderKind
   label: string
@@ -374,10 +378,27 @@ function ProviderDialog({ initial, secretConfigured, onClose, onSaved }: {
   function pickKind(k: AiProviderKind) {
     setKind(k)
     setModels(null) // a lista era da chave/provedor anterior
-    // Troca o modelo para o primeiro sugerido do novo provedor — manter um
-    // modelo da Anthropic selecionado ao mudar para Gemini só geraria erro.
-    if (!isEdit || !initial || initial.kind !== k) setModel(kindOf(k).models[0])
+    // LIMPA o modelo em vez de chutar um da lista fixa. Manter um modelo da
+    // Anthropic ao mudar para Gemini geraria erro; escolher um sugerido gera
+    // outro, mais sutil, quando a sugestão já saiu de circulação.
+    if (!isEdit || !initial || initial.kind !== k) setModel('')
   }
+
+  // Busca sozinho: ao abrir um provedor que já tem chave, e ~1s depois de a
+  // pessoa terminar de colar uma. Listar modelos não custa token e valida a
+  // chave de imediato — é o diagnóstico mais barato que existe aqui.
+  useEffect(() => {
+    if (!initial?.hasKey || apiKey) return
+    void fetchModels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial?.id])
+
+  useEffect(() => {
+    if (!apiKey.trim()) return
+    const t = setTimeout(() => { void fetchModels() }, 900)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKey, kind])
 
   async function save() {
     setSaving(true)
@@ -444,7 +465,7 @@ function ProviderDialog({ initial, secretConfigured, onClose, onSaved }: {
               label="Modelo"
               hint={models
                 ? `${models.length} modelo(s) que esta chave alcança.`
-                : 'Aceita qualquer identificador. Busque a lista real para não errar o nome.'}
+                : 'A lista abaixo é só exemplo de formato e envelhece. Busque os modelos da chave para ver o que existe hoje.'}
             >
               {models && models.length > 0 ? (
                 <select className={INPUT} value={model} onChange={(e) => setModel(e.target.value)}>
