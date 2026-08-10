@@ -5,7 +5,7 @@
 // momento de montar o cliente e nunca sai numa resposta da API.
 import { db, isDbAvailable } from '../../db/pool.js'
 import { encryptSecret, decryptSecret } from '../../core/crypto.js'
-import { buildProvider, envProviderConfig, type AIProvider, type ProviderConfig, type ProviderKind } from './provider.js'
+import { buildProvider, envProviderConfig, type AIProvider, type ProviderConfig, type ProviderKind, type ModelOption } from './provider.js'
 
 export interface AiProviderRow {
   id: string
@@ -227,6 +227,28 @@ export async function setDefault(tenantSlug: string, id: string): Promise<void> 
   )
   if (!r.rowCount) throw new Error('Provedor não encontrado.')
   await reloadAiProviders()
+}
+
+// Modelos que a chave alcança. Aceita um provedor JÁ SALVO (usa a chave
+// guardada) ou uma chave ainda não salva, digitada no formulário — senão a
+// pessoa teria de salvar às cegas antes de poder escolher o modelo.
+export async function listProviderModels(
+  tenantSlug: string, opts: { id?: string; kind?: ProviderKind; apiKey?: string; baseUrl?: string | null },
+): Promise<ModelOption[]> {
+  let cfg: ProviderConfig
+  if (opts.apiKey) {
+    if (!opts.kind) throw new Error('Informe o provedor.')
+    cfg = { kind: opts.kind, model: '', apiKey: opts.apiKey, baseUrl: opts.baseUrl ?? null }
+  } else {
+    const entry = (cache.get(tenantSlug) ?? []).find((p) => p.id === opts.id)
+    if (!entry) throw new Error('Provedor não encontrado.')
+    if (!entry.apiKeyEnc) throw new Error('Este provedor não tem chave cadastrada.')
+    cfg = toConfig(entry)
+    // O formulário pode ter mudado provedor/URL antes de listar.
+    if (opts.kind) cfg.kind = opts.kind
+    if (opts.baseUrl !== undefined) cfg.baseUrl = opts.baseUrl
+  }
+  return buildProvider(cfg).listModels()
 }
 
 // ── Teste de conexão ─────────────────────────────────────────────────────

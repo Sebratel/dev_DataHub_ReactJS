@@ -49,6 +49,8 @@ export interface AIProvider {
   chat(system: string, messages: AiMessage[], tools: AiToolDef[]): Promise<AiTurn>
   toolResultMessage(results: { toolCallId: string; content: string; isError?: boolean }[]): AiMessage
   isConfigured(): boolean
+  /** Modelos que ESTA chave alcança — evita escolher no escuro e digitar errado. */
+  listModels(): Promise<ModelOption[]>
 }
 
 export type ProviderKind = 'anthropic' | 'openai' | 'gemini'
@@ -97,6 +99,30 @@ async function postJson(
     clearTimeout(timer)
   }
 }
+
+async function getJson(
+  url: string, headers: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), 30_000)
+  try {
+    const res = await fetch(url, { headers, signal: abort.signal })
+    const text = await res.text()
+    let json: Record<string, unknown> = {}
+    try { json = JSON.parse(text) as Record<string, unknown> } catch { /* corpo não-JSON */ }
+    if (!res.ok) {
+      const err = json.error as { message?: string } | string | undefined
+      const detail = typeof err === 'string' ? err : err?.message
+      throw new Error(detail || text.slice(0, 300) || `HTTP ${res.status}`)
+    }
+    return json
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Modelo disponível para a chave cadastrada.
+export interface ModelOption { id: string; label: string }
 
 // ── Anthropic ────────────────────────────────────────────────────────────
 class AnthropicProvider implements AIProvider {
@@ -150,6 +176,18 @@ class AnthropicProvider implements AIProvider {
       .filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
       .map((b) => ({ id: b.id, name: b.name, input: b.input as Record<string, unknown> }))
     return { text, toolCalls, raw: response.content }
+  }
+
+  async listModels(): Promise<ModelOption[]> {
+    const base = (this.cfg.baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '')
+    const json = await getJson(`${base}/v1/models?limit=100`, {
+      'x-api-key': this.cfg.apiKey,
+      'anthropic-version': '2023-06-01',
+    })
+    const data = (json.data as { id?: string; display_name?: string }[] | undefined) ?? []
+    return data
+      .filter((m) => m.id)
+      .map((m) => ({ id: String(m.id), label: m.display_name || String(m.id) }))
   }
 
   toolResultMessage(results: { toolCallId: string; content: string; isError?: boolean }[]): AiMessage {
@@ -240,6 +278,18 @@ class OpenAiProvider implements AIProvider {
     }
   }
 
+  async listModels(): Promise<ModelOption[]> {
+    const base = (this.cfg.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+    const json = await getJson(`${base}/models`, { authorization: `Bearer ${this.cfg.apiKey}` })
+    const data = (json.data as { id?: string }[] | undefined) ?? []
+    // A lista traz embeddings, TTS, moderação… nada disso conversa. Filtra o
+    // que serve para chat; se o filtro zerar (provedor compatível com nomes
+    // próprios), devolve tudo em vez de uma lista vazia e inútil.
+    const chatty = data.filter((m) => m.id && /gpt|^o\d|chat|llama|mistral|qwen|claude|gemini|deepseek/i.test(m.id))
+    const use = chatty.length ? chatty : data.filter((m) => m.id)
+    return use.map((m) => ({ id: String(m.id), label: String(m.id) })).sort((a, b) => a.id.localeCompare(b.id))
+  }
+
   toolResultMessage(results: { toolCallId: string; content: string; isError?: boolean }[]): AiMessage {
     return {
       role: 'user',
@@ -328,6 +378,23 @@ class GeminiProvider implements AIProvider {
     }
 
     return { text, toolCalls, raw: { role: 'model', parts } }
+  }
+
+  async listModels(): Promise<ModelOption[]> {
+    const base = (this.cfg.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '')
+    const json = await getJson(`${base}/models?pageSize=200`, { 'x-goog-api-key': this.cfg.apiKey })
+    const models = (json.models as {
+      name?: string; displayName?: string; supportedGenerationMethods?: string[]
+    }[] | undefined) ?? []
+    return models
+      // Só os que respondem generateContent — a lista traz embeddings e
+      // modelos de imagem, que quebrariam na primeira pergunta.
+      .filter((m) => m.name && (m.supportedGenerationMethods ?? []).includes('generateContent'))
+      // A API devolve "models/gemini-2.5-pro"; o campo do formulário quer o id.
+      .map((m) => {
+        const id = String(m.name).replace(/^models\//, '')
+        return { id, label: m.displayName || id }
+      })
   }
 
   toolResultMessage(results: { toolCallId: string; content: string; isError?: boolean }[]): AiMessage {

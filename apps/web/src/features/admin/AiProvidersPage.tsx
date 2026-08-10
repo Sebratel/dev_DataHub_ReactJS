@@ -12,9 +12,9 @@
 //     a IA é a pior hora possível.
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Sparkles, Plus, Check, X, Loader2, Trash2, Pencil, Star, Zap, AlertTriangle, KeyRound,
+  Sparkles, Plus, Check, X, Loader2, Trash2, Pencil, Star, Zap, AlertTriangle, KeyRound, ListFilter,
 } from 'lucide-react'
-import type { AiProvider, AiProviderKind, AiProviderTestResult } from '@datahub/shared'
+import type { AiProvider, AiProviderKind, AiProviderTestResult, AiModelOption } from '@datahub/shared'
 import { api, ApiError } from '@/lib/api'
 import { useConfirm } from '@/components/Dialogs'
 import { Page, PageHeader, EmptyState, ErrorBanner, TableSkeleton, PrimaryButton } from '@/components/ui/Page'
@@ -332,8 +332,38 @@ function ProviderDialog({ initial, secretConfigured, onClose, onSaved }: {
   const [enabled, setEnabled] = useState(initial?.enabled ?? true)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // Modelos REAIS da chave. Enquanto vazio, o campo usa a lista de sugestões.
+  const [models, setModels] = useState<AiModelOption[] | null>(null)
+  const [loadingModels, setLoadingModels] = useState(false)
 
   const meta = kindOf(kind)
+
+  // Buscar exige uma chave: a salva (ao editar) ou a digitada agora.
+  const canListModels = !!apiKey.trim() || !!initial?.hasKey
+
+  async function fetchModels() {
+    setLoadingModels(true)
+    setErr(null)
+    try {
+      const r = await api<{ models: AiModelOption[] }>('/api/v1/ai/providers/models', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...(initial ? { id: initial.id } : {}),
+          kind,
+          ...(apiKey ? { apiKey } : {}),
+          baseUrl: baseUrl.trim() || null,
+        }),
+      })
+      setModels(r.models)
+      // Se o modelo atual não está na lista, assume o primeiro — evita salvar
+      // um id que a chave não alcança (foi o que gerou o erro do Gemini).
+      if (r.models.length && !r.models.some((m) => m.id === model)) setModel(r.models[0].id)
+    } catch (e) {
+      setErr((e as ApiError).message)
+    } finally {
+      setLoadingModels(false)
+    }
+  }
 
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -343,6 +373,7 @@ function ProviderDialog({ initial, secretConfigured, onClose, onSaved }: {
 
   function pickKind(k: AiProviderKind) {
     setKind(k)
+    setModels(null) // a lista era da chave/provedor anterior
     // Troca o modelo para o primeiro sugerido do novo provedor — manter um
     // modelo da Anthropic selecionado ao mudar para Gemini só geraria erro.
     if (!isEdit || !initial || initial.kind !== k) setModel(kindOf(k).models[0])
@@ -409,11 +440,41 @@ function ProviderDialog({ initial, secretConfigured, onClose, onSaved }: {
               <input className={INPUT} value={name} onChange={(e) => setName(e.target.value)}
                 placeholder="Claude de produção" />
             </Field>
-            <Field label="Modelo" hint="Aceita qualquer identificador — a lista é só atalho.">
-              <input className={INPUT} value={model} onChange={(e) => setModel(e.target.value)} list="modelos" />
-              <datalist id="modelos">
-                {meta.models.map((m) => <option key={m} value={m} />)}
-              </datalist>
+            <Field
+              label="Modelo"
+              hint={models
+                ? `${models.length} modelo(s) que esta chave alcança.`
+                : 'Aceita qualquer identificador. Busque a lista real para não errar o nome.'}
+            >
+              {models && models.length > 0 ? (
+                <select className={INPUT} value={model} onChange={(e) => setModel(e.target.value)}>
+                  {/* O modelo salvo pode não estar na lista (chave trocada) —
+                      mantém a opção para não perder o valor em silêncio. */}
+                  {!models.some((m) => m.id === model) && model && (
+                    <option value={model}>{model} (não listado)</option>
+                  )}
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label === m.id ? m.id : `${m.label} — ${m.id}`}</option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input className={INPUT} value={model} onChange={(e) => setModel(e.target.value)} list="modelos" />
+                  <datalist id="modelos">
+                    {meta.models.map((m) => <option key={m} value={m} />)}
+                  </datalist>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => void fetchModels()}
+                disabled={loadingModels || !canListModels}
+                title={canListModels ? undefined : 'Informe a chave primeiro'}
+                className="mt-1 flex items-center gap-1 self-start text-[10.5px] font-medium text-info hover:underline disabled:opacity-50 disabled:no-underline dark:text-info-dark"
+              >
+                {loadingModels ? <Loader2 size={10} className="animate-spin" /> : <ListFilter size={10} />}
+                {models ? 'Atualizar lista' : 'Buscar modelos da minha chave'}
+              </button>
             </Field>
           </div>
 

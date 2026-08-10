@@ -409,6 +409,8 @@ export interface AiProvider {
   hasKey: boolean
 }
 
+export interface AiModelOption { id: string; label: string }
+
 export interface AiProviderTestResult {
   ok: boolean
   ms: number

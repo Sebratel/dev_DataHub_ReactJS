@@ -7,8 +7,9 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import { hasSecret } from '../../core/crypto.js'
 import {
   listCached, createProvider, updateProvider, deleteProvider, setDefault, testProvider,
-  type ProviderInput,
+  listProviderModels, type ProviderInput,
 } from './providerStore.js'
+import type { ProviderKind } from './provider.js'
 
 export const aiProvidersRouter = Router()
 
@@ -26,6 +27,15 @@ aiProvidersRouter.get('/', ...adminOnly, (req, res) => {
     // de a pessoa preencher o formulário e receber um erro ao salvar.
     secretConfigured: hasSecret(),
   })
+})
+
+// Modelos disponíveis para a chave. POST porque a chave pode vir no corpo
+// (provedor ainda não salvo) — chave em query string acabaria em log de acesso.
+aiProvidersRouter.post('/models', ...adminOnly, async (req, res) => {
+  const b = (req.body ?? {}) as { id?: string; kind?: ProviderKind; apiKey?: string; baseUrl?: string | null }
+  try {
+    res.json({ models: await listProviderModels(req.user!.tenant, b) })
+  } catch (e) { fail(res, e) }
 })
 
 aiProvidersRouter.post('/', ...adminOnly, async (req, res) => {
