@@ -81,6 +81,9 @@ export default function AiProvidersPage() {
   const [editing, setEditing] = useState<AiProvider | 'new' | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, AiProviderTestResult>>({})
+  // Último provedor testado — o detalhe do resultado aparece num painel de
+  // largura inteira, não espremido numa célula.
+  const [lastTested, setLastTested] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setError(null)
@@ -99,6 +102,7 @@ export default function AiProvidersPage() {
 
   async function test(p: AiProvider) {
     setTesting(p.id)
+    setLastTested(p.id)
     try {
       const r = await api<AiProviderTestResult>(`/api/v1/ai/providers/${p.id}/test`, { method: 'POST' })
       setTestResult((s) => ({ ...s, [p.id]: r }))
@@ -165,18 +169,27 @@ export default function AiProvidersPage() {
           <Card>
             <CardHead icon={Zap} title="Respondendo agora" />
             {active ? (
-              <div className="flex flex-wrap items-center gap-3 px-3 py-3">
-                <div className="min-w-0">
-                  <p className="text-[13px] font-medium">{active.name}</p>
-                  <p className="font-mono text-[11px] text-zinc-500">
-                    {kindOf(active.kind).label} · {active.model}
+              <div className="px-3 py-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium">{active.name}</p>
+                    <p className="font-mono text-[11px] text-zinc-500">
+                      {kindOf(active.kind).label} · {active.model}
+                    </p>
+                  </div>
+                  <div className="ml-auto flex items-center gap-1.5">
+                    {active.lastTestOk === true && <Pill tone="ok" dot>testado há {timeAgo(active.lastTestAt)}</Pill>}
+                    {active.lastTestOk === false && <Pill tone="crit">último teste falhou</Pill>}
+                    {active.lastTestOk === null && <Pill tone="warn">nunca testado</Pill>}
+                  </div>
+                </div>
+                {/* O motivo vem do banco, então sobrevive ao recarregar — antes
+                    só existia no hover da pílula e sumia a cada F5. */}
+                {active.lastTestOk === false && active.lastTestError && (
+                  <p className="mt-1.5 whitespace-pre-wrap break-words rounded-lg bg-crit-soft px-2.5 py-2 text-[11.5px] leading-relaxed text-crit dark:bg-crit/15 dark:text-crit-dark">
+                    {active.lastTestError}
                   </p>
-                </div>
-                <div className="ml-auto flex items-center gap-1.5">
-                  {active.lastTestOk === true && <Pill tone="ok" dot>testado há {timeAgo(active.lastTestAt)}</Pill>}
-                  {active.lastTestOk === false && <Pill tone="crit">último teste falhou</Pill>}
-                  {active.lastTestOk === null && <Pill tone="warn">nunca testado</Pill>}
-                </div>
+                )}
               </div>
             ) : (
               <p className="px-3 py-4 text-center text-[12px] text-zinc-500">
@@ -210,9 +223,7 @@ export default function AiProvidersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((p) => {
-                    const r = testResult[p.id]
-                    return (
+                  {items.map((p) => (
                       <Tr key={p.id}>
                         <Td>
                           <EntityCell name={p.name} slug={p.model}>
@@ -265,19 +276,46 @@ export default function AiProvidersPage() {
                               <Trash2 size={13} />
                             </button>
                           </span>
-                          {r && (
-                            <span className={`mt-0.5 block text-right text-[10px] ${r.ok ? 'text-ok dark:text-ok-dark' : 'text-crit dark:text-crit-dark'}`}>
-                              {r.ok ? `respondeu: ${r.sample || 'ok'}` : r.error}
-                            </span>
-                          )}
+
                         </Td>
                       </Tr>
-                    )
-                  })}
+                  ))}
                 </tbody>
               </DataGrid>
             )}
           </Card>
+
+          {(() => {
+            const p = items.find((x) => x.id === lastTested)
+            const r = lastTested ? testResult[lastTested] : null
+            if (!p || !r) return null
+            return (
+              <div className={`flex items-start gap-2.5 rounded-2xl border p-3 ${
+                r.ok
+                  ? 'border-ok/40 bg-ok-soft dark:bg-ok/10'
+                  : 'border-crit/40 bg-crit-soft dark:bg-crit/10'}`}>
+                {r.ok
+                  ? <Check size={15} className="mt-px shrink-0 text-ok dark:text-ok-dark" />
+                  : <AlertTriangle size={15} className="mt-px shrink-0 text-crit dark:text-crit-dark" />}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[12px] font-medium">
+                    {p.name} · {p.model} — {r.ok ? `respondeu em ${r.ms} ms` : 'o teste falhou'}
+                  </p>
+                  {/* Quebra de linha de propósito: a mensagem do provedor é o
+                      diagnóstico, e cortá-la esconde justamente o que resolve. */}
+                  <p className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                    {r.ok ? (r.sample || 'ok') : r.error}
+                  </p>
+                  {!r.ok && /no longer available|not found|does not exist|não encontrado/i.test(r.error ?? '') && (
+                    <button onClick={() => setEditing(p)}
+                      className="mt-1 text-[11.5px] font-medium text-info hover:underline dark:text-info-dark">
+                      Escolher outro modelo — a lista da sua chave carrega sozinha
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
 
           <div className="flex items-start gap-2.5 rounded-2xl border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900">
             <KeyRound size={14} strokeWidth={1.5} className="mt-px shrink-0 text-zinc-400" />
