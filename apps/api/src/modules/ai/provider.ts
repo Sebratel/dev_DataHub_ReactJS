@@ -312,6 +312,39 @@ interface GeminiPart {
   functionResponse?: { name: string; response: Record<string, unknown> }
 }
 
+// O Gemini NÃO aceita JSON Schema completo: `parameters` é um subconjunto do
+// OpenAPI com lista FECHADA de campos, e qualquer chave desconhecida derruba a
+// requisição inteira com "Unknown name ... Cannot find field" — não é ignorada.
+// Nossas ferramentas mandam `additionalProperties: false`, que Anthropic e
+// OpenAI aceitam e o Gemini recusa. Por isso a lista é de PERMISSÃO e não de
+// bloqueio: uma chave nova em algum schema nosso passa a ser removida sozinha,
+// em vez de quebrar a conversa em produção.
+const GEMINI_SCHEMA_KEYS = new Set([
+  'type', 'format', 'description', 'nullable', 'enum', 'items', 'properties',
+  'required', 'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern',
+  'minimum', 'maximum', 'minProperties', 'maxProperties', 'anyOf',
+  'propertyOrdering', 'example', 'title', 'default',
+])
+
+export function toGeminiSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(toGeminiSchema)
+  if (!node || typeof node !== 'object') return node
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+    if (!GEMINI_SCHEMA_KEYS.has(k)) continue
+    if (k === 'properties' && v && typeof v === 'object') {
+      out[k] = Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([pk, pv]) => [pk, toGeminiSchema(pv)]),
+      )
+    } else if (k === 'items' || k === 'anyOf') {
+      out[k] = toGeminiSchema(v)
+    } else {
+      out[k] = v
+    }
+  }
+  return out
+}
+
 class GeminiProvider implements AIProvider {
   readonly name = 'gemini'
   readonly model: string
@@ -356,7 +389,7 @@ class GeminiProvider implements AIProvider {
           functionDeclarations: tools.map((t) => ({
             name: t.name,
             description: t.description,
-            parameters: t.inputSchema,
+            parameters: toGeminiSchema(t.inputSchema),
           })),
         }],
       } : {}),

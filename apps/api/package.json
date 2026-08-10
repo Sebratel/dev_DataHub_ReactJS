@@ -10,7 +10,8 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "ml:smoke": "tsx src/dev/mlSmoke.ts",
-    "routes:check": "tsx src/dev/routesSmoke.ts"
+    "routes:check": "tsx src/dev/routesSmoke.ts",
+    "ai:tools-check": "tsx src/dev/aiToolsCheck.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
