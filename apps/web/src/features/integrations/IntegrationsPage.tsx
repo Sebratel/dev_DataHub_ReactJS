@@ -5,16 +5,23 @@
 // liga/desliga se editam a qualquer momento. E revogar ≠ excluir —
 //   revogar  para de funcionar, fica na lista, preserva o histórico de uso;
 //   excluir  some de vez, para o token criado por engano ou a integração morta.
-// Antes só existia o primeiro (disfarçado de "excluir"), e por isso a lista
-// nunca parava de crescer.
+//
+// A lista é TABELA, não pilha de cartões: um token se compara com os outros por
+// escopo, uso e validade, e isso só se lê em colunas alinhadas. Em cartão o
+// nome ficava à esquerda, os ícones a mil pixels de distância na direita, e o
+// meio vazio.
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Plug, Plus, Copy, Check, Trash2, Loader2, Pencil, Ban, RotateCcw, X, AlertTriangle,
+  Plug, Plus, Copy, Check, Trash2, Loader2, Pencil, Ban, RotateCcw, X, Link2,
 } from 'lucide-react'
 import type { DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { useConfirm } from '@/components/Dialogs'
+import { Page, PageHeader, PrimaryButton, ErrorBanner, EmptyState } from '@/components/ui/Page'
+import { Card, CardHead } from '@/components/ui/Card'
+import { DataGrid, Th, Tr, Td, EntityCell } from '@/components/ui/DataGrid'
+import { Pill } from '@/components/ui/Pill'
 
 interface Credential {
   id: string; name: string; dataset_slugs: string[]; write_slugs?: string[]
@@ -168,35 +175,24 @@ export default function IntegrationsPage() {
   const restUrl = `${baseUrl}/api/public/v1/datasets/${exampleSlug}/rows?token=SEU_TOKEN`
   const csvUrl = `${restUrl}&format=csv`
 
-  const inputCls = 'w-full rounded-lg border border-zinc-200 px-3 py-2 text-[12px] dark:border-zinc-700 dark:bg-zinc-950'
+  const inputCls = 'w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[12px] dark:border-zinc-700 dark:bg-zinc-950'
+  const iconBtn = 'rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-40 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
 
   return (
-    <div className="mx-auto min-w-0 max-w-[1600px]">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-[17px] font-semibold tracking-tight">Integrações</h1>
-          <p className="mt-0.5 text-[12px] text-zinc-500">
-            Tokens de leitura para Power BI, Google Sheets, Excel e API REST.
-          </p>
-        </div>
-        {canEdit && (
-          <button onClick={openCreate}
-            className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover active:scale-95">
-            <Plus size={14} strokeWidth={2} /> Novo token
-          </button>
-        )}
-      </div>
+    <Page>
+      <PageHeader
+        icon={Plug}
+        title="Integrações"
+        subtitle="Tokens de leitura para Power BI, Google Sheets, Excel e API REST."
+      >
+        {canEdit && <PrimaryButton icon={Plus} onClick={openCreate}>Novo token</PrimaryButton>}
+      </PageHeader>
 
-      {error && (
-        <div className="mt-3 flex items-start gap-2.5 rounded-2xl border border-crit/40 bg-crit-soft p-3 dark:bg-crit/10">
-          <AlertTriangle size={15} className="mt-px shrink-0 text-crit dark:text-crit-dark" />
-          <p className="min-w-0 text-[12px] text-crit dark:text-crit-dark">{error}</p>
-        </div>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       {/* Token recém-criado — única exibição */}
       {newToken && (
-        <div className="mt-3 rounded-2xl border border-warn/50 bg-warn-soft p-3 dark:bg-warn/10">
+        <div className="mb-2.5 rounded-2xl border border-warn/50 bg-warn-soft p-3 dark:bg-warn/10">
           <p className="text-[12px] font-semibold text-warn dark:text-warn-dark">
             Copie o token agora — ele não será mostrado novamente.
           </p>
@@ -218,170 +214,204 @@ export default function IntegrationsPage() {
 
       {/* Formulário — o mesmo para criar e para editar */}
       {form && (
-        <div className="mt-3 grid gap-3 rounded-2xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="flex items-center justify-between">
-            <p className="text-[13px] font-semibold">
-              {form === 'new' ? 'Novo token' : `Editar "${form.name}"`}
-            </p>
+        <Card className="mb-2.5">
+          <CardHead icon={form === 'new' ? Plus : Pencil}
+            title={form === 'new' ? 'Novo token' : `Editar "${form.name}"`}
+            sub={form === 'new' ? undefined : 'o segredo não muda — só o entorno'}>
             <button onClick={() => setForm(null)} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200">
-              <X size={16} />
+              <X size={15} />
             </button>
-          </div>
+          </CardHead>
 
-          {form !== 'new' && (
-            <p className="rounded-lg border border-zinc-200 px-3 py-2 text-[11px] text-zinc-500 dark:border-zinc-700">
-              O segredo não muda e não pode ser reexibido — só guardamos o hash. Aqui você ajusta nome, escopo e validade.
-            </p>
-          )}
-
-          <label className="block">
-            <span className="mb-1 block text-[11px] text-zinc-500">Nome (ex.: Power BI — Diretoria)</span>
-            <input value={fName} onChange={(e) => setFName(e.target.value)} className={inputCls} />
-          </label>
-
-          <div>
-            <span className="mb-1.5 block text-[11px] text-zinc-500">
-              Conjuntos permitidos <span className="text-zinc-400">(nenhum marcado = todos)</span>
-            </span>
-            <div className="flex flex-wrap gap-1.5">
-              {slugOptions.length === 0 && (
-                <p className="text-[11px] text-zinc-400">Nenhum conjunto sincronizado ainda.</p>
-              )}
-              {slugOptions.map((d) => (
-                <label key={d.slug}
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] ${fSlugs.includes(d.slug)
-                    ? 'border-accent bg-accent-soft dark:bg-zinc-800'
-                    : 'border-zinc-200 dark:border-zinc-700'}`}>
-                  <input type="checkbox" checked={fSlugs.includes(d.slug)}
-                    onChange={(e) => setFSlugs((prev) => e.target.checked
-                      ? [...prev, d.slug] : prev.filter((s) => s !== d.slug))} />
-                  {d.name}
-                </label>
-              ))}
+          <div className="grid gap-3 p-3">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_200px]">
+              <label className="block min-w-0">
+                <span className="mb-1 block text-[11px] text-zinc-500">Nome (ex.: Power BI — Diretoria)</span>
+                <input value={fName} onChange={(e) => setFName(e.target.value)} className={inputCls} autoFocus />
+              </label>
+              <label className="block min-w-0">
+                <span className="mb-1 block text-[11px] text-zinc-500">
+                  Validade{form !== 'new' && form.expires_at ? ` · hoje até ${fmtDate(form.expires_at)}` : ''}
+                </span>
+                <select value={fDays} onChange={(e) => setFDays(Number(e.target.value))}
+                  className={`${inputCls} bg-white dark:bg-zinc-950`}>
+                  {DAY_OPTS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                </select>
+              </label>
             </div>
-          </div>
 
-          {isAdmin && writeProducts.length > 0 && (
             <div>
               <span className="mb-1.5 block text-[11px] text-zinc-500">
-                APIs de <strong>escrita</strong> permitidas <span className="text-zinc-400">(só admin concede — nenhuma = só leitura)</span>
+                Conjuntos permitidos <span className="text-zinc-400">(nenhum marcado = todos)</span>
               </span>
               <div className="flex flex-wrap gap-1.5">
-                {writeProducts.map((p) => (
-                  <label key={p.slug}
-                    className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] ${fWriteSlugs.includes(p.slug)
-                      ? 'border-crit bg-crit-soft dark:bg-crit/10'
-                      : 'border-zinc-200 dark:border-zinc-700'}`}>
-                    <input type="checkbox" checked={fWriteSlugs.includes(p.slug)}
-                      onChange={(e) => setFWriteSlugs((prev) => e.target.checked
-                        ? [...prev, p.slug] : prev.filter((s) => s !== p.slug))} />
-                    {p.name}
+                {slugOptions.length === 0 && (
+                  <p className="text-[11px] text-zinc-400">Nenhum conjunto sincronizado ainda.</p>
+                )}
+                {slugOptions.map((d) => (
+                  <label key={d.slug}
+                    className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] transition-colors ${fSlugs.includes(d.slug)
+                      ? 'border-accent bg-accent-soft dark:bg-zinc-800'
+                      : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-700'}`}>
+                    <input type="checkbox" className="h-3 w-3 accent-accent" checked={fSlugs.includes(d.slug)}
+                      onChange={(e) => setFSlugs((prev) => e.target.checked
+                        ? [...prev, d.slug] : prev.filter((s) => s !== d.slug))} />
+                    {d.name}
                   </label>
                 ))}
               </div>
             </div>
-          )}
 
-          <label className="block max-w-[240px]">
-            <span className="mb-1 block text-[11px] text-zinc-500">
-              Validade{form !== 'new' && form.expires_at ? ` (hoje: até ${fmtDate(form.expires_at)})` : ''}
-            </span>
-            <select value={fDays} onChange={(e) => setFDays(Number(e.target.value))}
-              className={`${inputCls} bg-white dark:bg-zinc-950`}>
-              {DAY_OPTS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
-            </select>
-            {form !== 'new' && fDays > 0 && (
-              <span className="mt-1 block text-[10.5px] text-zinc-400">Conta a partir de hoje.</span>
-            )}
-          </label>
-
-          <div className="flex items-center gap-2">
-            <button onClick={() => void save()} disabled={saving || !fName.trim()}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-1.5 text-[12px] font-semibold text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
-              {saving && <Loader2 size={13} className="animate-spin" />}
-              {form === 'new' ? 'Gerar token' : 'Salvar'}
-            </button>
-            <button onClick={() => setForm(null)} className="text-[12px] text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
-              Cancelar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Tokens existentes */}
-      <div className="mt-3 grid gap-1.5">
-        {credentials === null && !error && <p className="text-[12px] text-zinc-500">Carregando…</p>}
-        {credentials?.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-zinc-300 p-8 text-center text-[12px] text-zinc-500 dark:border-zinc-700">
-            Nenhum token ainda.{canEdit ? ' Gere o primeiro para conectar o Power BI ou o Sheets.' : ''}
-          </div>
-        )}
-        {credentials?.map((c) => {
-          const mine = c.owner_email === user?.email || isAdmin
-          const expired = !!c.expires_at && new Date(c.expires_at).getTime() < Date.now()
-          const busy = busyId === c.id
-          return (
-            <div key={c.id}
-              className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-              <Plug size={15} strokeWidth={1.6}
-                className={c.revoked || expired ? 'shrink-0 text-zinc-300 dark:text-zinc-600' : 'shrink-0 text-accent'} />
-              <div className="min-w-0 flex-1">
-                <p className={`text-[13px] font-medium ${c.revoked ? 'text-zinc-400 line-through' : ''}`}>{c.name}</p>
-                <p className="mt-0.5 truncate text-[11px] text-zinc-500">
-                  {c.dataset_slugs.length ? c.dataset_slugs.join(', ') : 'todos os conjuntos'}
-                  {!!c.write_slugs?.length && ` · escrita: ${c.write_slugs.join(', ')}`}
-                  {c.last_used_at ? ` · último uso ${fmtDate(c.last_used_at)}` : ' · nunca usado'}
-                  {c.expires_at && ` · ${expired ? 'expirou' : 'expira'} em ${fmtDate(c.expires_at)}`}
-                  {c.revoked && ' · revogado'}
-                </p>
-              </div>
-              {canEdit && (
-                <div className="flex shrink-0 items-center gap-0.5">
-                  {busy && <Loader2 size={13} className="mr-1 animate-spin text-zinc-400" />}
-                  <button onClick={() => openEdit(c)} title="Editar nome, conjuntos e validade"
-                    className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
-                    <Pencil size={14} strokeWidth={1.6} />
-                  </button>
-                  <button onClick={() => void setRevoked(c, !c.revoked)} disabled={busy}
-                    title={c.revoked ? 'Reativar token' : 'Revogar (para de funcionar, mas fica no histórico)'}
-                    className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
-                    {c.revoked ? <RotateCcw size={14} strokeWidth={1.6} /> : <Ban size={14} strokeWidth={1.6} />}
-                  </button>
-                  {/* Excluir é definitivo: só o dono ou um admin. Os demais revogam. */}
-                  {mine && (
-                    <button onClick={() => void remove(c)} disabled={busy} title="Excluir definitivamente"
-                      className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-50 dark:hover:bg-crit/10 dark:hover:text-crit-dark">
-                      <Trash2 size={14} strokeWidth={1.6} />
-                    </button>
-                  )}
+            {isAdmin && writeProducts.length > 0 && (
+              <div>
+                <span className="mb-1.5 block text-[11px] text-zinc-500">
+                  APIs de <strong>escrita</strong> <span className="text-zinc-400">(só admin concede — nenhuma = só leitura)</span>
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {writeProducts.map((p) => (
+                    <label key={p.slug}
+                      className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] transition-colors ${fWriteSlugs.includes(p.slug)
+                        ? 'border-crit bg-crit-soft dark:bg-crit/10'
+                        : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-700'}`}>
+                      <input type="checkbox" className="h-3 w-3 accent-crit" checked={fWriteSlugs.includes(p.slug)}
+                        onChange={(e) => setFWriteSlugs((prev) => e.target.checked
+                          ? [...prev, p.slug] : prev.filter((s) => s !== p.slug))} />
+                      {p.name}
+                    </label>
+                  ))}
                 </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+              </div>
+            )}
 
-      {/* Exemplos de uso */}
-      <h2 className="mt-5 text-[10.5px] font-medium uppercase tracking-wider text-zinc-400">Como conectar</h2>
-      <div className="mt-2 grid gap-1.5">
-        {[
-          { title: 'API REST (JSON paginado)', hint: 'Suporta ?limit=&offset= — ideal para scripts e apps.', url: restUrl, key: 'rest' },
-          { title: 'Google Sheets / Excel (CSV)', hint: 'No Sheets: =IMPORTDATA("url"). No Excel: Dados → Da Web.', url: csvUrl, key: 'csv' },
-          { title: 'Power BI (Web connector)', hint: 'Obter Dados → Web → cole a URL JSON. O Power BI expande as linhas.', url: restUrl, key: 'pbi' },
-        ].map((ex) => (
-          <div key={ex.key} className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-            <p className="text-[12px] font-medium">{ex.title}</p>
-            <p className="mt-0.5 text-[11px] text-zinc-500">{ex.hint}</p>
-            <div className="mt-2 flex items-center gap-2">
-              <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-lg bg-zinc-50 px-3 py-2 font-mono text-[11px] dark:bg-zinc-950">{ex.url}</code>
-              <button onClick={() => copy(ex.url, ex.key)}
-                className="shrink-0 rounded-lg border border-zinc-200 p-2 text-zinc-500 hover:text-accent dark:border-zinc-700">
-                {copied === ex.key ? <Check size={14} /> : <Copy size={14} />}
+            <div className="flex items-center gap-2">
+              <PrimaryButton onClick={() => void save()} disabled={saving || !fName.trim()}>
+                {saving && <Loader2 size={13} className="animate-spin" />}
+                {form === 'new' ? 'Gerar token' : 'Salvar'}
+              </PrimaryButton>
+              <button onClick={() => setForm(null)} className="text-[12px] text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+                Cancelar
               </button>
             </div>
           </div>
-        ))}
-      </div>
-    </div>
+        </Card>
+      )}
+
+      {/* Tokens existentes */}
+      <Card>
+        <CardHead icon={Plug} title="Tokens" sub={credentials ? String(credentials.length) : undefined} />
+        {credentials === null && !error ? (
+          <p className="px-3 py-8 text-center text-[12px] text-zinc-500">Carregando…</p>
+        ) : credentials?.length === 0 ? (
+          <EmptyState
+            icon={Plug}
+            message={`Nenhum token ainda.${canEdit ? ' Gere o primeiro para conectar o Power BI ou o Sheets.' : ''}`}
+            action={canEdit ? (
+              <button onClick={openCreate} className="text-[12px] font-medium text-info hover:underline dark:text-info-dark">
+                Criar o primeiro
+              </button>
+            ) : undefined}
+          />
+        ) : (
+          <DataGrid>
+            <thead>
+              <tr>
+                <Th>Token</Th>
+                <Th>Conjuntos</Th>
+                <Th className="w-[112px]">Último uso</Th>
+                <Th className="w-[112px]">Validade</Th>
+                <Th className="w-[100px]">Situação</Th>
+                <Th right className="w-[92px]"><span className="sr-only">Ações</span></Th>
+              </tr>
+            </thead>
+            <tbody>
+              {credentials?.map((c) => {
+                const mine = c.owner_email === user?.email || isAdmin
+                const expired = !!c.expires_at && new Date(c.expires_at).getTime() < Date.now()
+                const busy = busyId === c.id
+                const escopo = c.dataset_slugs.length ? c.dataset_slugs.join(', ') : 'todos os conjuntos'
+                return (
+                  <Tr key={c.id}>
+                    <Td>
+                      <EntityCell
+                        name={c.name}
+                        slug={c.owner_email === user?.email ? 'você' : c.owner_email}
+                      >
+                        <Plug size={13} strokeWidth={1.5}
+                          className={c.revoked || expired ? 'shrink-0 text-zinc-300 dark:text-zinc-600' : 'shrink-0 text-accent'} />
+                      </EntityCell>
+                    </Td>
+                    <Td className="max-w-[280px]">
+                      <span className="block truncate" title={escopo}>{escopo}</span>
+                      {!!c.write_slugs?.length && (
+                        <span className="block truncate text-[10px] text-crit dark:text-crit-dark"
+                          title={c.write_slugs.join(', ')}>
+                          escrita: {c.write_slugs.join(', ')}
+                        </span>
+                      )}
+                    </Td>
+                    <Td muted>{c.last_used_at ? fmtDate(c.last_used_at) : 'nunca'}</Td>
+                    <Td muted>{c.expires_at ? fmtDate(c.expires_at) : '—'}</Td>
+                    <Td>
+                      {c.revoked
+                        ? <Pill>revogado</Pill>
+                        : expired
+                          ? <Pill tone="warn">expirado</Pill>
+                          : <Pill tone="ok">ativo</Pill>}
+                    </Td>
+                    <Td right>
+                      {canEdit && (
+                        <span className="flex items-center justify-end gap-0.5">
+                          {busy && <Loader2 size={12} className="animate-spin text-zinc-400" />}
+                          <button onClick={() => openEdit(c)} className={iconBtn}
+                            title="Editar nome, conjuntos e validade">
+                            <Pencil size={13} strokeWidth={1.6} />
+                          </button>
+                          <button onClick={() => void setRevoked(c, !c.revoked)} disabled={busy} className={iconBtn}
+                            title={c.revoked ? 'Reativar token' : 'Revogar — para de funcionar, mas fica no histórico'}>
+                            {c.revoked ? <RotateCcw size={13} strokeWidth={1.6} /> : <Ban size={13} strokeWidth={1.6} />}
+                          </button>
+                          {/* Excluir é definitivo: só o dono ou um admin. Os demais revogam. */}
+                          {mine && (
+                            <button onClick={() => void remove(c)} disabled={busy} title="Excluir definitivamente"
+                              className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-40 dark:hover:bg-crit/10 dark:hover:text-crit-dark">
+                              <Trash2 size={13} strokeWidth={1.6} />
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </Td>
+                  </Tr>
+                )
+              })}
+            </tbody>
+          </DataGrid>
+        )}
+      </Card>
+
+      {/* Exemplos de uso */}
+      <Card className="mt-2.5">
+        <CardHead icon={Link2} title="Como conectar" sub="troque SEU_TOKEN pelo token gerado" />
+        <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+          {[
+            { title: 'API REST (JSON paginado)', hint: 'Suporta ?limit= e ?offset= — ideal para scripts e apps.', url: restUrl, key: 'rest' },
+            { title: 'Google Sheets / Excel (CSV)', hint: 'No Sheets: =IMPORTDATA("url"). No Excel: Dados → Da Web.', url: csvUrl, key: 'csv' },
+            { title: 'Power BI (Web connector)', hint: 'Obter Dados → Web → cole a URL JSON. O Power BI expande as linhas.', url: restUrl, key: 'pbi' },
+          ].map((ex) => (
+            <div key={ex.key} className="grid items-center gap-2 p-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+              <div className="min-w-0">
+                <p className="text-[12px] font-medium">{ex.title}</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">{ex.hint}</p>
+              </div>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-lg bg-zinc-50 px-2.5 py-1.5 font-mono text-[11px] dark:bg-zinc-950">{ex.url}</code>
+                <button onClick={() => copy(ex.url, ex.key)} className={iconBtn} title="Copiar URL">
+                  {copied === ex.key ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </Page>
   )
 }
