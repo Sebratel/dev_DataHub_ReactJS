@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Integrações: tokens de acesso + API pública de leitura.
-//   Autenticado:  GET/POST/DELETE /api/v1/credentials   (gestão de tokens)
+//   Autenticado:  GET/POST/PATCH/DELETE /api/v1/credentials  (gestão de tokens)
 //   Público:      GET /public/v1/datasets/:slug/rows?token=…&format=csv|json
 // O token é exibido UMA única vez na criação; só o hash é guardado.
 // A API pública roda como NÃO-admin: sensíveis mascarados, ocultos fora.
@@ -30,7 +30,7 @@ export const credentialsRouter = Router()
 
 credentialsRouter.get('/', requireAuth(), requireDb, async (req, res) => {
   const rows = (await db.query(
-    `select c.id, c.name, c.dataset_slugs, c.owner_email, c.revoked, c.last_used_at, c.expires_at, c.created_at
+    `select c.id, c.name, c.dataset_slugs, c.write_slugs, c.owner_email, c.revoked, c.last_used_at, c.expires_at, c.created_at
        from api_credentials c join tenants t on t.id = c.tenant_id
       where t.slug = $1 order by c.created_at desc`,
     [req.user!.tenant],
@@ -58,13 +58,93 @@ credentialsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (r
   res.status(201).json({ id: row.id, token })
 })
 
-credentialsRouter.delete('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
-  const row = (await db.query(
-    `update api_credentials set revoked = true where id = $1 returning name`,
-    [req.params.id],
+// Edição de um token já criado. O SEGREDO em si é imutável — só o hash existe
+// aqui, e nem nós conseguimos recuperá-lo. O que se edita é o entorno: nome,
+// escopo de leitura, escopo de escrita, validade e o liga/desliga.
+//
+// Revogar e excluir são coisas DIFERENTES e ambas precisam existir:
+//   revogar  → o token para de funcionar mas continua na lista, com o histórico
+//              de uso preservado. É o certo para um token que vazou.
+//   excluir  → some de vez. É o certo para um token criado por engano, ou para
+//              limpar a tela depois que a integração morreu.
+// Antes só existia "revogar" (disfarçado de DELETE), e por isso a lista só
+// crescia.
+credentialsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
+  const cur = (await db.query(
+    `select c.* from api_credentials c join tenants t on t.id = c.tenant_id
+      where c.id = $1 and t.slug = $2`,
+    [req.params.id, req.user!.tenant],
   )).rows[0]
-  if (!row) return res.status(404).json({ error: 'Token não encontrado.' })
-  await audit(req, 'credentials.revoke', { type: 'credential', id: req.params.id }, { name: row.name })
+  if (!cur) return res.status(404).json({ error: 'Token não encontrado.' })
+
+  const { name, datasetSlugs, writeSlugs, expiresInDays, revoked } = req.body ?? {}
+  if (name !== undefined && !String(name).trim()) {
+    return res.status(400).json({ error: 'O nome não pode ficar vazio.' })
+  }
+  // Escopo de ESCRITA só admin mexe — mesma regra da criação. Um editor que
+  // edita o token não pode se autoconceder escrita por esta porta.
+  if (writeSlugs !== undefined && !req.user!.roles.includes('admin')) {
+    return res.status(403).json({ error: 'Só um administrador altera as APIs de escrita de um token.' })
+  }
+
+  // expiresInDays: ausente = não mexe; null = sem validade; N = N dias a partir
+  // de agora (renovar a validade é o gesto esperado ao editar isto).
+  let expiresAt: string | null | undefined
+  if (expiresInDays !== undefined) {
+    expiresAt = Number(expiresInDays) > 0
+      ? new Date(Date.now() + Number(expiresInDays) * 86_400_000).toISOString()
+      : null
+  }
+
+  try {
+    const row = (await db.query(
+      `update api_credentials set
+         name          = coalesce($2::text, name),
+         dataset_slugs = coalesce($3::text[], dataset_slugs),
+         write_slugs   = coalesce($4::text[], write_slugs),
+         expires_at    = case when $5 then $6::timestamptz else expires_at end,
+         revoked       = coalesce($7::boolean, revoked)
+       where id = $1
+       returning id, name, dataset_slugs, write_slugs, owner_email, revoked,
+                 last_used_at, expires_at, created_at`,
+      [
+        req.params.id,
+        name !== undefined ? String(name).trim() : null,
+        Array.isArray(datasetSlugs) ? datasetSlugs : null,
+        Array.isArray(writeSlugs) ? writeSlugs : null,
+        expiresAt !== undefined, expiresAt ?? null,
+        typeof revoked === 'boolean' ? revoked : null,
+      ],
+    )).rows[0]
+    await audit(req, 'credentials.update', { type: 'credential', id: req.params.id },
+      { name: row.name, revoked: row.revoked })
+    res.json({ credential: row })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+// Exclusão DEFINITIVA. Restrita ao dono ou admin: revogar é reversível e
+// qualquer editor pode fazer, mas apagar o token de outra pessoa não.
+//
+// As FKs já estavam preparadas para isto: a contagem de quota some junto
+// (on delete cascade) e a telemetria sobrevive perdendo só a atribuição
+// (on delete set null) — o nome do consumidor continua gravado em cada
+// chamada, então os painéis de uso histórico não mudam.
+credentialsRouter.delete('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
+  const cur = (await db.query(
+    `select c.id, c.name, c.owner_email from api_credentials c join tenants t on t.id = c.tenant_id
+      where c.id = $1 and t.slug = $2`,
+    [req.params.id, req.user!.tenant],
+  )).rows[0]
+  if (!cur) return res.status(404).json({ error: 'Token não encontrado.' })
+  if (cur.owner_email !== req.user!.email && !req.user!.roles.includes('admin')) {
+    return res.status(403).json({
+      error: 'Só quem criou o token (ou um administrador) pode excluí-lo. Você pode revogá-lo.',
+    })
+  }
+  await db.query('delete from api_credentials where id = $1', [req.params.id])
+  await audit(req, 'credentials.delete', { type: 'credential', id: req.params.id }, { name: cur.name })
   res.json({ ok: true })
 })
 

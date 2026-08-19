@@ -10,16 +10,18 @@
 //  3. "Materializar" é o botão que diferencia isto de um cliente SQL: leva a
 //     exploração para dentro da governança (linhagem, permissão, atualização).
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import {
   Play, Plus, Trash2, ArrowLeft, Loader2, AlertTriangle, Database,
   Boxes, ChevronDown, ChevronRight, Type, Table2, Check, Lock, Users, Download,
-  Braces, Square, Share2,
+  Braces, Square, Share2, Trash,
 } from 'lucide-react'
 import type {
   Notebook, NotebookCell, NotebookCatalogEntry, NotebookRunResult,
 } from '@datahub/shared'
 import { api, ApiError } from '@/lib/api'
+import { useConfirm } from '@/components/Dialogs'
+import { useAuthStore } from '@/store/authStore'
 import { Card, CardHead } from '@/components/ui/Card'
 import { Pill } from '@/components/ui/Pill'
 import { DataGrid, Th, Tr, Td } from '@/components/ui/DataGrid'
@@ -47,6 +49,10 @@ const PY_PLACEHOLDER = [
 
 export default function NotebookPage() {
   const { slug = '' } = useParams()
+  const navigate = useNavigate()
+  const confirm = useConfirm()
+  const myEmail = useAuthStore((s) => s.user)?.email
+  const amAdmin = !!useAuthStore((s) => s.user)?.roles?.includes('admin')
   const [nb, setNb] = useState<Notebook | null>(null)
   const [canEdit, setCanEdit] = useState(false)
   const [catalog, setCatalog] = useState<NotebookCatalogEntry[]>([])
@@ -57,6 +63,7 @@ export default function NotebookPage() {
   const [editingMd, setEditingMd] = useState<Record<string, boolean>>({})
   const [materializing, setMaterializing] = useState<string | null>(null)
   const [sharing, setSharing] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const python = usePython()
 
@@ -216,6 +223,25 @@ export default function NotebookPage() {
     )
   }
 
+  async function removeNotebook() {
+    if (!nb) return
+    const ok = await confirm({
+      title: 'Excluir notebook',
+      message: `"${nb.name}" e todas as suas células serão apagados. Conjuntos já materializados a partir dele continuam existindo. Não dá para desfazer.`,
+      confirmLabel: 'Excluir',
+      danger: true,
+    })
+    if (!ok) return
+    setDeleting(true)
+    try {
+      await api(`/api/v1/notebooks/${slug}`, { method: 'DELETE' })
+      navigate('/notebooks')
+    } catch (e) {
+      setError((e as ApiError).message)
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="mx-auto min-w-0 max-w-[1600px]">
       <Link to="/notebooks" className="inline-flex items-center gap-1 text-[11.5px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
@@ -244,6 +270,20 @@ export default function NotebookPage() {
               {nb.visibility === 'tenant' ? 'Time' : 'Privado'}
             </button>
           )}
+          {/* Excluir mora aqui TAMBÉM, não só na lista: quem acabou de decidir
+              que a análise não presta está com ela aberta na frente, não
+              procurando a linha certa numa tabela. */}
+          {nb.owner_email === myEmail || amAdmin ? (
+            <button
+              onClick={() => void removeNotebook()}
+              disabled={deleting}
+              title="Excluir notebook"
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[11.5px] font-medium text-zinc-600 transition-colors hover:border-crit/50 hover:text-crit disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-crit-dark"
+            >
+              {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash size={12} strokeWidth={1.6} />}
+              Excluir
+            </button>
+          ) : null}
           {/* Aberto a quem só lê também: saber quem mais enxerga esta análise
               é parte de decidir o que escrever nela. */}
           <button
