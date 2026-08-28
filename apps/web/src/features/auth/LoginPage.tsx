@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion, AnimatePresence } from 'framer-motion'
 import { AlertCircle, Info, Loader2, Lock, Shield } from 'lucide-react'
 import type { SessionUser } from '@datahub/shared'
-import { loginWithGoogle } from '@/store/googleAuth'
+import { login as loginProvider } from '@/store/authProvider'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/lib/api'
 
@@ -65,7 +65,7 @@ export default function LoginPage() {
     setBusy(true)
     setError(null)
     try {
-      await loginWithGoogle()
+      await loginProvider()
       // /auth/me provisiona o usuário no tenant e devolve papéis.
       const { user } = await api<{ user: SessionUser }>('/api/v1/auth/me')
       setUser(user)

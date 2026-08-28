@@ -7,6 +7,7 @@ import clsx from 'clsx'
 import type { Widget, WidgetType, QueryFilter, Aggregation } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
+import { currentToken } from '@/store/authProvider'
 import { useConfirm } from '@/components/Dialogs'
 import WidgetCard from '@/features/dashboards/WidgetCard'
 
@@ -110,7 +111,9 @@ export default function AiPage() {
     setMessages((m) => [...m, { id: pendingId, role: 'assistant', content: '', progress: [] }])
 
     try {
-      const token = useAuthStore.getState().accessToken
+      // Passa pela fachada: no modo Firebase o token é renovado sob demanda,
+      // então ler o store direto pegaria um valor vencido.
+      const token = await currentToken()
       const res = await fetch(`/api/v1/ai/conversations/${convId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

@@ -15,6 +15,14 @@ export const config = {
   adminEmails: (process.env.ADMIN_EMAILS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 
+  auth: {
+    // Projeto Firebase que emite os ID tokens. Definido = a API passa a aceitar
+    // login por Firebase (assinatura conferida localmente, sem chamar o Google
+    // a cada request). Vazio = só o caminho antigo, com access_token do Google.
+    // Os dois convivem: a migração pode ser feita sem janela de indisponibilidade.
+    firebaseProjectId: (process.env.FIREBASE_PROJECT_ID || '').trim(),
+  },
+
   // Banco de METADADOS do hub (catálogo, usuários, dashboards…).
   datahubDb: {
     host: process.env.DATAHUB_DB_HOST || 'localhost',

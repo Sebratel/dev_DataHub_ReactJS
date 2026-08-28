@@ -13,6 +13,11 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
+        VITE_ALLOWED_DOMAIN: ${ALLOWED_DOMAIN:-sebratel.com.br}
     image: datahub-web:latest
     pull_policy: build
     container_name: datahub-web
@@ -51,6 +56,10 @@ services:
     environment:
       API_PORT: 8790
       ALLOWED_DOMAIN: ${ALLOWED_DOMAIN:-sebratel.com.br}
+      # Mesmo projeto do bundle do web. Definido = a API aceita ID token do
+      # Firebase, conferindo a assinatura localmente (sem chamar o Google a
+      # cada login). Vazio = só o caminho antigo.
+      FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       CONNECTIONS_SECRET: ${CONNECTIONS_SECRET:-}
       DATAHUB_DB_HOST: datahub-db

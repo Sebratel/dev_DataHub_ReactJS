@@ -19,6 +19,21 @@ COPY apps/web ./apps/web
 ARG VITE_GOOGLE_CLIENT_ID=""
 ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 
+# Firebase Authentication. Definidas = o login passa a usar o Firebase (SDK no
+# bundle, nada baixado de accounts.google.com em tempo de execucao). Vazias = o
+# app segue no Google Identity Services, como antes. Nao sao segredo: valores de
+# projeto Firebase sao publicos por design e ficam visiveis no bundle.
+ARG VITE_FIREBASE_API_KEY=""
+ARG VITE_FIREBASE_AUTH_DOMAIN=""
+ARG VITE_FIREBASE_PROJECT_ID=""
+ARG VITE_FIREBASE_APP_ID=""
+ARG VITE_ALLOWED_DOMAIN=""
+ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY
+ENV VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN
+ENV VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID
+ENV VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID
+ENV VITE_ALLOWED_DOMAIN=$VITE_ALLOWED_DOMAIN
+
 RUN npm run build --workspace apps/web
 
 # ─────────────────────────────────────────────────────────────

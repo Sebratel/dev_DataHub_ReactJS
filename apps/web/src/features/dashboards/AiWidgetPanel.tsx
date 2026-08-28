@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { Sparkles, X, Loader2, Plus, Check, GitMerge } from 'lucide-react'
 import type { QueryFilter, Widget, WidgetType, WidgetStyle, DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
-import { useAuthStore } from '@/store/authStore'
+import { currentToken } from '@/store/authProvider'
 import WidgetCard from './WidgetCard'
 
 interface WidgetProposal {
@@ -78,7 +78,9 @@ export default function AiWidgetPanel({ dashboardId, tabId, onClose, onAdded }: 
     setSummary('')
     setAdded(new Set())
     try {
-      const token = useAuthStore.getState().accessToken
+      // Passa pela fachada: no modo Firebase o token é renovado sob demanda,
+      // então ler o store direto pegaria um valor vencido.
+      const token = await currentToken()
       const res = await fetch(`/api/v1/dashboards/${dashboardId}/ai/build`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

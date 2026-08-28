@@ -1,11 +1,25 @@
-// Auth: Bearer <google_access_token> validado no userinfo do Google, com cache
-// curto (padrão validado no churn_mvp). No primeiro login o usuário é criado no
-// tenant padrão; e-mails em ADMIN_EMAILS ganham papel admin, demais viewer.
-// Se o banco de metadados estiver fora, autentica só pelo domínio (degradado).
+// Auth: aceita DOIS formatos de credencial no header Bearer, escolhidos pelo
+// formato do próprio token:
+//
+//   ID token do Firebase (JWT, três partes)  → assinatura conferida AQUI, com a
+//     chave pública do Google em cache. Não fala com a rede a cada login: é o
+//     caminho que continua funcionando quando a saída para o Google está
+//     bloqueada, e é o padrão que o HUBBI já usa.
+//
+//   access_token do Google (opaco)  → validado no userinfo do Google. Caminho
+//     original, mantido para não exigir janela de indisponibilidade na virada:
+//     enquanto alguém estiver com uma aba antiga aberta, o token dela continua
+//     valendo.
+//
+// Nos dois casos, o e-mail precisa ser do domínio permitido. No primeiro login o
+// usuário é criado no tenant padrão; e-mails em ADMIN_EMAILS ganham papel admin,
+// demais viewer. Se o banco de metadados estiver fora, autentica só pelo domínio
+// (degradado).
 import type { Request, Response, NextFunction } from 'express'
 import type { SessionUser } from '@datahub/shared'
 import { config } from '../../core/config.js'
 import { db, isDbAvailable } from '../../db/pool.js'
+import { verifyFirebaseIdToken } from './firebaseToken.js'
 
 const tokenCache = new Map<string, { user: SessionUser; exp: number }>()
 const TOKEN_TTL_MS = 5 * 60 * 1000
@@ -55,17 +69,52 @@ async function provisionUser(p: { email: string; name: string; picture?: string 
   return { email: p.email, name: p.name, picture: p.picture, roles, tenant: tenant.slug }
 }
 
+// Um ID token do Firebase é um JWT: três partes separadas por ponto, a
+// primeira decodificando para um cabeçalho JSON com "alg". O access_token do
+// Google é opaco e não tem essa forma. É o bastante para escolher o caminho —
+// e a validação de cada um é estrita, então um palpite errado só resulta em
+// 401, nunca em acesso indevido.
+function looksLikeJwt(token: string): boolean {
+  const parts = token.split('.')
+  if (parts.length !== 3) return false
+  try {
+    const h = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')) as { alg?: unknown }
+    return typeof h?.alg === 'string'
+  } catch { return false }
+}
+
 async function getUserFromToken(token: string): Promise<SessionUser | null> {
   const cached = tokenCache.get(token)
   if (cached && cached.exp > Date.now()) return cached.user
 
-  const p = await fetchGoogleProfile(token)
-  if (!p?.email || p.email_verified === false) return null
-  const email = p.email.toLowerCase()
+  let email: string
+  let name: string | undefined
+  let picture: string | undefined
+
+  if (looksLikeJwt(token)) {
+    const claims = await verifyFirebaseIdToken(token)
+    if (!claims || !claims.emailVerified) return null
+    email = claims.email
+    name = claims.name
+    picture = claims.picture
+  } else {
+    const p = await fetchGoogleProfile(token)
+    if (!p?.email || p.email_verified === false) return null
+    email = p.email.toLowerCase()
+    name = p.name
+    picture = p.picture
+  }
+
   if (!email.endsWith('@' + config.allowedDomain)) return null
 
-  const user = await provisionUser({ email, name: p.name || email, picture: p.picture })
+  const user = await provisionUser({ email, name: name || email, picture })
+  // O cache é por TOKEN, e o do Firebase dura 1h: guardar por 5 min mantém a
+  // propagação de mudança de papel igual à do caminho antigo.
   tokenCache.set(token, { user, exp: Date.now() + TOKEN_TTL_MS })
+  if (tokenCache.size > 1000) {
+    const now = Date.now()
+    for (const [k, v] of tokenCache) if (v.exp <= now) tokenCache.delete(k)
+  }
   return user
 }
 
