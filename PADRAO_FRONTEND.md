@@ -1,4 +1,4 @@
-# Padrão de Frontend — Nexus Vital
+# Padrão de Frontend
 
 > **Para a IA que vai aplicar este padrão:** este documento é a **fonte da verdade visual**. Ele foi extraído de um sistema já em produção (Nexus Store / PDV) e descreve exatamente as classes, cores, espaçamentos e estruturas a reproduzir. Copie os blocos de código como base, trocando apenas o conteúdo (textos, ícones, campos) — **não reinvente** paleta, raio de borda, tipografia ou hierarquia de layout.
 >
