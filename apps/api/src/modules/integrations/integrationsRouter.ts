@@ -224,8 +224,10 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
 
   try {
     // Sempre como NÃO-admin: sensíveis mascarados, ocultos inexistentes.
+    // maxLimit igual ao teto anunciado: sem isto o compilador cortava em 10 mil
+    // e a API entregava menos do que dizia aceitar, sem avisar.
     const compiled = compileQuery({ dataset: String(ds.slug), limit, offset }, fields, {
-      admin: false, glob: parquetGlob(dir),
+      admin: false, glob: parquetGlob(dir), maxLimit: 100_000,
     })
     const { columns, rows } = await duckQuery(compiled.sql, compiled.params)
     res.locals.rows = rows.length
@@ -364,7 +366,7 @@ publicRouter.get('/p/:slug', async (req, res) => {
   try {
     const filters = Array.isArray(p.read_filters) ? p.read_filters : []
     const compiled = compileQuery({ dataset: String(ds.slug), filters, limit, offset }, fields, {
-      admin: false, glob: parquetGlob(dir),
+      admin: false, glob: parquetGlob(dir), maxLimit: 100_000,
     })
     const { columns, rows } = await duckQuery(compiled.sql, compiled.params)
     res.locals.rows = rows.length

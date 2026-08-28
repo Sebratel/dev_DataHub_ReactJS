@@ -189,24 +189,23 @@ export default function ExplorerPage() {
     }
   }
 
+  // O export não tem teto de linhas, então o arquivo NÃO pode passar pela
+  // memória da aba: `await r.blob()` juntava tudo antes de salvar e matava o
+  // navegador num CSV grande. Em vez disso pedimos um ticket de uso único e
+  // navegamos até ele — aí o download é nativo e vai direto para o disco,
+  // com barra de progresso do navegador e sem consumo de memória da página.
   async function doExport(format: 'csv' | 'xlsx') {
     setExporting(format)
     setError(null)
     try {
-      const token = useAuthStore.getState().accessToken
-      const r = await fetch(`/api/v1/datasets/${slug}/export?format=${format}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...queryDef, limit: undefined, offset: undefined }),
-      })
-      if (!r.ok) throw new Error(((await r.json()) as { error?: string }).error || `Erro ${r.status}`)
-      const blob = await r.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${slug}.${format}`
-      a.click()
-      URL.revokeObjectURL(url)
+      // O ticket valida permissão e sincronização AGORA: assim um erro vira
+      // mensagem na tela, em vez de um download que falha sozinho depois.
+      const { ticket } = await api<{ ticket: string }>(
+        `/api/v1/datasets/${slug}/export/ticket?format=${format}`,
+        { method: 'POST', body: JSON.stringify({ ...queryDef, limit: undefined, offset: undefined }) },
+      )
+      window.location.href =
+        `/api/v1/datasets/${slug}/export?ticket=${encodeURIComponent(ticket)}`
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha no export.')
     } finally {

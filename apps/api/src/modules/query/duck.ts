@@ -3,7 +3,7 @@
 // conexão própria. Consultas interativas passam um timeout: ao estourar, a
 // conexão é interrompida (interrupt) e o usuário recebe erro claro — assim uma
 // query pesada de um time não trava o hub para todos.
-import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api'
+import { DuckDBInstance, DuckDBConnection, JsonDuckDBValueConverter } from '@duckdb/node-api'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -38,6 +38,14 @@ export interface DuckOptions {
    * de modelo. Tem pista própria e menor.
    */
   adhoc?: boolean
+  /** Pista explícita. Vence `adhoc`. */
+  lane?: LaneName
+}
+
+export type LaneName = 'normal' | 'adhoc' | 'export'
+
+function laneOf(opts: DuckOptions): Lane {
+  return lanes[opts.lane ?? (opts.adhoc ? 'adhoc' : 'normal')]
 }
 
 // ── Limitador de concorrência (semáforo FIFO, em duas pistas) ──────────────
@@ -54,9 +62,14 @@ const MAX_CONCURRENCY = config.duck.maxConcurrency
 const MAX_ADHOC = config.duck.maxAdhocConcurrency
 
 interface Lane { active: number; max: number; waiters: Array<() => void> }
-const lanes: Record<'normal' | 'adhoc', Lane> = {
+// A pista de EXPORT é separada e estreita de propósito. Um export sem teto lê a
+// tabela inteira e pode durar minutos; se dividisse fila com os notebooks,
+// dois exports grandes deixariam os analistas esperando. Fila de 1 por vez: o
+// segundo export espera, em vez de os dois brigarem por memória e I/O.
+const lanes: Record<LaneName, Lane> = {
   normal: { active: 0, max: MAX_CONCURRENCY, waiters: [] },
   adhoc: { active: 0, max: MAX_ADHOC, waiters: [] },
+  export: { active: 0, max: config.duck.maxExportConcurrency, waiters: [] },
 }
 
 function acquireSlot(lane: Lane): Promise<void> {
@@ -95,7 +108,7 @@ export async function duckQuery(
 ): Promise<DuckResult> {
   // Espera um slot na pista certa: o timeout da consulta só começa a contar
   // quando ela de fato executa (abaixo), não enquanto aguarda na fila.
-  const lane = opts.adhoc ? lanes.adhoc : lanes.normal
+  const lane = laneOf(opts)
   await acquireSlot(lane)
   try {
     const conn: DuckDBConnection = await (await getInstance()).connect()
@@ -133,6 +146,63 @@ export async function duckQuery(
       throw friendlyEngineError(e as Error)
     } finally {
       if (timer) clearTimeout(timer)
+      conn.closeSync()
+    }
+  } finally {
+    releaseSlot(lane)
+  }
+}
+
+// ── Leitura em STREAMING ─────────────────────────────────────────────────
+// A diferença que importa: `duckQuery` materializa TODAS as linhas num array
+// antes de devolver — ótimo para uma tela, fatal para um export de milhões de
+// linhas, porque o pico de memória é proporcional ao resultado.
+//
+// Aqui o resultado é consumido em CHUNKS (o lote nativo do DuckDB, ~2048
+// linhas). A memória fica constante seja o resultado de mil ou de cem milhões
+// de linhas — o que sobe é só o tempo.
+//
+// `onChunk` é AGUARDADO: é por ali que a contrapressão da rede chega até o
+// motor. Se o cliente lê devagar, paramos de buscar chunks em vez de acumular.
+export interface StreamOptions extends DuckOptions {
+  /** Consultado entre chunks; true encerra a leitura (cliente desconectou). */
+  aborted?: () => boolean
+}
+
+export async function duckStream(
+  sql: string,
+  params: unknown[],
+  onChunk: (rows: unknown[][], columns: string[]) => void | Promise<void>,
+  opts: StreamOptions = {},
+): Promise<{ columns: string[]; rowCount: number; aborted: boolean }> {
+  const lane = laneOf({ ...opts, lane: opts.lane ?? 'export' })
+  await acquireSlot(lane)
+  try {
+    const conn: DuckDBConnection = await (await getInstance()).connect()
+    try {
+      const result = await conn.stream(sql, params as never[])
+      const columns = result.columnNames()
+      let rowCount = 0
+      let aborted = false
+
+      for (;;) {
+        if (opts.aborted?.()) {
+          aborted = true
+          // Interrompe a consulta no motor: sem isto o DuckDB seguiria
+          // produzindo linhas para um cliente que já foi embora.
+          try { conn.interrupt() } catch { /* já encerrada */ }
+          break
+        }
+        const chunk = await result.fetchChunk()
+        if (!chunk || chunk.rowCount === 0) break
+        const rows = chunk.convertRows(JsonDuckDBValueConverter) as unknown[][]
+        rowCount += rows.length
+        await onChunk(rows, columns)
+      }
+      return { columns, rowCount, aborted }
+    } catch (e) {
+      throw friendlyEngineError(e as Error)
+    } finally {
       conn.closeSync()
     }
   } finally {

@@ -41,7 +41,13 @@ const qid = (s: string) => '"' + s.replace(/"/g, '') + '"'
 export function compileQuery(
   def: QueryDef,
   fields: CompileField[],
-  opts: { admin: boolean; glob: string; metrics?: CompileMetric[] },
+  opts: {
+    admin: boolean
+    glob: string
+    metrics?: CompileMetric[]
+    /** Teto de linhas. Ausente = 10 mil (telas). `null` = sem teto (export). */
+    maxLimit?: number | null
+  },
 ): Compiled {
   const metricBySlug = new Map((opts.metrics ?? []).map((m) => [m.slug, m]))
   const byKey = new Map(fields.map((f) => [f.key, f]))
@@ -156,7 +162,12 @@ export function compileQuery(
     return `${qid(o.field)} ${o.dir === 'desc' ? 'desc' : 'asc'}`
   })
 
-  const limit = Math.min(Math.max(1, def.limit ?? 100), MAX_LIMIT)
+  // Teto de linhas. O padrão protege as telas interativas (ninguém rola 10 mil
+  // linhas no navegador); `maxLimit: null` desliga o teto e NÃO emite cláusula
+  // limit — é o que o export em streaming usa, porque lá o consumidor é um
+  // arquivo, não uma tabela na tela.
+  const cap = opts.maxLimit === undefined ? MAX_LIMIT : opts.maxLimit
+  const limit = cap === null ? null : Math.min(Math.max(1, def.limit ?? 100), cap)
   const offset = Math.max(0, def.offset ?? 0)
 
   const fromWhere = `from read_parquet('${opts.glob.replace(/'/g, '')}')` +
@@ -165,7 +176,7 @@ export function compileQuery(
   const sql = `select ${select} ${fromWhere}` +
     (groupBy.length ? ` group by ${groupBy.join(', ')}` : '') +
     (orderBy.length ? ` order by ${orderBy.join(', ')}` : '') +
-    ` limit ${limit} offset ${offset}`
+    (limit === null ? (offset ? ` offset ${offset}` : '') : ` limit ${limit} offset ${offset}`)
 
   // Total (para paginação) — só faz sentido sem agrupamento.
   const countSql = groupBy.length ? null : `select count(*) as n ${fromWhere}`

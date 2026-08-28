@@ -56,6 +56,10 @@ export const config = {
     // atributos de modelo). Menor de propósito: uma consulta exploratória
     // grande não pode ocupar os slots dos painéis.
     maxAdhocConcurrency: Math.max(1, Number(process.env.DUCK_MAX_ADHOC_CONCURRENCY) || 2),
+    // Exports rodam um por vez. Cada um pode varrer a tabela inteira por
+    // minutos; em paralelo eles competiriam por memória e I/O e degradariam
+    // o hub para todo mundo. O segundo espera na fila — e termina.
+    maxExportConcurrency: Math.max(1, Number(process.env.DUCK_MAX_EXPORT_CONCURRENCY) || 1),
   },
 }
 
