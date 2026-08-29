@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion, AnimatePresence } from 'framer-motion'
 import { AlertCircle, Info, Loader2, Lock, Shield } from 'lucide-react'
 import type { SessionUser } from '@datahub/shared'
-import { login as loginProvider } from '@/store/authProvider'
+import { login as loginProvider, authMode } from '@/store/authProvider'
 import { describeAuthError, type AuthErrorInfo } from '@/store/firebaseAuth'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/lib/api'
@@ -204,11 +204,16 @@ export default function LoginPage() {
                           {showDetail && (
                             <div className="mt-1.5">
                               <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-white/70 p-2 text-[11px] leading-relaxed">
-                                {error.detail}
+                                {`modo de autenticação: ${authMode}
+
+${error.detail}`}
                               </pre>
                               <button
                                 type="button"
-                                onClick={() => void navigator.clipboard.writeText(error.detail)}
+                                onClick={() => void navigator.clipboard.writeText(
+                                  `modo de autenticação: ${authMode}
+
+${error.detail}`)}
                                 className="mt-1 text-xs font-medium text-rose-700 underline underline-offset-2"
                               >
                                 copiar

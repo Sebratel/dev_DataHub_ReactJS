@@ -71,8 +71,26 @@ export async function loginWithFirebase(): Promise<string> {
 }
 
 /**
+ * Erro de REDE ao renovar o token — distinto de "não há sessão".
+ * Confundir os dois foi um bug real: devolver null quando a renovação falhava
+ * fazia o cliente disparar a requisição SEM cabeçalho, e a API respondia
+ * "Token de autenticação ausente". Falha de rede aparecia como falta de
+ * credencial, e o rastro apontava para o lugar errado.
+ */
+export class AuthNetworkError extends Error {
+  constructor(cause: string) {
+    super(`Não foi possível renovar a credencial com o Google: ${cause}`)
+    this.name = 'AuthNetworkError'
+  }
+}
+
+/**
  * ID token corrente. O SDK devolve o que está em memória e só vai à rede quando
  * falta pouco para vencer — então isto é barato de chamar a cada request.
+ *
+ * Devolve null quando NÃO HÁ sessão. Lança AuthNetworkError quando há sessão
+ * mas o token não pôde ser renovado: são situações diferentes e o chamador
+ * precisa poder distinguir.
  */
 export async function firebaseToken(force = false): Promise<string | null> {
   if (!firebaseEnabled) return null
@@ -81,10 +99,8 @@ export async function firebaseToken(force = false): Promise<string | null> {
   if (!u) return null
   try {
     return await u.getIdToken(force)
-  } catch {
-    // Renovação falhou (rede/firewall). Devolve null em vez de estourar: quem
-    // decide que a sessão acabou é o 401 de verdade, não uma oscilação.
-    return null
+  } catch (e) {
+    throw new AuthNetworkError(e instanceof Error ? e.message : String(e))
   }
 }
 

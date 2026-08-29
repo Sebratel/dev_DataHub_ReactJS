@@ -2,14 +2,16 @@
 // qual mecanismo está ativo.
 //
 // Dois caminhos convivem de propósito:
-//   firebase  quando VITE_FIREBASE_* está configurado. SDK no bundle, popup no
-//             domínio do projeto, servidor conferindo a assinatura localmente.
-//             É o que continua funcionando com o firewall bloqueando o Google.
+//   firebase  quando VITE_FIREBASE_* está configurado. SDK no bundle, sessão
+//             persistida pelo próprio SDK, servidor conferindo a assinatura
+//             localmente.
 //   google    o caminho original (Google Identity Services). Continua aí para a
 //             virada não exigir janela de indisponibilidade: instalação sem as
 //             variáveis do Firebase segue funcionando exatamente como antes.
 import { useAuthStore } from './authStore'
-import { firebaseEnabled, loginWithFirebase, firebaseToken, logoutFirebase } from './firebaseAuth'
+import {
+  firebaseEnabled, loginWithFirebase, firebaseToken, logoutFirebase, AuthNetworkError,
+} from './firebaseAuth'
 import { loginWithGoogle, refreshGoogleToken } from './googleAuth'
 
 export const authMode: 'firebase' | 'google' = firebaseEnabled ? 'firebase' : 'google'
@@ -17,21 +19,40 @@ export const authMode: 'firebase' | 'google' = firebaseEnabled ? 'firebase' : 'g
 export async function login(): Promise<string> {
   if (authMode === 'firebase') {
     const t = await loginWithFirebase()
-    // Guarda para o caminho síncrono (o Explorador monta URL de download).
+    // Guarda o último token bom: é o lastro quando a renovação não conseguir
+    // falar com o Google (ver currentToken).
     useAuthStore.getState().setAccessToken(t)
     return t
   }
   return loginWithGoogle()
 }
 
-/** Token para a próxima requisição, renovado se necessário. */
+/**
+ * Token para a próxima requisição.
+ *
+ * Regra que corrige um bug real: quando a renovação falha por REDE, cai-se no
+ * último token conhecido em vez de devolver null. Devolver null fazia a
+ * requisição sair sem cabeçalho, a API responder "Token de autenticação
+ * ausente" e o problema (bloqueio de rede) se disfarçar de falta de credencial.
+ *
+ * O token do Firebase vale 1 hora, então o lastro normalmente ainda serve — e
+ * se não servir mais, quem diz isso é o 401 do servidor, que é a autoridade.
+ */
 export async function currentToken(): Promise<string | null> {
-  if (authMode === 'firebase') {
+  if (authMode !== 'firebase') return useAuthStore.getState().accessToken
+
+  try {
     const t = await firebaseToken()
     if (t) useAuthStore.getState().setAccessToken(t)
     return t
+  } catch (e) {
+    if (e instanceof AuthNetworkError) {
+      const ultimo = useAuthStore.getState().accessToken
+      console.warn(`[auth] ${e.message} — usando o último token conhecido.`)
+      return ultimo
+    }
+    throw e
   }
-  return useAuthStore.getState().accessToken
 }
 
 /**
