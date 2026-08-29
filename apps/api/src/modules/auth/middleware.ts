@@ -126,8 +126,23 @@ declare module 'express-serve-static-core' {
 
 export function requireAuth({ role }: { role?: 'admin' | 'editor' } = {}) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const m = /^Bearer (.+)$/.exec(req.headers.authorization || '')
-    if (!m) return res.status(401).json({ error: 'Token de autenticação ausente.' })
+    const raw = req.headers.authorization || ''
+    const m = /^Bearer (.+)$/.exec(raw)
+    if (!m) {
+      // Cabeçalho PRESENTE mas em outro esquema quase sempre significa um proxy
+      // na frente (Basic Auth de access list, por exemplo) sobrescrevendo o
+      // Authorization que o app enviou. Dizer "ausente" nesse caso mandaria
+      // quem depura procurar no lugar errado — foi o que aconteceu.
+      if (raw.trim()) {
+        const esquema = raw.split(' ')[0].slice(0, 20)
+        return res.status(401).json({
+          error: `Cabeçalho Authorization chegou como "${esquema}", não "Bearer". ` +
+            'Um proxy à frente (autenticação básica de access list) provavelmente está ' +
+            'substituindo o cabeçalho que o aplicativo envia.',
+        })
+      }
+      return res.status(401).json({ error: 'Token de autenticação ausente.' })
+    }
     let user: SessionUser | null = null
     try { user = await getUserFromToken(m[1]) } catch { user = null }
     if (!user) return res.status(401).json({ error: 'Sessão inválida ou expirada. Entre novamente.' })
