@@ -7,6 +7,7 @@ import { motion, useReducedMotion, AnimatePresence } from 'framer-motion'
 import { AlertCircle, Info, Loader2, Lock, Shield } from 'lucide-react'
 import type { SessionUser } from '@datahub/shared'
 import { login as loginProvider } from '@/store/authProvider'
+import { describeAuthError, type AuthErrorInfo } from '@/store/firebaseAuth'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/lib/api'
 
@@ -59,7 +60,8 @@ export default function LoginPage() {
   const setUser = useAuthStore((s) => s.setUser)
   const reduced = !!useReducedMotion()
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<AuthErrorInfo | null>(null)
+  const [showDetail, setShowDetail] = useState(false)
 
   async function handleGoogle() {
     setBusy(true)
@@ -71,7 +73,9 @@ export default function LoginPage() {
       setUser(user)
       navigate('/', { replace: true })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao entrar. Tente novamente.')
+      // A causa vira frase acionável; o texto cru fica atrás de "detalhes".
+      setError(describeAuthError(e))
+      setShowDetail(false)
       setBusy(false)
     }
   }
@@ -179,10 +183,40 @@ export default function LoginPage() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -4 }}
                       transition={{ duration: 0.2 }}
-                      className="flex gap-2 rounded-xl border border-rose-200/90 bg-rose-50/95 px-3 py-2.5 text-sm text-rose-900 shadow-sm"
+                      className="rounded-xl border border-rose-200/90 bg-rose-50/95 px-3 py-2.5 text-sm text-rose-900 shadow-sm"
                     >
-                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden />
-                      <span>{error}</span>
+                      <div className="flex gap-2">
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden />
+                        {/* min-w-0 + break-words: sem isso a URL longa do erro do
+                            Google estoura a caixa e some justamente a parte que
+                            explica a causa. */}
+                        <span className="min-w-0 break-words">{error.message}</span>
+                      </div>
+                      {error.detail && error.detail !== error.message && (
+                        <div className="mt-1.5 pl-6">
+                          <button
+                            type="button"
+                            onClick={() => setShowDetail((v) => !v)}
+                            className="text-xs font-medium text-rose-700 underline underline-offset-2"
+                          >
+                            {showDetail ? 'ocultar detalhes técnicos' : 'ver detalhes técnicos'}
+                          </button>
+                          {showDetail && (
+                            <div className="mt-1.5">
+                              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-white/70 p-2 text-[11px] leading-relaxed">
+                                {error.detail}
+                              </pre>
+                              <button
+                                type="button"
+                                onClick={() => void navigator.clipboard.writeText(error.detail)}
+                                className="mt-1 text-xs font-medium text-rose-700 underline underline-offset-2"
+                              >
+                                copiar
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </motion.div>
                   )}
                 </AnimatePresence>

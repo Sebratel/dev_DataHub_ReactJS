@@ -92,3 +92,56 @@ export async function logoutFirebase(): Promise<void> {
   if (!firebaseEnabled || !auth) return
   await signOut(auth).catch(() => {})
 }
+
+// ── Erros legíveis ───────────────────────────────────────────────────────
+// O erro cru do Firebase é uma parede: vem com httpMetadata, cachePolicy,
+// originTrials e outros vinte campos irrelevantes, e a parte que importa
+// (error_description) fica no meio, longe o bastante para a caixa de erro
+// cortar justamente ela. Aqui a causa vira uma frase acionável, e o texto
+// original fica disponível para quem precisar.
+export interface AuthErrorInfo { message: string; detail: string }
+
+const POR_CODIGO: Record<string, string> = {
+  'auth/unauthorized-domain':
+    'Este domínio não está autorizado no Firebase. Adicione-o em Authentication → Settings → Authorized domains.',
+  'auth/operation-not-allowed':
+    'O provedor Google não está ativado. Ative em Authentication → Sign-in method → Google.',
+  'auth/popup-blocked':
+    'O navegador bloqueou a janela do Google. Libere pop-ups para este site e tente de novo.',
+  'auth/popup-closed-by-user':
+    'A janela do Google foi fechada antes de concluir.',
+  'auth/cancelled-popup-request':
+    'Havia outra tentativa de login aberta. Tente novamente.',
+  'auth/network-request-failed':
+    'Não foi possível falar com o Google. Verifique a conexão ou o bloqueio de rede.',
+  'auth/internal-error':
+    'O Firebase recusou a resposta do Google. Confira as credenciais do provedor em Authentication → Sign-in method → Google.',
+}
+
+export function describeAuthError(e: unknown): AuthErrorInfo {
+  const detail = e instanceof Error ? e.message : String(e)
+  const code = (e as { code?: string })?.code ?? ''
+
+  // invalid_client vem do endpoint de token do Google, não do Firebase: o par
+  // Client ID/secret do provedor não existe ou não confere. É o erro que mais
+  // confunde, porque a mensagem fala de "credential" e a pessoa procura na
+  // chave de API, que não tem nada a ver.
+  if (/invalid_client/i.test(detail)) {
+    return {
+      message: 'As credenciais OAuth do provedor Google estão inválidas. No Firebase, em ' +
+        'Authentication → Sign-in method → Google → Configuração do SDK da Web, o ID e a chave ' +
+        'secreta do cliente precisam corresponder a um cliente OAuth existente no mesmo projeto.',
+      detail,
+    }
+  }
+  if (/redirect_uri_mismatch/i.test(detail)) {
+    return {
+      message: 'O URI de redirecionamento do cliente OAuth não bate. Adicione ' +
+        `https://${cfg.authDomain ?? '<projeto>.firebaseapp.com'}/__/auth/handler ` +
+        'nos URIs de redirecionamento autorizados do cliente.',
+      detail,
+    }
+  }
+  if (code && POR_CODIGO[code]) return { message: POR_CODIGO[code], detail }
+  return { message: detail.slice(0, 300), detail }
+}
