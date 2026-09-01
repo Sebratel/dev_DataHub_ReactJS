@@ -9,6 +9,7 @@ import { checkConnection, discoverObjects, discoverColumns, testParams } from '.
 import { testHttp } from '../../connectors/httpSource.js'
 import { createConnection, updateConnection, deleteConnection, datasetsUsing, type ConnectionInput } from '../../connectors/store.js'
 import { hasSecret } from '../../core/crypto.js'
+import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 
 export const connectionsRouter = Router()
@@ -49,6 +50,24 @@ function parseInput(body: unknown): ConnectionInput {
 
 // Lista as fontes (fixas + gerenciadas) com status ao vivo (SELECT 1).
 connectionsRouter.get('/', async (_req, res) => {
+  // Conexão gerenciada que existe no banco mas não entrou no registry em
+  // memória é sempre sinal de falha ao descriptografar (CONNECTIONS_SECRET
+  // ausente ou diferente do usado para salvá-la) — NUNCA de linha apagada; a
+  // única exclusão do sistema é o botão "excluir" desta própria tela.
+  //
+  // Sem este aviso o problema é invisível: reloadConnections() roda só no
+  // boot (index.ts), pula em silêncio a linha que não decifra, e a tela some
+  // com a conexão sem dizer por quê — foi assim que uma perda de chave virou
+  // "conexões desaparecendo" para quem administra.
+  let hidden = 0
+  if (isDbAvailable()) {
+    try {
+      const total = Number((await db.query('select count(*)::int as n from source_connections')).rows[0]?.n ?? 0)
+      const loaded = allConnectors().filter((d) => d.managed).length
+      hidden = Math.max(0, total - loaded)
+    } catch { /* melhor esforço — nunca derruba a listagem por causa disto */ }
+  }
+
   const infos: ConnectionInfo[] = await Promise.all(
     allConnectors().map(async (def) => {
       const configured = isConfigured(def)
@@ -67,7 +86,13 @@ connectionsRouter.get('/', async (_req, res) => {
       return { ...base, status: check.ok ? 'ok' as const : 'error' as const, latencyMs: check.latencyMs, error: check.error ?? null }
     }),
   )
-  res.json({ connections: infos })
+  res.json({
+    connections: infos,
+    // hiddenCount > 0 é sempre acionável: ou falta CONNECTIONS_SECRET, ou o
+    // valor atual é diferente do que cifrou essas linhas.
+    hiddenCount: hidden,
+    secretConfigured: hasSecret(),
+  })
 })
 
 // Testa parâmetros avulsos ANTES de salvar (não persiste nada).

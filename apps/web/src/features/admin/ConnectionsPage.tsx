@@ -2,7 +2,7 @@
 // (matéria-prima da publicação de datasets no Sprint 2).
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2, Plus, Pencil, Trash2, Globe } from 'lucide-react'
+import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2, Plus, Pencil, Trash2, Globe, AlertTriangle } from 'lucide-react'
 import type { ConnectionInfo } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { usePrompt, useConfirm } from '@/components/Dialogs'
@@ -18,6 +18,11 @@ export default function ConnectionsPage() {
   const [dialog, setDialog] = useState<'new' | ConnectionInfo | null>(null)
   const [apiFor, setApiFor] = useState<ConnectionInfo | null>(null)
   const [connections, setConnections] = useState<ConnectionInfo[] | null>(null)
+  // > 0: existem linhas em source_connections que o servidor NÃO conseguiu
+  // decifrar no boot — nunca é linha apagada, a única exclusão do sistema é
+  // o botão "excluir" desta própria tela.
+  const [hiddenCount, setHiddenCount] = useState(0)
+  const [secretConfigured, setSecretConfigured] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [objects, setObjects] = useState<PhysicalObject[] | null>(null)
@@ -52,8 +57,10 @@ export default function ConnectionsPage() {
     setConnections(null)
     setError(null)
     try {
-      const r = await api<{ connections: ConnectionInfo[] }>('/api/v1/connections')
+      const r = await api<{ connections: ConnectionInfo[]; hiddenCount: number; secretConfigured: boolean }>('/api/v1/connections')
       setConnections(r.connections)
+      setHiddenCount(r.hiddenCount)
+      setSecretConfigured(r.secretConfigured)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao carregar conexões.')
     }
@@ -125,6 +132,23 @@ export default function ConnectionsPage() {
       </div>
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
+
+      {hiddenCount > 0 && (
+        <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/30">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="text-sm text-amber-800 dark:text-amber-300">
+            <p className="font-medium">
+              {hiddenCount} conexão(ões) cadastrada(s) não {hiddenCount > 1 ? 'apareceram' : 'apareceu'} na lista abaixo.
+            </p>
+            <p className="mt-0.5">
+              {secretConfigured
+                ? <>A senha delas foi salva com uma <code>CONNECTIONS_SECRET</code> diferente da que o servidor usa agora. Não foram excluídas — restaure a chave original na stack e reinicie a API para elas voltarem.</>
+                : <><code>CONNECTIONS_SECRET</code> não está configurado no servidor. Defina-o na stack e reinicie a API — os cadastros continuam no banco, só não podem ser lidos sem a chave.</>}
+              {' '}Nome, host, porta, banco e usuário continuam salvos em texto simples; só a senha depende da chave.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 grid gap-3">
         {connections === null && !error && <p className="text-sm text-zinc-500">Verificando fontes…</p>}
