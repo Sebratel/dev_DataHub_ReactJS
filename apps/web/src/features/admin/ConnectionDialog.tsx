@@ -2,7 +2,7 @@
 // Suporta banco (Postgres/MySQL) e API HTTP. A senha/token nunca vem preenchida
 // na edição; em branco no update = mantém o atual.
 import { useState } from 'react'
-import { X, Loader2, CheckCircle2, XCircle, Plug } from 'lucide-react'
+import { X, Loader2, CheckCircle2, XCircle, Plug, KeyRound } from 'lucide-react'
 import type { ConnectionInfo } from '@datahub/shared'
 import { api } from '@/lib/api'
 
@@ -16,6 +16,11 @@ type Kind = 'postgres' | 'mysql' | 'http'
 
 export default function ConnectionDialog({ existing, onClose, onSaved }: Props) {
   const isEdit = !!existing
+  // Sinal que o backend manda para conexoes cuja senha nao decifrou com a
+  // chave atual (ver findHidden() no connectionsRouter). Deixar a senha em
+  // branco NAO mantem a atual -- a atual esta quebrada -- entao ela vira
+  // obrigatoria, como na criacao.
+  const recovering = isEdit && !!existing?.error
   const d = existing?.detail
   const h = existing?.http
   const [name, setName] = useState(existing?.name ?? '')
@@ -48,7 +53,7 @@ export default function ConnectionDialog({ existing, onClose, onSaved }: Props) 
   }
   const valid = isHttp
     ? name.trim() && /^https?:\/\//i.test(baseUrl.trim())
-    : name.trim() && host.trim() && database.trim() && username.trim() && (isEdit || secret)
+    : name.trim() && host.trim() && database.trim() && username.trim() && ((isEdit && !recovering) || secret)
 
   async function test() {
     setBusy(true); setError(null); setTestResult(null)
@@ -79,10 +84,21 @@ export default function ConnectionDialog({ existing, onClose, onSaved }: Props) 
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl bg-white p-3.5 shadow-xl dark:bg-zinc-900" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-semibold">{isEdit ? 'Editar conexão' : 'Nova conexão'}</h2>
+          <h2 className="font-semibold">
+            {recovering ? 'Restaurar acesso' : isEdit ? 'Editar conexão' : 'Nova conexão'}
+          </h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"><X size={17} /></button>
         </div>
         <div className="grid gap-3">
+          {recovering && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+              <KeyRound size={14} className="mt-0.5 shrink-0" />
+              <span>
+                A senha cadastrada não pôde ser lida com a chave atual do servidor. Os demais campos abaixo
+                vieram do cadastro original — confira e defina uma senha nova para restaurar o acesso.
+              </span>
+            </div>
+          )}
           <label className="text-sm">
             <span className="mb-1 block text-xs text-zinc-500">Nome</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className={inp} placeholder="Ex.: ERP Financeiro" autoFocus />
@@ -141,13 +157,14 @@ export default function ConnectionDialog({ existing, onClose, onSaved }: Props) 
               </label>
               <label className="text-sm">
                 <span className="mb-1 block text-xs text-zinc-500">
-                  Senha {isEdit && (
+                  Senha {isEdit && !recovering && (
                     <span className="text-zinc-400">
                       (em branco = {existing?.native && !existing?.managed ? 'usa a senha do .env' : 'mantém a atual'})
                     </span>
                   )}
+                  {recovering && <span className="font-medium text-amber-600 dark:text-amber-400"> (obrigatória para restaurar)</span>}
                 </span>
-                <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} className={inp} placeholder={isEdit ? '••••••••' : ''} autoComplete="new-password" />
+                <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} className={inp} placeholder={isEdit && !recovering ? '••••••••' : ''} autoComplete="new-password" />
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={ssl} onChange={(e) => setSsl(e.target.checked)} />
@@ -179,7 +196,7 @@ export default function ConnectionDialog({ existing, onClose, onSaved }: Props) 
             </button>
             <button onClick={save} disabled={busy || !valid}
               className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-accent-hover disabled:opacity-50">
-              {busy && <Loader2 size={14} className="animate-spin" />} {isEdit ? 'Salvar' : 'Criar conexão'}
+              {busy && <Loader2 size={14} className="animate-spin" />} {recovering ? 'Restaurar acesso' : isEdit ? 'Salvar' : 'Criar conexão'}
             </button>
           </div>
         </div>

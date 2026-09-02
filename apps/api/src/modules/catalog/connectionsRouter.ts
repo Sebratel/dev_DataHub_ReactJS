@@ -4,7 +4,7 @@
 // (information_schema). Credenciais nunca voltam ao frontend.
 import { Router } from 'express'
 import type { ConnectionInfo } from '@datahub/shared'
-import { allConnectors, getConnector, isConfigured, envDetail, RESERVED_IDS, type ConnectorKind } from '../../connectors/registry.js'
+import { allConnectors, isConfigured, envDetail, RESERVED_IDS, type ConnectorKind } from '../../connectors/registry.js'
 import { checkConnection, discoverObjects, discoverColumns, testParams } from '../../connectors/pools.js'
 import { testHttp } from '../../connectors/httpSource.js'
 import { createConnection, updateConnection, deleteConnection, datasetsUsing, type ConnectionInput } from '../../connectors/store.js'
@@ -49,24 +49,52 @@ function parseInput(body: unknown): ConnectionInput {
 }
 
 // Lista as fontes (fixas + gerenciadas) com status ao vivo (SELECT 1).
-connectionsRouter.get('/', async (_req, res) => {
-  // Conexão gerenciada que existe no banco mas não entrou no registry em
-  // memória é sempre sinal de falha ao descriptografar (CONNECTIONS_SECRET
-  // ausente ou diferente do usado para salvá-la) — NUNCA de linha apagada; a
-  // única exclusão do sistema é o botão "excluir" desta própria tela.
-  //
-  // Sem este aviso o problema é invisível: reloadConnections() roda só no
-  // boot (index.ts), pula em silêncio a linha que não decifra, e a tela some
-  // com a conexão sem dizer por quê — foi assim que uma perda de chave virou
-  // "conexões desaparecendo" para quem administra.
-  let hidden = 0
-  if (isDbAvailable()) {
-    try {
-      const total = Number((await db.query('select count(*)::int as n from source_connections')).rows[0]?.n ?? 0)
-      const loaded = allConnectors().filter((d) => d.managed).length
-      hidden = Math.max(0, total - loaded)
-    } catch { /* melhor esforço — nunca derruba a listagem por causa disto */ }
+// Conexao gerenciada que existe no banco mas nao entrou no registry em memoria
+// e sempre sinal de falha ao descriptografar (CONNECTIONS_SECRET ausente ou
+// diferente do usado para salva-la) -- NUNCA de linha apagada; a unica
+// exclusao do sistema e o botao "excluir" desta propria tela.
+//
+// Sem isto o problema era invisivel E irrecuperavel pela tela:
+// reloadConnections() roda so no boot (index.ts), pula em silencio a linha
+// que nao decifra, e ela nunca aparece na lista -- logo nao tem "editar" para
+// corrigir. A saida aqui e expor cada uma com os campos que SAO texto simples
+// no banco (nome, host, porta, banco, usuario -- so a senha e cifrada), para
+// a tela oferecer "definir senha nova" sem pedir para redigitar o resto de
+// memoria.
+async function findHidden(): Promise<ConnectionInfo[]> {
+  if (!isDbAvailable()) return []
+  try {
+    const loadedIds = new Set(allConnectors().filter((d) => d.managed).map((d) => d.id))
+    const rows = (await db.query(
+      `select id, name, kind, host, port, "database", username, ssl, config, writable
+         from source_connections`,
+    )).rows
+    return rows
+      .filter((r) => !loadedIds.has(String(r.id)))
+      .map((r): ConnectionInfo => {
+        const cfg = (r.config ?? {}) as { baseUrl?: string; authHeader?: string; authScheme?: string }
+        return {
+          id: String(r.id), name: String(r.name), kind: r.kind as ConnectionInfo['kind'],
+          envPrefix: null, configured: false, status: 'unknown', latencyMs: null,
+          error: 'A senha nao pode ser lida (CONNECTIONS_SECRET ausente ou diferente da que cifrou este cadastro). ' +
+            'Os demais campos foram preservados -- defina uma senha nova para restaurar o acesso.',
+          managed: true, native: RESERVED_IDS.has(String(r.id)), writable: !!r.writable,
+          detail: r.kind === 'http' ? undefined : {
+            host: r.host ?? '', port: Number(r.port) || 0, database: r.database ?? '', username: r.username ?? '', ssl: !!r.ssl,
+          },
+          http: r.kind === 'http'
+            ? { baseUrl: cfg.baseUrl ?? '', authHeader: cfg.authHeader ?? null, authScheme: cfg.authScheme ?? null }
+            : undefined,
+        }
+      })
+  } catch (e) {
+    console.warn(`[connections] falha ao levantar conexoes ocultas: ${(e as Error).message}`)
+    return [] // melhor esforco -- nunca derruba a listagem por causa disto
   }
+}
+
+connectionsRouter.get('/', async (_req, res) => {
+  const hidden = await findHidden()
 
   const infos: ConnectionInfo[] = await Promise.all(
     allConnectors().map(async (def) => {
@@ -88,9 +116,9 @@ connectionsRouter.get('/', async (_req, res) => {
   )
   res.json({
     connections: infos,
-    // hiddenCount > 0 é sempre acionável: ou falta CONNECTIONS_SECRET, ou o
-    // valor atual é diferente do que cifrou essas linhas.
-    hiddenCount: hidden,
+    // hidden: conexoes cadastradas cuja senha nao decifrou com a chave atual.
+    // Cada uma ja vem com host/porta/banco/usuario para editar diretamente.
+    hidden,
     secretConfigured: hasSecret(),
   })
 })
@@ -144,10 +172,16 @@ connectionsRouter.patch('/:id', async (req, res) => {
 
 // Exclui uma gerenciada; numa nativa personalizada, REVERTE para o .env.
 connectionsRouter.delete('/:id', async (req, res) => {
-  const def = getConnector(req.params.id)
-  if (!def) return res.status(404).json({ error: 'Conexão não encontrada.' })
   const native = RESERVED_IDS.has(req.params.id)
-  if (native && !def.managed) {
+  // Confere a linha DIRETO NO BANCO, nao so o registry em memoria: uma
+  // conexao OCULTA (senha nao decifrou) nao esta em getConnector(id), mas a
+  // linha existe e pode ser excluida igual. Sem isto, excluir uma conexao
+  // oculta falhava com "nao encontrada" mesmo ela aparecendo na tela.
+  const rowExists = isDbAvailable()
+    ? !!(await db.query('select 1 from source_connections where id = $1', [req.params.id])).rows[0]
+    : false
+  if (!rowExists) {
+    if (!native) return res.status(404).json({ error: 'Conexão não encontrada.' })
     return res.status(400).json({ error: 'Conexão fixa (.env) sem personalização — nada para excluir. Edite o .env do servidor.' })
   }
   // Nativa personalizada: excluir só remove a sobreposição (reverte ao .env), os

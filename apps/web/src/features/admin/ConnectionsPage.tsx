@@ -2,7 +2,7 @@
 // (matéria-prima da publicação de datasets no Sprint 2).
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2, Plus, Pencil, Trash2, Globe, AlertTriangle } from 'lucide-react'
+import { CheckCircle2, XCircle, CircleDashed, RefreshCw, Table2, Upload, Loader2, Plus, Pencil, Trash2, Globe, AlertTriangle, KeyRound } from 'lucide-react'
 import type { ConnectionInfo } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { usePrompt, useConfirm } from '@/components/Dialogs'
@@ -18,10 +18,11 @@ export default function ConnectionsPage() {
   const [dialog, setDialog] = useState<'new' | ConnectionInfo | null>(null)
   const [apiFor, setApiFor] = useState<ConnectionInfo | null>(null)
   const [connections, setConnections] = useState<ConnectionInfo[] | null>(null)
-  // > 0: existem linhas em source_connections que o servidor NÃO conseguiu
-  // decifrar no boot — nunca é linha apagada, a única exclusão do sistema é
-  // o botão "excluir" desta própria tela.
-  const [hiddenCount, setHiddenCount] = useState(0)
+  // Linhas em source_connections que o servidor NÃO conseguiu decifrar no
+  // boot — nunca é linha apagada, a única exclusão do sistema é o botão
+  // "excluir" desta própria tela. Cada uma já vem com host/porta/banco/
+  // usuário (texto simples) para editar direto e definir senha nova.
+  const [hidden, setHidden] = useState<ConnectionInfo[]>([])
   const [secretConfigured, setSecretConfigured] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -57,9 +58,9 @@ export default function ConnectionsPage() {
     setConnections(null)
     setError(null)
     try {
-      const r = await api<{ connections: ConnectionInfo[]; hiddenCount: number; secretConfigured: boolean }>('/api/v1/connections')
+      const r = await api<{ connections: ConnectionInfo[]; hidden: ConnectionInfo[]; secretConfigured: boolean }>('/api/v1/connections')
       setConnections(r.connections)
-      setHiddenCount(r.hiddenCount)
+      setHidden(r.hidden)
       setSecretConfigured(r.secretConfigured)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao carregar conexões.')
@@ -133,18 +134,18 @@ export default function ConnectionsPage() {
 
       {error && <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40">{error}</p>}
 
-      {hiddenCount > 0 && (
+      {hidden.length > 0 && (
         <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/30">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
           <div className="text-sm text-amber-800 dark:text-amber-300">
             <p className="font-medium">
-              {hiddenCount} conexão(ões) cadastrada(s) não {hiddenCount > 1 ? 'apareceram' : 'apareceu'} na lista abaixo.
+              {hidden.length} conexão(ões) marcada(s) abaixo com <KeyRound size={12} className="inline" /> tiveram a senha perdida com a chave atual.
             </p>
             <p className="mt-0.5">
               {secretConfigured
-                ? <>A senha delas foi salva com uma <code>CONNECTIONS_SECRET</code> diferente da que o servidor usa agora. Não foram excluídas — restaure a chave original na stack e reinicie a API para elas voltarem.</>
-                : <><code>CONNECTIONS_SECRET</code> não está configurado no servidor. Defina-o na stack e reinicie a API — os cadastros continuam no banco, só não podem ser lidos sem a chave.</>}
-              {' '}Nome, host, porta, banco e usuário continuam salvos em texto simples; só a senha depende da chave.
+                ? <>Foi salva com uma <code>CONNECTIONS_SECRET</code> diferente da atual. Não foram excluídas.</>
+                : <><code>CONNECTIONS_SECRET</code> não está configurado no servidor agora.</>}
+              {' '}Clique em editar em cada uma para definir uma senha nova — nome, host, porta, banco e usuário já vêm preenchidos.
             </p>
           </div>
         </div>
@@ -152,7 +153,7 @@ export default function ConnectionsPage() {
 
       <div className="mt-4 grid gap-3">
         {connections === null && !error && <p className="text-sm text-zinc-500">Verificando fontes…</p>}
-        {connections?.map((c) => (
+        {[...hidden, ...(connections ?? [])].map((c) => (
           <div key={c.id} className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex items-center gap-3">
               {c.status === 'ok' && <CheckCircle2 size={18} className="text-emerald-500" />}
@@ -161,11 +162,15 @@ export default function ConnectionsPage() {
               <div className="flex-1">
                 <p className="flex items-center gap-2 font-medium">
                   {c.name}
-                  {!c.native
-                    ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-secondary dark:bg-zinc-800">gerenciada</span>
-                    : c.managed
-                      ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-secondary dark:bg-zinc-800">personalizada</span>
-                      : <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800">.env</span>}
+                  {c.error
+                    ? <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-400">
+                        <KeyRound size={10} /> senha perdida
+                      </span>
+                    : !c.native
+                      ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-secondary dark:bg-zinc-800">gerenciada</span>
+                      : c.managed
+                        ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-secondary dark:bg-zinc-800">personalizada</span>
+                        : <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800">.env</span>}
                 </p>
                 <p className="text-xs text-zinc-500">
                   {c.kind}
