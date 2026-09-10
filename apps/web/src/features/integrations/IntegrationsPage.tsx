@@ -170,9 +170,9 @@ export default function IntegrationsPage() {
     setTimeout(() => setCopied(null), 1500)
   }
 
-  const baseUrl = window.location.origin
-  const exampleSlug = datasets[0]?.slug ?? '<slug-do-conjunto>'
-  const restUrl = `${baseUrl}/api/public/v1/datasets/${exampleSlug}/rows?token=SEU_TOKEN`
+  // Template generico (com placeholders), nao a URL de um conjunto real --
+  // troque {SEU_DATASET} e {SEU_TOKEN} pelos valores reais ao usar.
+  const restUrl = `${window.location.host}/api/public/v1/datasets/{SEU_DATASET}/rows?token={SEU_TOKEN}`
   const csvUrl = `${restUrl}&format=csv`
 
   const inputCls = 'w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[12px] dark:border-zinc-700 dark:bg-zinc-950'
@@ -183,7 +183,7 @@ export default function IntegrationsPage() {
       <PageHeader
         icon={Plug}
         title="Integrações"
-        subtitle="Tokens de leitura para Power BI, Google Sheets, Excel e API REST."
+        subtitle="Tokens de leitura via API JSON ou exportação CSV."
       >
         {canEdit && <PrimaryButton icon={Plus} onClick={openCreate}>Novo token</PrimaryButton>}
       </PageHeader>
@@ -304,7 +304,7 @@ export default function IntegrationsPage() {
         ) : credentials?.length === 0 ? (
           <EmptyState
             icon={Plug}
-            message={`Nenhum token ainda.${canEdit ? ' Gere o primeiro para conectar o Power BI ou o Sheets.' : ''}`}
+            message={`Nenhum token ainda.${canEdit ? ' Gere o primeiro para consumir a API ou exportar CSV.' : ''}`}
             action={canEdit ? (
               <button onClick={openCreate} className="text-[12px] font-medium text-info hover:underline dark:text-info-dark">
                 Criar o primeiro
@@ -390,12 +390,11 @@ export default function IntegrationsPage() {
 
       {/* Exemplos de uso */}
       <Card className="mt-2.5">
-        <CardHead icon={Link2} title="Como conectar" sub="troque SEU_TOKEN pelo token gerado" />
+        <CardHead icon={Link2} title="Como conectar" sub="troque {SEU_DATASET} e {SEU_TOKEN} pelos valores reais" />
         <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {[
             { title: 'API REST (JSON paginado)', hint: 'Suporta ?limit= e ?offset= — ideal para scripts e apps.', url: restUrl, key: 'rest' },
-            { title: 'Google Sheets / Excel (CSV)', hint: 'No Sheets: =IMPORTDATA("url"). No Excel: Dados → Da Web.', url: csvUrl, key: 'csv' },
-            { title: 'Power BI (Web connector)', hint: 'Obter Dados → Web → cole a URL JSON. O Power BI expande as linhas.', url: restUrl, key: 'pbi' },
+            { title: 'Exportação CSV', hint: 'Abre direto no Excel/Sheets. No Sheets: =IMPORTDATA("url"). No Excel: Dados → Da Web.', url: csvUrl, key: 'csv' },
           ].map((ex) => (
             <div key={ex.key} className="grid items-center gap-2 p-3 lg:grid-cols-[260px_minmax(0,1fr)]">
               <div className="min-w-0">
