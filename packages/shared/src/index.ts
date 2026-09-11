@@ -65,7 +65,8 @@ export interface DatasetSummary {
   sync?: {
     mode: 'live' | 'snapshot' | 'incremental'
     incrementalKey: string | null
-    cadence: 'daily' | 'hourly' | 'manual' | 'cascade'
+    cadence: 'daily' | 'hourly' | 'manual' | 'cascade' | 'schedule'
+    scheduleId?: string | null
     // Piso da 1ª carga incremental (valor da chave). null = desde o início.
     since: string | null
   }
@@ -263,6 +264,42 @@ export interface DashboardSummary {
 export interface DashboardDetail extends DashboardSummary {
   tabs: DashboardTab[]
   widgets: Widget[]
+  // Agendamentos (ver SyncSchedule) usados por algum dataset por trás dos
+  // widgets deste dashboard. Vazio = nenhum widget usa cadencia 'schedule'.
+  schedules: SyncSchedule[]
+}
+
+// ── Agendamento de sincronizacao (janela + intervalo em minutos) ──────────
+// Uma politica NOMEADA e REUTILIZAVEL: aplica-se a varios conjuntos de uma
+// vez (ver POST /schedules/:id/assign), e editar o agendamento propaga para
+// todos os conjuntos que o usam, sem precisar reaplicar um por um.
+export interface SyncSchedule {
+  id: string
+  name: string
+  /** Minutos entre uma sincronizacao e a proxima, DENTRO da janela. */
+  intervalMinutes: number
+  /** 'HH:MM', hora local do servidor. */
+  startTime: string
+  endTime: string
+  /** Bitmask: bit 0 = domingo .. bit 6 = sabado (Date.getDay()). Ao menos 1 bit. */
+  weekdays: number
+  datasetCount?: number // presente so na listagem administrativa
+}
+
+export const WEEKDAY_LABELS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'] as const
+
+// Usada nos DOIS lados (agendador no servidor, timer de auto-atualizacao no
+// dashboard) -- para o dashboard nao poder "achar" que esta na janela num
+// horario diferente do que o servidor realmente vai sincronizar.
+export function isWithinSchedule(
+  s: { startTime: string; endTime: string; weekdays: number },
+  now: Date = new Date(),
+): boolean {
+  if (!((s.weekdays >> now.getDay()) & 1)) return false
+  const [sh, sm] = s.startTime.split(':').map(Number)
+  const [eh, em] = s.endTime.split(':').map(Number)
+  const nowMin = now.getHours() * 60 + now.getMinutes()
+  return nowMin >= sh * 60 + sm && nowMin <= eh * 60 + em
 }
 
 // ── Explorador ────────────────────────────────────────────────

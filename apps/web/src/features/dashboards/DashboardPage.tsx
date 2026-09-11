@@ -7,6 +7,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Trash2, Share2, Pencil, LayoutGrid, Check, Sparkles, Tv, Minimize, Filter } from 'lucide-react'
 import RGL, { WidthProvider, type Layout } from 'react-grid-layout'
 import type { DashboardDetail, Metric, Widget } from '@datahub/shared'
+import { isWithinSchedule } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import WidgetCard from './WidgetCard'
@@ -70,13 +71,32 @@ export default function DashboardPage() {
     (user.roles.includes('editor') && dash?.ownerEmail === user.email) || dash?.ownerEmail === user.email)
 
   // Auto-refresh: no modo TV usa o intervalo do dashboard (ou 60s); fora dele,
-  // só se o dashboard tiver auto-atualização configurada.
+  // só se o dashboard tiver auto-atualização configurada. MAS se algum widget
+  // usa um conjunto com agendamento em lote ATIVO agora (dentro da janela de
+  // dia/horário), esse agendamento passa a mandar na dashboard INTEIRA — o
+  // ajuste fino por widget (autoRefreshSec) para de valer enquanto durar a
+  // janela, e volta a valer sozinho quando ela fechar.
+  //
+  // Por isso o timer roda numa base fixa e pequena (15s) em vez de recriar o
+  // intervalo a cada mudança: é o que permite a troca acontecer sozinha
+  // quando o relógio entra ou sai da janela, sem precisar recarregar a
+  // página nem refazer a chamada ao servidor.
+  const lastFiredRef = useRef(0)
   useEffect(() => {
-    const sec = present ? (dash?.settings?.autoRefreshSec || 60) : (dash?.settings?.autoRefreshSec || 0)
-    if (!sec) return
-    const t = setInterval(() => setRefreshKey((k) => k + 1), sec * 1000)
+    const CHECK_MS = 15_000
+    const t = setInterval(() => {
+      const now = new Date()
+      const active = (dash?.schedules ?? []).filter((s) => isWithinSchedule(s, now))
+      const scheduleSec = active.length ? Math.min(...active.map((s) => s.intervalMinutes * 60)) : null
+      const sec = scheduleSec ?? (present ? (dash?.settings?.autoRefreshSec || 60) : (dash?.settings?.autoRefreshSec || 0))
+      if (!sec) return
+      if (Date.now() - lastFiredRef.current >= sec * 1000) {
+        lastFiredRef.current = Date.now()
+        setRefreshKey((k) => k + 1)
+      }
+    }, CHECK_MS)
     return () => clearInterval(t)
-  }, [present, dash?.settings?.autoRefreshSec])
+  }, [present, dash?.settings?.autoRefreshSec, dash?.schedules])
 
   // Sair da apresentação quando o fullscreen é fechado (ESC/gesto do browser).
   useEffect(() => {

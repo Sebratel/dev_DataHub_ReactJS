@@ -14,6 +14,11 @@ import type { AccessUser } from '../../core/access.js'
 
 export const transformRouter = Router()
 
+// 'schedule' fica de fora de proposito: so a rota /schedules/:id/assign
+// pode gravar essa cadencia, porque ela precisa vir emparelhada com
+// schedule_id (a constraint do banco exige os dois juntos) -- aceitar
+// 'schedule' aqui deixaria a tela mandar um sem o outro e estourar um
+// erro de constraint cru em vez de uma mensagem clara.
 const CADENCES = new Set(['daily', 'hourly', 'manual', 'cascade'])
 
 function requireDb(_req: Request, res: Response, next: NextFunction): void {

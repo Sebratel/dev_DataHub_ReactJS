@@ -45,6 +45,22 @@ export default function DerivedCadencePanel({ dataset, onSaved }: { dataset: Dat
     }
   }
 
+  // Cadência 'schedule' não aparece no dropdown (a gravação dela precisa vir
+  // emparelhada com schedule_id, algo que só a tela de Agendamentos faz) — e
+  // por isso este painel não pode nem tentar renderizar o <select> nesse
+  // estado: sem opção correspondente selecionada, um clique acidental em
+  // "Salvar cadência" reverteria o agendamento em lote para outra coisa.
+  if (dataset.sync?.cadence === 'schedule') {
+    return (
+      <div className="mt-5 rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-900">
+        <h2 className="text-sm font-medium uppercase tracking-wider text-zinc-400">Atualização automática (admin)</h2>
+        <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+          Controlado por um agendamento em lote. Gerencie em Administração › Agendamentos.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="mt-5 rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-900">
       <h2 className="text-sm font-medium uppercase tracking-wider text-zinc-400">Atualização automática (admin)</h2>

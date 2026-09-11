@@ -7,7 +7,7 @@
 // de ser estética: comparar frescor entre linhas só funciona em coluna.
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock } from 'lucide-react'
+import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock, CalendarClock } from 'lucide-react'
 import type { DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -18,6 +18,7 @@ import { Card, CardHead } from '@/components/ui/Card'
 import { Pill } from '@/components/ui/Pill'
 import TierBadge, { tierOf } from '@/components/ui/TierBadge'
 import { DataGrid, Th, Tr, Td, EntityCell } from '@/components/ui/DataGrid'
+import ScheduleAssignDialog from './ScheduleAssignDialog'
 
 function hoursSince(iso: string | null): number | null {
   if (!iso) return null
@@ -46,16 +47,29 @@ type Filter = 'all' | 'source' | 'derived' | 'official'
 
 export default function DatasetsPage() {
   const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
+  // Agendamento em lote e' admin (mesma regra do backend em schedulesRouter).
+  const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [scheduling, setScheduling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
 
-  useEffect(() => {
+  function load() {
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
       .then((r) => setDatasets(r.datasets))
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar o catálogo.'))
-  }, [])
+  }
+  useEffect(load, [])
+
+  function toggleSelect(id: string) {
+    setSelected((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
 
   const stats = useMemo(() => {
     const list = datasets ?? []
@@ -144,6 +158,14 @@ export default function DatasetsPage() {
               ]}
             />
             <SearchInput value={query} onChange={setQuery} placeholder="Buscar por nome, slug ou etiqueta…" />
+            {isAdmin && selected.size > 0 && (
+              <button
+                onClick={() => setScheduling(true)}
+                className="flex h-[30px] items-center gap-1.5 rounded-lg bg-accent px-3 text-[12px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover"
+              >
+                <CalendarClock size={13} /> Agendar atualização ({selected.size})
+              </button>
+            )}
           </Toolbar>
 
           <Card>
@@ -162,6 +184,15 @@ export default function DatasetsPage() {
               <DataGrid>
                 <thead>
                   <tr>
+                    {isAdmin && (
+                      <Th className="w-[32px]">
+                        <input
+                          type="checkbox"
+                          checked={filtered.length > 0 && filtered.every((d) => selected.has(d.id))}
+                          onChange={(e) => setSelected(e.target.checked ? new Set(filtered.map((d) => d.id)) : new Set())}
+                        />
+                      </Th>
+                    )}
                     <Th>Conjunto</Th>
                     <Th className="w-[92px]">Camada</Th>
                     <Th className="w-[104px]">Tipo</Th>
@@ -178,6 +209,11 @@ export default function DatasetsPage() {
                     const tone = freshnessTone(h)
                     return (
                       <Tr key={d.id}>
+                        {isAdmin && (
+                          <Td onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleSelect(d.id)} />
+                          </Td>
+                        )}
                         <Td>
                           <Link to={`/datasets/${d.slug}`} className="block hover:text-info dark:hover:text-info-dark">
                             <EntityCell name={d.name} slug={d.description || d.slug}>
@@ -214,6 +250,13 @@ export default function DatasetsPage() {
             )}
           </Card>
         </div>
+      )}
+      {scheduling && (
+        <ScheduleAssignDialog
+          datasetIds={[...selected]}
+          onClose={() => setScheduling(false)}
+          onApplied={() => { setSelected(new Set()); load() }}
+        />
       )}
     </Page>
   )

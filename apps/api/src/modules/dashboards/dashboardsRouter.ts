@@ -152,7 +152,27 @@ dashboardsRouter.get('/:id', requireAuth(), requireDb, async (req, res) => {
      where w.dashboard_id = $1 order by w.sort_order, w.created_at`,
     [req.params.id],
   )).rows
-  res.json({ dashboard: { ...toSummary(row), tabs: tabs.map(toTab), widgets: widgets.map(toWidget) } })
+
+  // Agendamentos ('schedule') usados por algum dataset por trás de um widget
+  // deste dashboard. O front usa isto para decidir a atualização automática:
+  // enquanto QUALQUER um destes estiver dentro da janela (dia+horário) AGORA,
+  // ele prevalece sobre o autoRefreshSec fixo do dashboard.
+  const datasetIds = [...new Set(widgets.map((w) => w.dataset_id).filter(Boolean))] as string[]
+  const schedules = datasetIds.length
+    ? (await db.query(
+        `select distinct s.id, s.name, s.interval_minutes, s.start_time, s.end_time, s.weekdays
+           from datasets d join sync_schedules s on s.id = d.schedule_id
+          where d.id = any($1::uuid[]) and d.sync_cadence = 'schedule'`,
+        [datasetIds],
+      )).rows.map((s) => ({
+        id: String(s.id), name: String(s.name), intervalMinutes: Number(s.interval_minutes),
+        startTime: String(s.start_time), endTime: String(s.end_time), weekdays: Number(s.weekdays),
+      }))
+    : []
+
+  res.json({
+    dashboard: { ...toSummary(row), tabs: tabs.map(toTab), widgets: widgets.map(toWidget), schedules },
+  })
 })
 
 dashboardsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {

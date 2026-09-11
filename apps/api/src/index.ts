@@ -9,6 +9,7 @@ import { requireAuth } from './modules/auth/middleware.js'
 import { connectionsRouter } from './modules/catalog/connectionsRouter.js'
 import { datasetsRouter } from './modules/catalog/datasetsRouter.js'
 import { syncRouter } from './modules/sync/syncRouter.js'
+import { schedulesRouter } from './modules/sync/schedulesRouter.js'
 import { queryRouter } from './modules/query/queryRouter.js'
 import { viewsRouter } from './modules/explorer/viewsRouter.js'
 import { exportRouter } from './modules/explorer/exportRouter.js'
@@ -84,6 +85,7 @@ app.use('/api/v1/health-checks', monitorRouter)
 // específicas (/:slug/query, /:id/sync) e vêm antes do router genérico.
 app.use('/api/v1/datasets', queryRouter)
 app.use('/api/v1/datasets', syncRouter)
+app.use('/api/v1/schedules', schedulesRouter)
 app.use('/api/v1/datasets', viewsRouter)
 app.use('/api/v1/datasets', exportRouter)
 app.use('/api/v1/datasets', transformRouter) // /derived — antes do genérico

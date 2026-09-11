@@ -62,7 +62,15 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     try {
       await api(`/api/v1/datasets/${dataset.id}/sync-config`, {
         method: 'PATCH',
-        body: JSON.stringify({ syncMode: mode, incrementalKey: incKey || null, syncCadence: cadence, syncSince: since || null }),
+        // Cadencia 'schedule' e' controlada pela tela de Agendamentos -- nao
+        // reenvia o valor aqui, senao um clique em "Salvar configuracao" por
+        // outro motivo (mudar o modo, por exemplo) e recusado pelo backend
+        // (que so aceita daily/hourly/manual nesta rota).
+        body: JSON.stringify({
+          syncMode: mode, incrementalKey: incKey || null,
+          syncCadence: dataset.sync?.cadence === 'schedule' ? undefined : cadence,
+          syncSince: since || null,
+        }),
       })
       onSynced()
     } catch (e) {
@@ -144,7 +152,16 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
             />
           </label>
         )}
-        {mode !== 'live' && (
+        {mode !== 'live' && dataset.sync?.cadence === 'schedule' && (
+          // Cadencia 'schedule' NAO tem opcao no dropdown abaixo -- se ele
+          // renderizasse mesmo assim, o <select> ficaria com um valor que
+          // nao bate com nenhuma <option>, e salvar sem mexer em nada
+          // sobrescreveria silenciosamente o agendamento em lote por engano.
+          <p className="max-w-[220px] rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+            Controlado por um agendamento em lote. Gerencie em Administração › Agendamentos.
+          </p>
+        )}
+        {mode !== 'live' && dataset.sync?.cadence !== 'schedule' && (
           <label className="text-sm">
             <span className="mb-1 block text-xs text-zinc-500">Cadência (com que frequência sincroniza sozinho)</span>
             <select
