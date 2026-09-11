@@ -14,6 +14,8 @@ import type { AccessUser } from '../../core/access.js'
 
 export const transformRouter = Router()
 
+const CADENCES = new Set(['daily', 'hourly', 'manual', 'cascade'])
+
 function requireDb(_req: Request, res: Response, next: NextFunction): void {
   if (!isDbAvailable()) { res.status(503).json({ error: 'Banco de metadados indisponível.' }); return }
   next()
@@ -47,8 +49,11 @@ transformRouter.post('/derived/preview', ...editorOnly, async (req, res) => {
 })
 
 transformRouter.post('/derived', ...editorOnly, async (req, res) => {
-  const { name, description, sql } = req.body ?? {}
+  const { name, description, sql, syncCadence } = req.body ?? {}
   if (!name || !sql) return res.status(400).json({ error: 'name e sql são obrigatórios.' })
+  if (syncCadence != null && !CADENCES.has(String(syncCadence))) {
+    return res.status(400).json({ error: 'Cadência inválida.' })
+  }
   try {
     await tryPreview(req.user!, String(sql))
   } catch (e) {
@@ -65,10 +70,11 @@ transformRouter.post('/derived', ...editorOnly, async (req, res) => {
 
   const ds = (await db.query(
     `insert into datasets (tenant_id, kind, transform_sql, connection_id, schema_name, object_name,
-                           slug, name, description, sync_mode, owner_email)
-     values ($1, 'derived', $2, 'lake', 'derived', $3, $3, $4, $5, 'snapshot', $6)
+                           slug, name, description, sync_mode, sync_cadence, owner_email)
+     values ($1, 'derived', $2, 'lake', 'derived', $3, $3, $4, $5, 'snapshot', $6, $7)
      returning id`,
-    [tenant.id, String(sql), slug, String(name).trim(), String(description || ''), req.user!.email],
+    [tenant.id, String(sql), slug, String(name).trim(), String(description || ''),
+     syncCadence ? String(syncCadence) : 'daily', req.user!.email],
   )).rows[0]
 
   void enqueueSync(String(ds.id)) // primeira materialização em background
@@ -93,7 +99,7 @@ async function findEditable(req: Request): Promise<{ id: string; slug: string } 
 transformRouter.patch('/derived/:id', ...editorOnly, async (req, res) => {
   const ds = await findEditable(req)
   if (!ds) return res.status(404).json({ error: 'Conjunto derivado não encontrado (ou você não é o dono).' })
-  const { name, description, sql } = req.body ?? {}
+  const { name, description, sql, syncCadence } = req.body ?? {}
   if (sql != null) {
     try {
       await tryPreview(req.user!, String(sql))
@@ -102,12 +108,16 @@ transformRouter.patch('/derived/:id', ...editorOnly, async (req, res) => {
       return res.status(400).json({ error: (e as Error).message })
     }
   }
+  if (syncCadence != null && !CADENCES.has(String(syncCadence))) {
+    return res.status(400).json({ error: 'Cadência inválida.' })
+  }
   await db.query(
     `update datasets set
        name = coalesce($2, name), description = coalesce($3, description),
-       transform_sql = coalesce($4, transform_sql), updated_at = now()
+       transform_sql = coalesce($4, transform_sql),
+       sync_cadence = coalesce($5, sync_cadence), updated_at = now()
      where id = $1`,
-    [ds.id, name ?? null, description ?? null, sql ?? null],
+    [ds.id, name ?? null, description ?? null, sql ?? null, syncCadence ? String(syncCadence) : null],
   )
   if (sql != null) void enqueueSync(ds.id) // SQL mudou → re-materializa
   await audit(req, 'datasets.derived.update', { type: 'dataset', id: ds.slug }, { sqlChanged: sql != null })

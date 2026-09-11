@@ -15,7 +15,7 @@ import { querySource } from '../../connectors/pools.js'
 import { fetchHttpPages, type HttpEndpoint, type HttpPagination, type PageMetric } from '../../connectors/httpSource.js'
 import { datasetDir, parquetGlob, clearParquet, dirBytes, uploadToGcs, listParquet, stagingDir } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
-import { materializeDerived } from '../transform/derive.js'
+import { materializeDerived, referencedSlugs } from '../transform/derive.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -72,13 +72,60 @@ function jsonLine(row: Record<string, unknown>): string {
 // Fila sequencial global — dois datasets jamais sincronizam ao mesmo tempo,
 // nem em fontes diferentes (prioridade absoluta: não pesar na produção).
 let queue: Promise<unknown> = Promise.resolve()
-export function enqueueSync(datasetId: string): Promise<string> {
+
+// `visited` evita ciclo infinito quando A cascateia para B e B (por engano)
+// cascateia de volta para A — cada slug só dispara cascata uma vez por corrida.
+export function enqueueSync(datasetId: string, visited: Set<string> = new Set()): Promise<string> {
   const job = queue.then(() => runSync(datasetId)).catch((e) => {
     console.error(`[sync] falha: ${(e as Error).message}`)
     return `erro: ${(e as Error).message}`
   })
   queue = job
+
+  // A cascata dispara DEPOIS que `job` resolve, fora da cadeia atribuída a
+  // `queue`. Isto é o que evita o deadlock: se estivesse dentro da mesma
+  // cadeia, um dependente tentando se enfileirar na MESMA fila que ainda não
+  // terminou de resolver ficaria esperando por si mesmo para sempre.
+  void job.then((result) => {
+    if (typeof result === 'string' && !result.startsWith('erro:')) {
+      void cascadeToDependents(datasetId, visited).catch((e) =>
+        console.warn(`[sync] cascata a partir de ${datasetId} falhou: ${(e as Error).message}`))
+    }
+  })
+
   return job as Promise<string>
+}
+
+// Depois de UM dataset (fonte ou derivado) sincronizar com sucesso, recalcula
+// na hora qualquer derivado com cadência 'cascade' que o referencie no
+// transform_sql — em vez de esperar o próximo tick de hora/dia bater.
+//
+// O corte de ciclo (visited) precisa acontecer ANTES de enfileirar o
+// dependente, não depois: checar só no início desta função (depois que o
+// dependente já rodou) deixava um ciclo A->B->A executar A DUAS vezes antes de
+// perceber a repetição na segunda chamada. Checando aqui, o segundo caminho
+// nunca chega a chamar enqueueSync — para uma iteração mais cedo.
+async function cascadeToDependents(datasetId: string, visited: Set<string>): Promise<void> {
+  const ds = (await db.query(`select slug, tenant_id from datasets where id = $1`, [datasetId])).rows[0]
+  if (!ds) return
+  const slug = String(ds.slug)
+  visited.add(slug) // o próprio dataset que acabou de rodar entra no conjunto
+
+  const rows = (await db.query(
+    `select id, slug, transform_sql from datasets
+      where tenant_id = $1 and kind = 'derived' and sync_cadence = 'cascade'`,
+    [ds.tenant_id],
+  )).rows
+  const dependents = rows.filter((r) => referencedSlugs(String(r.transform_sql ?? ''), [slug]).includes(slug))
+  for (const dep of dependents) {
+    const depSlug = String(dep.slug)
+    if (visited.has(depSlug)) {
+      console.warn(`[sync] cascata interrompida: ciclo de dependência envolvendo "${depSlug}".`)
+      continue
+    }
+    console.log(`[sync] cascata: "${slug}" atualizou -> recalculando "${depSlug}".`)
+    await enqueueSync(String(dep.id), visited)
+  }
 }
 
 async function runSync(datasetId: string): Promise<string> {

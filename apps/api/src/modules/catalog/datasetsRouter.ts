@@ -92,7 +92,7 @@ function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary
       sync: {
         mode: String(row.sync_mode) as 'live' | 'snapshot' | 'incremental',
         incrementalKey: (row.incremental_key as string) ?? null,
-        cadence: String(row.sync_cadence ?? 'daily') as 'daily' | 'hourly' | 'manual',
+        cadence: String(row.sync_cadence ?? 'daily') as 'daily' | 'hourly' | 'manual' | 'cascade',
         since: (row.sync_since as string) ?? null,
       },
     } : {}),

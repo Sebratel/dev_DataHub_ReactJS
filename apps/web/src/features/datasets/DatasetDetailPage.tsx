@@ -15,6 +15,7 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import OfficialBadge from '@/components/OfficialBadge'
 import SyncPanel from './SyncPanel'
+import DerivedCadencePanel from './DerivedCadencePanel'
 import DataTable from './DataTable'
 import AccessDialog from './AccessDialog'
 import EditDatasetDialog from './EditDatasetDialog'
@@ -368,6 +369,9 @@ export default function DatasetDetailPage() {
 
       {/* Sincronização com o lake (admin; fontes) */}
       {isAdmin && !derived && <SyncPanel dataset={dataset} onSynced={load} />}
+
+      {/* Cadência do derivado -- inclui a opcao 'cascade' (admin ou dono) */}
+      {canManage && derived && <DerivedCadencePanel dataset={dataset} onSaved={load} />}
 
       {/* Dados do lake — qualquer usuário, quando já sincronizado */}
       {dataset.lastSyncAt && <DataTable dataset={dataset} />}

@@ -65,7 +65,7 @@ export interface DatasetSummary {
   sync?: {
     mode: 'live' | 'snapshot' | 'incremental'
     incrementalKey: string | null
-    cadence: 'daily' | 'hourly' | 'manual'
+    cadence: 'daily' | 'hourly' | 'manual' | 'cascade'
     // Piso da 1ª carga incremental (valor da chave). null = desde o início.
     since: string | null
   }
