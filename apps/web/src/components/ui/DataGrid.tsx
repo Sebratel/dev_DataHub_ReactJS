@@ -4,10 +4,25 @@
 // a página nunca rolar na horizontal.
 import clsx from 'clsx'
 
-export function DataGrid({ children, className }: { children: React.ReactNode; className?: string }) {
+export function DataGrid({ children, className, fixed }: {
+  children: React.ReactNode
+  className?: string
+  /**
+   * table-layout: fixed. Sem isto, uma tabela com UMA coluna sem largura
+   * (a de nome+slug, quase sempre a primeira) deixa o `truncate` do
+   * EntityCell inerte: em table-layout:auto (padrão do HTML) o navegador
+   * alarga a coluna para caber o texto inteiro em vez de cortar com
+   * reticências — um nome comprido estica a tabela toda e força rolagem
+   * horizontal, o oposto do que este componente promete no comentário acima.
+   * Ligue quando a tabela tem exatamente UMA coluna flexível (o padrão comum
+   * aqui); tabelas com colunas dinâmicas ou mais de uma coluna sem largura
+   * (prévia de SQL, por ex.) preferem o auto de sempre.
+   */
+  fixed?: boolean
+}) {
   return (
     <div className="overflow-x-auto">
-      <table className={clsx('w-full border-collapse text-[12px]', className)}>{children}</table>
+      <table className={clsx('w-full border-collapse text-[12px]', fixed && 'table-fixed', className)}>{children}</table>
     </div>
   )
 }

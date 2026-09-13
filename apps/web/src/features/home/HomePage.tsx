@@ -293,7 +293,7 @@ export default function HomePage() {
               {/* Conjuntos recentes */}
               <Card>
                 <CardHead icon={Table2} title="Atualizados recentemente" sub={`${Math.min(8, view.recent.length)} de ${datasets.length}`} />
-                <DataGrid>
+                <DataGrid fixed>
                   <thead>
                     <tr>
                       <Th>Conjunto</Th>

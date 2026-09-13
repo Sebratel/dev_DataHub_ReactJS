@@ -122,7 +122,7 @@ export default function NotebooksPage() {
                 </button>
               </div>
             ) : (
-              <DataGrid>
+              <DataGrid fixed>
                 <thead>
                   <tr>
                     <Th>Notebook</Th>

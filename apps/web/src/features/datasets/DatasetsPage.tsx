@@ -181,7 +181,7 @@ export default function DatasetsPage() {
                 ) : undefined}
               />
             ) : (
-              <DataGrid>
+              <DataGrid fixed>
                 <thead>
                   <tr>
                     {isAdmin && (

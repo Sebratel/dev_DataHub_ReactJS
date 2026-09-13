@@ -131,7 +131,7 @@ export default function ModelsPage() {
                 </button>
               </div>
             ) : (
-              <DataGrid>
+              <DataGrid fixed>
                 <thead>
                   <tr>
                     <Th>Modelo</Th>

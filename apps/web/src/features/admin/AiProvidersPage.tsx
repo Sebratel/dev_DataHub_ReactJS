@@ -211,7 +211,7 @@ export default function AiProvidersPage() {
                 }
               />
             ) : (
-              <DataGrid>
+              <DataGrid fixed>
                 <thead>
                   <tr>
                     <Th>Provedor</Th>

@@ -101,7 +101,7 @@ export default function DashboardsPage() {
                 ) : undefined}
               />
             ) : (
-              <DataGrid>
+              <DataGrid fixed>
                 <thead>
                   <tr>
                     <Th>Painel</Th>
