@@ -55,6 +55,13 @@ services:
         condition: service_healthy
     environment:
       API_PORT: 8790
+      # Fuso do PROCESSO. O agendador compara a janela dos agendamentos com a
+      # hora local do container (isWithinSchedule usa getHours/getDay), e a
+      # MESMA função roda no navegador do admin ao decidir o auto-refresh da
+      # dashboard. Sem isto o Node fica em UTC (a imagem base não define fuso)
+      # e os dois discordam em 3h: uma janela "07:00-19:00" digitada em horário
+      # de Brasília fecharia, de fato, às 16:00.
+      TZ: ${TZ:-America/Sao_Paulo}
       ALLOWED_DOMAIN: ${ALLOWED_DOMAIN:-sebratel.com.br}
       # Mesmo projeto do bundle do web. Definido = a API aceita ID token do
       # Firebase, conferindo a assinatura localmente (sem chamar o Google a
