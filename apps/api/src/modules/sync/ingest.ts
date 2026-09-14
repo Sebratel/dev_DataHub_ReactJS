@@ -6,7 +6,7 @@
 //   • SELECT simples de colunas, sem regra de negócio (guard read-only).
 // O lote vai para JSONL temporário; no fim, o DuckDB converte para Parquet.
 // ─────────────────────────────────────────────────────────────────────────
-import { createWriteStream, unlinkSync, existsSync } from 'node:fs'
+import { createWriteStream, unlinkSync, existsSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { config } from '../../core/config.js'
 import { db } from '../../db/pool.js'
@@ -128,6 +128,42 @@ async function cascadeToDependents(datasetId: string, visited: Set<string>): Pro
   }
 }
 
+// Reescreve o conjunto de Parquets mantendo, para cada identidade (dedupeKeys),
+// apenas a linha MAIS RECENTE — o "upsert" que o lake não tinha. Devolve o
+// arquivo final.
+//
+// A ordem das operações importa: o compactado entra ANTES de as partes antigas
+// saírem. O inverso (limpar e depois renomear) abre uma janela em que o conjunto
+// fica vazio em disco — uma queda do processo ali perde o dado. Nesta ordem, o
+// pior caso de uma queda no meio é o conjunto ficar com linhas repetidas até a
+// próxima compactação, que conserta sozinha. Perder dado não conserta.
+export async function compactLake(
+  dir: string, dedupeKeys: string[], recencyKeys: string[], runId: string,
+): Promise<string> {
+  const ident = (s: string) => `"${String(s).replace(/"/g, '""')}"`
+  const partition = dedupeKeys.map(ident).join(', ')
+  const recency = recencyKeys.length > 1
+    ? `greatest(${recencyKeys.map(ident).join(', ')})`
+    : recencyKeys.length === 1 ? ident(recencyKeys[0]) : 'NULL'
+  // Extensão .tmp de propósito: fica FORA do glob *.parquet, senão o próprio
+  // read_parquet desta consulta leria o arquivo que ela ainda está escrevendo.
+  const tmp = join(dir, `compact-${runId}.tmp`).replace(/\\/g, '/')
+  await duckQuery(
+    `copy (
+       select * exclude (__rn) from (
+         select *, row_number() over (
+           partition by ${partition} order by ${recency} desc nulls last
+         ) as __rn
+         from read_parquet('${parquetGlob(dir)}')
+       ) where __rn = 1
+     ) to '${tmp}' (format parquet, compression zstd)`,
+  )
+  const final = join(dir, `part-compacted-${runId}.parquet`)
+  renameSync(tmp, final)
+  clearParquet(dir, final)
+  return final
+}
+
 async function runSync(datasetId: string): Promise<string> {
   const ds = (await db.query(
     `select d.*, t.slug as tenant_slug from datasets d
@@ -148,9 +184,9 @@ async function runSync(datasetId: string): Promise<string> {
   if (!def) throw new Error(`Fonte desconhecida: ${ds.connection_id}`)
 
   const mode = ds.sync_mode === 'incremental' && ds.incremental_key ? 'incremental' : 'snapshot'
-  // Incremental SEM watermark = recomeço (primeira carga ou modo trocado):
+  // Incremental SEM watermark NENHUM = recomeço (primeira carga ou modo trocado):
   // é uma carga completa e deve SUBSTITUIR as partes antigas, não acrescentar.
-  const replaceParts = mode === 'snapshot' || ds.watermark == null
+  const replaceParts = mode === 'snapshot' || (ds.watermark == null && ds.watermark_2 == null)
   const run = (await db.query(
     `insert into sync_runs (dataset_id, mode) values ($1, $2) returning id`,
     [datasetId, mode],
@@ -186,7 +222,10 @@ async function runSync(datasetId: string): Promise<string> {
 
   let total = 0
   const apiMetrics: PageMetric[] = [] // fontes http: latência/status por chamada
+  // Um watermark POR CHAVE: as duas passadas avançam independentes uma da outra
+  // (o maior "created" visto não diz nada sobre o maior "modified").
   let newWatermark: string | null = ds.watermark ?? null
+  let newWatermark2: string | null = ds.watermark_2 ?? null
   const { batchSize, batchPauseMs, maxRows } = config.sync
   // Disjuntor: aborta antes de a carga em fuga derrubar o servidor.
   const guardRunaway = () => {
@@ -222,44 +261,97 @@ async function runSync(datasetId: string): Promise<string> {
         await reportProgress(run.id, total)
       }
     } else if (mode === 'incremental') {
-      // Keyset: WHERE key {>|>=} $bound ORDER BY key LIMIT n — nunca OFFSET.
-      const keyCol = fields.find((f) => f.key === ds.incremental_key)?.source_column ?? ds.incremental_key
       const ph = def.kind === 'mysql' ? '?' : '$1'
-      for (;;) {
-        // Limite inferior: o watermark (>) manda; na PRIMEIRA carga (sem
-        // watermark), usa o piso sync_since (>=) se houver — é o "ponto de
-        // partida" que corta a tabela gigante já na origem.
-        const bound = newWatermark != null
-          ? { op: '>', val: newWatermark }
-          : ds.sync_since != null
-            ? { op: '>=', val: String(ds.sync_since) }
+
+      // Piso da PRIMEIRA carga (sem watermark ainda): data fixa ("publicar a
+      // partir de 01/01/2025") ou RELATIVA ("últimos N dias"), esta resolvida
+      // agora, a cada execução. A relativa é o que torna "tudo que foi criado
+      // ou editado hoje" expressável sem alguém reeditar a data à mão.
+      const floor: string | null = ds.sync_since != null
+        ? String(ds.sync_since)
+        : ds.sync_since_days != null
+          ? new Date(Date.now() - Number(ds.sync_since_days) * 86_400_000).toISOString()
+          : null
+
+      // Folga de reconferência: rebobina o watermark N minutos. Sem ela, uma
+      // edição que chega com carimbo ANTERIOR ao watermark (transação longa,
+      // relógio da fonte atrasado) fica para trás do corte e some para sempre.
+      // Só faz sentido em chave de data — em chave numérica, subtrair minutos
+      // não significa nada, então passa direto.
+      const lagged = (mark: string, isDate: boolean): string => {
+        const lag = Number(ds.watermark_lag_minutes ?? 0)
+        if (!lag || !isDate) return mark
+        const t = new Date(mark)
+        if (Number.isNaN(t.getTime())) return mark
+        return new Date(t.getTime() - lag * 60_000).toISOString()
+      }
+
+      // UMA passada keyset sobre UMA chave: WHERE key {>|>=} $bound ORDER BY key
+      // LIMIT n — nunca OFFSET. Escreve no MESMO JSONL das demais (as passadas
+      // somam) e devolve o watermark novo da sua chave.
+      const keysetPass = async (exposedKey: string, storedWatermark: string | null): Promise<string | null> => {
+        const field = fields.find((f) => f.key === exposedKey)
+        const keyCol = field?.source_column ?? exposedKey
+        const isDate = String(field?.type) === 'date'
+        let cursor: { op: '>' | '>='; val: string } | null = storedWatermark != null
+          ? { op: '>', val: lagged(storedWatermark, isDate) }
+          : floor != null
+            ? { op: '>=', val: floor }
             : null
-        const where = bound ? `where ${q(keyCol)} ${bound.op} ${ph}` : ''
-        const sql = `select ${cols} from ${from} ${where} order by ${q(keyCol)} limit ${batchSize}`
-        const { rows } = await querySource(String(ds.connection_id), sql, bound ? [bound.val] : [])
-        for (const row of rows) await write(jsonLine(coerce(row)))
-        total += rows.length
-        const prevWatermark = newWatermark
-        if (rows.length) {
-          const last = rows[rows.length - 1][String(ds.incremental_key)]
-          newWatermark = last instanceof Date ? last.toISOString() : String(last)
+        let last: string | null = null // maior valor visto NESTA passada
+        for (;;) {
+          // "is not null" explícito: uma passada keyset só consegue avançar
+          // sobre valores não nulos. Sem isto, uma carga sem piso nem watermark
+          // traz as linhas de chave NULL no fim da ordenação e grava a string
+          // "null" como watermark — e o lote seguinte compara data com o texto
+          // 'null'. Linha de chave nula não se perde: ela entra pela OUTRA
+          // passada (é exatamente o caso do modified vazio).
+          const where = cursor
+            ? `where ${q(keyCol)} is not null and ${q(keyCol)} ${cursor.op} ${ph}`
+            : `where ${q(keyCol)} is not null`
+          const sql = `select ${cols} from ${from} ${where} order by ${q(keyCol)} limit ${batchSize}`
+          const { rows } = await querySource(String(ds.connection_id), sql, cursor ? [cursor.val] : [])
+          for (const row of rows) await write(jsonLine(coerce(row)))
+          total += rows.length
+          if (rows.length) {
+            const v = rows[rows.length - 1][exposedKey]
+            const s = v instanceof Date ? v.toISOString() : String(v)
+            // Trava anti-loop: um lote CHEIO cujo cursor NÃO avançou significa
+            // que a chave não está progredindo (valor repetido/não extraído) e a
+            // carga releria as MESMAS linhas para sempre (foi o que bateu 86,7M
+            // e encheu o disco). Aborta com erro claro em vez de fugir.
+            if (rows.length === batchSize && s === last) {
+              throw new Error(
+                `Sincronização incremental não convergiu: a chave "${exposedKey}" não avançou entre lotes ` +
+                `(valor "${s}" repetido em um lote cheio). A chave precisa ser CRESCENTE e única o ` +
+                `suficiente — verifique o campo escolhido ou use uma chave única (ex.: id).`,
+              )
+            }
+            last = s
+            cursor = { op: '>', val: s }
+          }
+          guardRunaway()
+          checkCancel()
+          await reportProgress(run.id, total) // progresso ao vivo na tela
+          if (rows.length < batchSize) break
+          await sleep(batchPauseMs) // respiro para a fonte entre lotes
         }
-        // Trava anti-loop: um lote CHEIO cujo watermark NÃO avançou significa que
-        // a chave não está progredindo (valor repetido/nulo/não extraído) e a
-        // carga releria as MESMAS linhas para sempre (foi o que bateu 86,7M e
-        // encheu o disco). Aborta com erro claro em vez de fugir.
-        if (rows.length === batchSize && newWatermark === prevWatermark) {
-          throw new Error(
-            `Sincronização incremental não convergiu: a chave "${ds.incremental_key}" não avançou entre lotes ` +
-            `(valor "${newWatermark}" repetido em um lote cheio). A chave precisa ser CRESCENTE e única o ` +
-            `suficiente — verifique o campo escolhido ou use uma chave única (ex.: id).`,
-          )
-        }
-        guardRunaway()
-        checkCancel()
-        await reportProgress(run.id, total) // progresso ao vivo na tela
-        if (rows.length < batchSize) break
-        await sleep(batchPauseMs) // respiro para a fonte entre lotes
+        // A leitura é ascendente e SEM teto, então o último valor visto é o maior
+        // da fonte para esta chave — pode virar watermark direto. Sem linha
+        // nenhuma, preserva o antigo: a folga não pode fazer o progresso andar
+        // para trás.
+        return last ?? storedWatermark
+      }
+
+      // DUAS passadas, uma por chave — e não um order by greatest(created,
+      // modified) na fonte, que não usa índice e viraria varredura completa da
+      // tabela a cada lote, contra a produção, a cada 5 minutos. Cada passada
+      // ordena pela SUA coluna e continua indexada. Elas se sobrepõem de
+      // propósito (linha criada E editada na janela vem nas duas); quem resolve
+      // a repetição é a compactação por dedupe_keys, mais abaixo.
+      newWatermark = await keysetPass(String(ds.incremental_key), newWatermark)
+      if (ds.incremental_key_2) {
+        newWatermark2 = await keysetPass(String(ds.incremental_key_2), newWatermark2)
       }
     } else {
       // Snapshot paginado. OFFSET SEM ORDER BY pode reler/pular linhas e, com
@@ -308,7 +400,24 @@ async function runSync(datasetId: string): Promise<string> {
         : `read_json_auto('${jsonl.replace(/\\/g, '/')}')` // sem campos: fallback improvável
       await duckQuery(`copy (select ${selectList || '*'} from ${src}) to '${part}' (format parquet, compression zstd)`)
       if (replaceParts) clearParquet(dir, join(dir, `part-${run.id}.parquet`))
-      await uploadToGcs(part, String(ds.tenant_slug), String(ds.slug))
+
+      // UPSERT no lake. Sem isto, a linha reeditada CONVIVE com a versão antiga
+      // (o incremental acrescenta uma parte e nada remove a anterior), e as duas
+      // passadas ainda trazem a mesma linha duas vezes de propósito. A
+      // compactação é o que transforma "só acrescenta" em "atualiza ou cria".
+      const dedupeKeys = ((ds.dedupe_keys as string[] | null) ?? []).filter(Boolean)
+      if (mode === 'incremental' && dedupeKeys.length) {
+        // Quem vence quando a mesma identidade aparece duas vezes: a data mais
+        // recente entre as chaves incrementais — é o "quando o modified for
+        // maior que o created, vale o modified". O greatest do DuckDB IGNORA
+        // NULL (como o Postgres, ao contrário do MySQL), então o created sozinho
+        // já decide quando o modified é vazio, que é a maioria das linhas.
+        const recency = [ds.incremental_key, ds.incremental_key_2].filter(Boolean).map(String)
+        const final = await compactLake(dir, dedupeKeys, recency, String(run.id))
+        await uploadToGcs(final, String(ds.tenant_slug), String(ds.slug))
+      } else {
+        await uploadToGcs(part, String(ds.tenant_slug), String(ds.slug))
+      }
     }
 
     // Contagem oficial vem do lake (fonte não é retocada).
@@ -317,8 +426,9 @@ async function runSync(datasetId: string): Promise<string> {
       : 0
 
     await db.query(
-      `update datasets set row_count = $2, last_sync_at = now(), watermark = $3, updated_at = now() where id = $1`,
-      [datasetId, count, newWatermark],
+      `update datasets set row_count = $2, last_sync_at = now(), watermark = $3, watermark_2 = $4,
+                          updated_at = now() where id = $1`,
+      [datasetId, count, newWatermark, newWatermark2],
     )
     await db.query(
       `update sync_runs set status = 'done', rows = $2, bytes = $3, finished_at = now() where id = $1`,

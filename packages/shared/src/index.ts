@@ -65,10 +65,22 @@ export interface DatasetSummary {
   sync?: {
     mode: 'live' | 'snapshot' | 'incremental'
     incrementalKey: string | null
+    // 2ª chave incremental: uma passada por chave (ex.: created + modified), o
+    // que permite pegar o que foi CRIADO e o que foi EDITADO no mesmo sync.
+    // Exige dedupeKeys — sem identidade, as duas passadas duplicariam a linha.
+    incrementalKey2: string | null
     cadence: 'daily' | 'hourly' | 'manual' | 'cascade' | 'schedule'
     scheduleId?: string | null
     // Piso da 1ª carga incremental (valor da chave). null = desde o início.
     since: string | null
+    // Piso RELATIVO, em dias — alternativa ao `since` fixo. Exclusivos entre si.
+    sinceDays: number | null
+    // Identidade da linha. Vazio = só-acrescenta (comportamento antigo);
+    // preenchido = upsert, a versão mais recente substitui a anterior.
+    dedupeKeys: string[]
+    // Rebobina o watermark N minutos a cada sync, para não perder edição que
+    // chega com carimbo retroativo. A compactação absorve a releitura.
+    watermarkLagMinutes: number
   }
 }
 
