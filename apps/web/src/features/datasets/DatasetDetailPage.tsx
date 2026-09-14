@@ -5,7 +5,7 @@ import { useEffect, useState, useCallback, type ReactNode } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check,
-  Compass, GitMerge, RefreshCw, Shield, MoreVertical, Trash2, Database,
+  Compass, GitMerge, Shield, MoreVertical, Trash2, Database,
   Rows3, Columns3, Clock, AlertTriangle, BadgeCheck,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -60,7 +60,6 @@ export default function DatasetDetailPage() {
   const { slug } = useParams()
   const navigate = useNavigate()
   const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
-  const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
   const userEmail = useAuthStore((s) => s.user?.email ?? null)
 
   const [dataset, setDataset] = useState<DatasetDetail | null>(null)
@@ -69,7 +68,6 @@ export default function DatasetDetailPage() {
   const [previewBusy, setPreviewBusy] = useState(false)
   const [editingField, setEditingField] = useState<string | null>(null)
   const [labelDraft, setLabelDraft] = useState('')
-  const [materializing, setMaterializing] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [showAccess, setShowAccess] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
@@ -126,19 +124,6 @@ export default function DatasetDetailPage() {
   const derived = dataset.kind === 'derived'
   const canManage = isAdmin || (!!userEmail && dataset.ownerEmail === userEmail)
   const fresh = !!dataset.lastSyncAt && Date.now() - new Date(dataset.lastSyncAt).getTime() < 26 * 3600_000
-
-  async function materializeNow() {
-    if (!dataset) return
-    setMenuOpen(false)
-    setMaterializing(true)
-    try {
-      await api(`/api/v1/datasets/derived/${dataset.id}/materialize`, { method: 'POST', body: '{}' })
-      setTimeout(() => { setMaterializing(false); load() }, 2500)
-    } catch (e) {
-      setMaterializing(false)
-      setError(e instanceof Error ? e.message : 'Falha ao materializar.')
-    }
-  }
 
   async function toggleOfficial() {
     if (!dataset) return
@@ -232,7 +217,7 @@ export default function DatasetDetailPage() {
             <div className="relative">
               <button onClick={() => setMenuOpen((v) => !v)} aria-label="Mais ações"
                 className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800">
-                {materializing || previewBusy ? <Loader2 size={16} className="animate-spin" /> : <MoreVertical size={16} />}
+                {previewBusy ? <Loader2 size={16} className="animate-spin" /> : <MoreVertical size={16} />}
               </button>
               {menuOpen && (
                 <>
@@ -247,15 +232,18 @@ export default function DatasetDetailPage() {
                         {dataset.official ? 'Remover selo oficial' : 'Marcar como oficial'}
                       </button>
                     )}
-                    {derived && canEdit && (
-                      <>
-                        <Link to={`/datasets/derived/new?slug=${dataset.slug}`} className={menuItem}>
-                          <GitMerge size={15} className="text-zinc-400" /> Editar SQL
-                        </Link>
-                        <button className={menuItem} onClick={() => void materializeNow()}>
-                          <RefreshCw size={15} className="text-zinc-400" /> Atualizar agora
-                        </button>
-                      </>
+                    {/* canManage (admin OU dono), nao canEdit (qualquer editor) --
+                        e o que o backend de fato exige (findEditable em
+                        transformRouter.ts); com canEdit um editor que nao e
+                        dono via este item e levava 404 sem explicacao.
+                        "Atualizar agora" saiu daqui: o painel de Atualizacao
+                        automatica, mais abaixo na pagina, ja tem o mesmo botao
+                        com status e erro reais -- em vez do timeout as-cegas
+                        de 2,5s que existia aqui. */}
+                    {derived && canManage && (
+                      <Link to={`/datasets/derived/new?slug=${dataset.slug}`} className={menuItem}>
+                        <GitMerge size={15} className="text-zinc-400" /> Editar SQL
+                      </Link>
                     )}
                     {isAdmin && !derived && (
                       <button className={menuItem} onClick={() => void loadPreview()}>

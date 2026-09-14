@@ -1,10 +1,10 @@
 // Painel de sincronização (admin): modo, chave incremental, disparo manual e
 // histórico de execuções. O sync roda em fila no servidor; aqui só acompanhamos.
-import { useEffect, useState, useCallback } from 'react'
-import { RefreshCw, Play, Loader2, Square } from 'lucide-react'
-import clsx from 'clsx'
-import type { DatasetDetail, SyncRun } from '@datahub/shared'
+import { useState } from 'react'
+import { Play, Loader2, Square } from 'lucide-react'
+import type { DatasetDetail } from '@datahub/shared'
 import { api } from '@/lib/api'
+import RunsHistory, { useSyncRuns } from './RunsHistory'
 
 const MODE_LABEL: Record<string, string> = {
   live: 'Ao vivo (sem lake — apenas preview admin)',
@@ -18,43 +18,14 @@ const CADENCE_LABEL: Record<string, string> = {
   manual: 'Manual (só sob demanda)',
 }
 
-interface RawRun {
-  id: string; mode: string; status: SyncRun['status']; rows: number; bytes: number
-  error: string | null; started_at: string; finished_at: string | null
-}
-
 export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetail; onSynced: () => void }) {
   const [mode, setMode] = useState(dataset.sync?.mode ?? 'live')
   const [incKey, setIncKey] = useState(dataset.sync?.incrementalKey ?? '')
   const [cadence, setCadence] = useState(dataset.sync?.cadence ?? 'daily')
   const [since, setSince] = useState(dataset.sync?.since ?? '')
-  const [runs, setRuns] = useState<RawRun[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [polling, setPolling] = useState(false)
-
-  const loadRuns = useCallback(async () => {
-    try {
-      const r = await api<{ runs: RawRun[] }>(`/api/v1/datasets/${dataset.id}/sync-runs`)
-      setRuns(r.runs)
-      return r.runs
-    } catch { return [] }
-  }, [dataset.id])
-
-  useEffect(() => { void loadRuns() }, [loadRuns])
-
-  // Enquanto houver run em andamento, acompanha a cada 2 s.
-  useEffect(() => {
-    if (!polling) return
-    const t = setInterval(async () => {
-      const rs = await loadRuns()
-      if (!rs.some((r) => r.status === 'running')) {
-        setPolling(false)
-        onSynced()
-      }
-    }, 2000)
-    return () => clearInterval(t)
-  }, [polling, loadRuns, onSynced])
+  const { runs, isRunning: runningNow } = useSyncRuns(dataset.id, onSynced)
 
   async function saveConfig() {
     setBusy(true)
@@ -85,8 +56,8 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     setError(null)
     try {
       await api(`/api/v1/datasets/${dataset.id}/sync`, { method: 'POST' })
-      setPolling(true)
-      await loadRuns()
+      // useSyncRuns pega o novo run sozinho no proximo poll (3s) -- nao
+      // precisa de um loadRuns() manual aqui.
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao iniciar sincronização.')
     } finally {
@@ -99,15 +70,14 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     setError(null)
     try {
       await api(`/api/v1/datasets/${dataset.id}/sync-cancel`, { method: 'POST' })
-      await loadRuns() // o run passa a 'cancelled' no próximo checkpoint entre lotes
+      // o run passa a 'cancelled' no proximo checkpoint entre lotes; o hook
+      // useSyncRuns pega isso sozinho no proximo poll.
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao parar a sincronização.')
     } finally {
       setBusy(false)
     }
   }
-
-  const isRunning = polling || runs.some((r) => r.status === 'running')
 
   const numericOrDateFields = dataset.fields.filter((f) => !f.hidden && (f.type === 'number' || f.type === 'date'))
 
@@ -183,14 +153,14 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
         {mode !== 'live' && (
           <button
             onClick={syncNow}
-            disabled={busy || polling}
+            disabled={busy || runningNow}
             className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-60"
           >
-            {polling ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            {polling ? 'Sincronizando…' : 'Sincronizar agora'}
+            {runningNow ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            {runningNow ? 'Sincronizando…' : 'Sincronizar agora'}
           </button>
         )}
-        {isRunning && (
+        {runningNow && (
           <button
             onClick={cancelNow}
             disabled={busy}
@@ -199,45 +169,10 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
             <Square size={14} /> Parar
           </button>
         )}
-        <button onClick={() => void loadRuns()} className="rounded-lg p-2 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" title="Atualizar histórico">
-          <RefreshCw size={15} />
-        </button>
       </div>
       {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
-      {runs.length > 0 && (
-        <table className="mt-4 w-full text-left text-xs">
-          <thead className="text-zinc-500">
-            <tr>
-              <th className="py-1.5 pr-4 font-medium">Início</th>
-              <th className="py-1.5 pr-4 font-medium">Modo</th>
-              <th className="py-1.5 pr-4 font-medium">Status</th>
-              <th className="py-1.5 pr-4 text-right font-medium">Linhas novas</th>
-              <th className="py-1.5 font-medium">Erro</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((r) => (
-              <tr key={r.id} className="border-t border-zinc-100 dark:border-zinc-800">
-                <td className="py-1.5 pr-4">{new Date(r.started_at).toLocaleString('pt-BR')}</td>
-                <td className="py-1.5 pr-4">{r.mode}</td>
-                <td className={clsx('py-1.5 pr-4 font-medium',
-                  r.status === 'done' && 'text-emerald-600',
-                  r.status === 'error' && 'text-red-500',
-                  r.status === 'running' && 'text-amber-500',
-                  r.status === 'cancelled' && 'text-zinc-500')}>
-                  {r.status === 'done' ? 'concluído'
-                    : r.status === 'error' ? 'erro'
-                    : r.status === 'cancelled' ? 'cancelado'
-                    : 'executando…'}
-                </td>
-                <td className="py-1.5 pr-4 text-right">{Number(r.rows).toLocaleString('pt-BR')}</td>
-                <td className="max-w-[260px] truncate py-1.5 text-red-500">{r.error ?? ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <RunsHistory runs={runs} />
     </div>
   )
 }
