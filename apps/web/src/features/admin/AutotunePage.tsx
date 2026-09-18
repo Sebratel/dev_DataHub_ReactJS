@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Wand2, Loader2, ChevronDown, ChevronRight, AlertTriangle, Check, Ban, RefreshCw, CalendarClock, Lock,
+  Wand2, Loader2, ChevronDown, ChevronRight, AlertTriangle, Check, Ban, RefreshCw, CalendarClock, Lock, Wrench,
 } from 'lucide-react'
 import type { IncrementalPlan, SyncSchedule } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -23,7 +23,7 @@ import { Page, PageHeader, ErrorBanner, EmptyState, FilterChips, PrimaryButton }
 import { Card, CardHead } from '@/components/ui/Card'
 import { Pill, type Tone } from '@/components/ui/Pill'
 
-type Filter = 'todos' | 'alta' | 'revisar' | 'ok' | 'bloqueado'
+type Filter = 'falhando' | 'todos' | 'alta' | 'revisar' | 'ok' | 'bloqueado'
 
 const CONFIDENCE: Record<string, { label: string; tone: Tone }> = {
   alta: { label: 'Confiança alta', tone: 'ok' },
@@ -63,10 +63,13 @@ export default function AutotunePage() {
   const [scheduleId, setScheduleId] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<string | null>(null)
+  // Abre em "não estão atualizando": a pergunta que traz alguém a esta tela
+  // quase nunca é "qual a regra ideal?", é "por que esta fonte está parada?".
   const [filter, setFilter] = useState<Filter>('todos')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [applying, setApplying] = useState(false)
+  const [reconciling, setReconciling] = useState<string | null>(null)
 
   function load() {
     setLoading(true)
@@ -96,6 +99,11 @@ export default function AutotunePage() {
   const groups = useMemo(() => {
     const all = plans ?? []
     return {
+      // Primeiro de todos: quem NÃO está atualizando. Um conjunto que erra em
+      // toda execução é mais urgente que um com a regra subótima — e é
+      // invisível em qualquer outra tela, porque o erro fica enterrado no
+      // histórico de execuções dentro da página do conjunto.
+      falhando: all.filter((p) => p.health.failing || p.drift.missing.length > 0),
       todos: all,
       // "Pronto para aplicar": tem proposta, ainda não está aplicada e o
       // diagnóstico não levantou nenhum risco.
@@ -162,6 +170,41 @@ export default function AutotunePage() {
     }
   }
 
+  // Remove os campos cuja coluna sumiu da fonte. Pede confirmação porque
+  // apaga campo publicado — e porque pode zerar a configuração de sync junto,
+  // quando o campo removido era chave ou parte da identidade.
+  async function reconcile(p: IncrementalPlan) {
+    const cols = p.drift.missing.map((m) => m.sourceColumn).join(', ')
+    const ok = await confirm({
+      title: `Reconciliar "${p.name}" com a fonte`,
+      message:
+        `Serão removidos ${p.drift.missing.length} campo(s): ${cols}.\n\n` +
+        'Essas colunas não existem mais na origem, e é por isso que toda sincronização falha. ' +
+        'Se algum deles for a chave incremental ou parte da identidade da linha, essa configuração ' +
+        'é zerada junto e a próxima carga recomeça do zero.\n\n' +
+        'Confira antes se algum painel, métrica ou conjunto calculado usava esses campos.',
+      danger: true,
+      confirmLabel: 'Remover e destravar',
+    })
+    if (!ok) return
+    setReconciling(p.datasetId)
+    setError(null)
+    try {
+      const r = await api<{ removed: { sourceColumn: string }[]; clearedConfig: string[] }>(
+        `/api/v1/datasets/${p.datasetId}/reconcile-fields`,
+        { method: 'POST', body: JSON.stringify({ removeMissing: true }) },
+      )
+      if (r.clearedConfig.length) {
+        setError(`"${p.name}": ${r.removed.length} campo(s) removido(s). Também foi zerado: ${r.clearedConfig.join('; ')}.`)
+      }
+      load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Falha ao reconciliar.')
+    } finally {
+      setReconciling(null)
+    }
+  }
+
   return (
     <Page>
       <PageHeader
@@ -201,6 +244,7 @@ export default function AutotunePage() {
               value={filter}
               onChange={(v) => setFilter(v)}
               options={[
+                { key: 'falhando', label: 'Não estão atualizando', count: groups.falhando.length },
                 { key: 'todos', label: 'Todos', count: groups.todos.length },
                 { key: 'alta', label: 'Prontos para aplicar', count: groups.alta.length },
                 { key: 'revisar', label: 'Conferir antes', count: groups.revisar.length },
@@ -302,6 +346,20 @@ export default function AutotunePage() {
                             <p className="truncate text-[11px] text-zinc-500">
                               {p.connectionId} · {p.schema}.{p.table} · {num(p.rowCount)} linhas
                             </p>
+                            {/* Quando foi a última vez que isto atualizou de
+                                verdade. É a resposta direta a "por que esta
+                                fonte está parada?", e não existia em tela
+                                nenhuma — só no histórico dentro do conjunto. */}
+                            <p className="truncate text-[11px] text-zinc-500">
+                              {p.health.lastSuccessAt
+                                ? <>último sucesso: {new Date(p.health.lastSuccessAt).toLocaleString('pt-BR')}</>
+                                : <span className="text-crit dark:text-crit-dark">nunca sincronizou com sucesso</span>}
+                              {p.health.failing && p.health.failuresSinceSuccess > 0 && (
+                                <span className="text-crit dark:text-crit-dark">
+                                  {' '}· {p.health.failuresSinceSuccess} falha(s) desde então
+                                </span>
+                              )}
+                            </p>
                             <p className="mt-1 text-[11.5px] leading-relaxed">
                               <span className="text-zinc-400">hoje:</span>{' '}
                               <span className="text-zinc-500">{ruleSummary(p.current)}</span>
@@ -317,6 +375,7 @@ export default function AutotunePage() {
                           </div>
                         </button>
                         <div className="flex shrink-0 flex-col items-end gap-1">
+                          {p.health.failing && <Pill tone="crit" dot>Falhando</Pill>}
                           {p.alreadyApplied
                             ? <Pill tone="ok" dot>Já padronizado</Pill>
                             : !p.proposed
@@ -337,6 +396,36 @@ export default function AutotunePage() {
                             <div className="flex items-start gap-2 text-[11.5px] leading-relaxed text-crit dark:text-crit-dark">
                               <Ban size={13} className="mt-0.5 shrink-0" />
                               <p>{p.blocker}</p>
+                            </div>
+                          )}
+                          {/* Diagnosticar sem oferecer o conserto deixaria a
+                              pessoa sabendo do problema e sem saída: o campo
+                              com coluna inexistente não podia ser removido por
+                              tela nenhuma — só apagando e republicando o
+                              conjunto inteiro. */}
+                          {p.drift.missing.length > 0 && (
+                            <div className="rounded-lg border border-crit/30 bg-crit-soft p-2.5 dark:bg-crit/10">
+                              <p className="text-[11.5px] font-medium text-crit dark:text-crit-dark">
+                                Campos apontando para colunas que não existem mais
+                              </p>
+                              <ul className="mt-1 space-y-0.5">
+                                {p.drift.missing.map((m) => (
+                                  <li key={m.key} className="font-mono text-[11px] text-crit dark:text-crit-dark">
+                                    {m.sourceColumn}
+                                  </li>
+                                ))}
+                              </ul>
+                              <button
+                                onClick={() => void reconcile(p)}
+                                disabled={!isMaster || reconciling === p.datasetId}
+                                title={isMaster ? undefined : 'Somente o administrador master reconcilia campos de uma fonte.'}
+                                className="mt-2 flex h-[28px] items-center gap-1.5 rounded-lg border border-crit/40 px-2.5 text-[11.5px] font-medium text-crit hover:bg-crit/10 disabled:opacity-50 dark:text-crit-dark"
+                              >
+                                {reconciling === p.datasetId
+                                  ? <Loader2 size={12} className="animate-spin" />
+                                  : <Wrench size={12} />}
+                                Remover esses campos e destravar
+                              </button>
                             </div>
                           )}
                           {p.reasons.length > 0 && (

@@ -139,6 +139,13 @@ function keysOf(opts: {
 const baseOf = (over: Partial<PlanBase> = {}): PlanBase => ({
   datasetId: 'd1', slug: 'conj', name: 'Conjunto', connectionId: 'elleven',
   schema: 'public', table: 't', rowCount: 1000,
+  // Por padrão: campos batendo com a fonte e sincronização saudável — o
+  // cenário normal, para que cada caso abaixo mude só o que quer testar.
+  drift: { missing: [], extra: [], checked: true },
+  health: {
+    lastSuccessAt: '2026-09-18T10:00:00.000Z', lastRunAt: '2026-09-18T10:00:00.000Z',
+    lastError: null, failuresSinceSuccess: 0, failing: false,
+  },
   current: {
     mode: 'snapshot', incrementalKey: null, incrementalKey2: null,
     dedupeKeys: [], cadence: 'daily', watermarkLagMinutes: 0,
@@ -291,6 +298,57 @@ cenario(() => {
     JSON.stringify(p.proposed))
   check('view NÃO ganha cadência de minutos (custo invisível por trás dela)',
     p.proposed?.cadence === 'hourly', `cadência ${p.proposed?.cadence}`)
+})
+
+// ── 5. Conjunto que não consegue sincronizar ────────────────────────────
+// O caso real que passou despercebido: um conjunto falhava em TODA execução
+// havia dias porque um campo apontava para a coluna `regular_price`, que não
+// existe mais na fonte. O diagnóstico propunha alegremente uma regra de
+// atualização para um conjunto que não roda — parecia saudável na tela.
+console.log('\n── conjunto que não consegue sincronizar ──')
+
+cenario(() => {
+  const p = decidePlan(
+    baseOf({
+      drift: { missing: [{ key: 'regular_price', sourceColumn: 'regular_price' }], extra: [], checked: true },
+      health: {
+        lastSuccessAt: null, lastRunAt: '2026-09-18T13:21:56.000Z',
+        lastError: 'column "regular_price" does not exist', failuresSinceSuccess: 13, failing: true,
+      },
+    }),
+    [f('id', 'number'), f('regular_price', 'number'), f('created_at', 'date'), f('updated_at', 'date')],
+    keysOf({ pk: ['id'], indexes: [['created_at'], ['updated_at']] }),
+  )
+  check('coluna que sumiu da fonte bloqueia, em vez de propor cadência',
+    p.proposed === null && !!p.blocker && p.blocker.includes('regular_price'),
+    p.blocker ?? JSON.stringify(p.proposed))
+})
+
+cenario(() => {
+  const p = decidePlan(
+    baseOf({
+      health: {
+        lastSuccessAt: '2026-09-15T03:00:00.000Z', lastRunAt: '2026-09-18T13:00:00.000Z',
+        lastError: 'timeout ao consultar a fonte', failuresSinceSuccess: 7, failing: true,
+      },
+    }),
+    [f('id', 'number'), f('created_at', 'date'), f('updated_at', 'date')],
+    keysOf({ pk: ['id'], indexes: [['created_at'], ['updated_at']] }),
+  )
+  check('falha por outro motivo avisa, mas não impede a proposta',
+    !!p.proposed && p.warnings.some((w) => w.includes('FALHANDO') && w.includes('7 execução')),
+    p.warnings.join(' | '))
+})
+
+cenario(() => {
+  const p = decidePlan(
+    baseOf({ drift: { missing: [], extra: ['data_cadastro', 'promo_price'], checked: true } }),
+    [f('id', 'number'), f('nome', 'text')],
+    keysOf({ pk: ['id'] }),
+  )
+  check('coluna nova na fonte vira aviso, não bloqueio',
+    !!p.proposed && p.warnings.some((w) => w.includes('data_cadastro')),
+    p.warnings.join(' | '))
 })
 
 console.log(`\n${failures ? `${failures} verificação(ões) falharam.` : 'Tudo certo.'}`)

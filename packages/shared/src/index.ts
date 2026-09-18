@@ -647,6 +647,28 @@ export interface PlanProposal {
   cadence: 'daily' | 'hourly' | 'manual' | 'schedule'
 }
 
+/** Divergência entre os campos publicados e as colunas que a fonte tem HOJE. */
+export interface FieldDrift {
+  /** Campos cuja coluna sumiu da fonte. Enquanto existirem, TODA sincronização
+   *  falha com «column "x" does not exist» — o SELECT da ingestão as inclui. */
+  missing: { key: string; sourceColumn: string }[]
+  /** Colunas novas na fonte que ninguém publicou. Não quebram nada. */
+  extra: string[]
+  /** null quando não foi possível ler as colunas da fonte. */
+  checked: boolean
+}
+
+/** Como as últimas execuções foram — responde "por que esta fonte não atualiza?". */
+export interface SyncHealth {
+  lastSuccessAt: string | null
+  lastRunAt: string | null
+  lastError: string | null
+  /** Execuções com erro desde o último sucesso. */
+  failuresSinceSuccess: number
+  /** true = a última execução falhou. */
+  failing: boolean
+}
+
 export interface IncrementalPlan {
   datasetId: string
   slug: string
@@ -655,6 +677,8 @@ export interface IncrementalPlan {
   schema: string
   table: string
   rowCount: number | null
+  drift: FieldDrift
+  health: SyncHealth
   current: {
     mode: 'live' | 'snapshot' | 'incremental'
     incrementalKey: string | null

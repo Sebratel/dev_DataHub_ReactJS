@@ -24,7 +24,8 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from '../../db/pool.js'
 import { discoverKeys, type TableKeys } from '../../connectors/introspect.js'
-import type { IncrementalPlan, PlanProposal } from '@datahub/shared'
+import { discoverColumns } from '../../connectors/pools.js'
+import type { IncrementalPlan, PlanProposal, FieldDrift, SyncHealth } from '@datahub/shared'
 
 export interface Field { key: string; sourceColumn: string; type: string }
 
@@ -127,6 +128,39 @@ export function decidePlan(base: PlanBase, fields: Field[], keys: TableKeys): In
   const current = base.current
   const reasons: string[] = []
   const warnings: string[] = []
+
+  // ANTES de tudo: o conjunto consegue sequer sincronizar? Um campo apontando
+  // para coluna que sumiu da fonte faz TODA execução morrer no SELECT — e
+  // nenhuma regra de atualização conserta isso. Propor cadência de minutos
+  // para um conjunto que falha 100% das vezes seria só ruído com cara de
+  // diagnóstico. Este caso vem primeiro, e bloqueia.
+  if (base.drift.missing.length) {
+    const lista = base.drift.missing.map((m) => `"${m.sourceColumn}"`).join(', ')
+    return {
+      ...base, proposed: null, confidence: 'baixa', alreadyApplied: false, reasons, warnings,
+      blocker:
+        `${base.drift.missing.length} campo(s) apontam para coluna(s) que NÃO existem mais na fonte: ${lista}. ` +
+        'Toda sincronização falha no SELECT («column ... does not exist») e o conjunto está parado desde então. ' +
+        'Reconcilie os campos com a fonte antes de falar em cadência — nenhuma regra de atualização conserta isto.',
+    }
+  }
+  if (base.drift.extra.length) {
+    warnings.push(
+      `A fonte ganhou ${base.drift.extra.length} coluna(s) que este conjunto não publica: ` +
+      `${base.drift.extra.slice(0, 8).join(', ')}${base.drift.extra.length > 8 ? '…' : ''}. ` +
+      'Não quebra nada — mas se alguma delas for a data de criação/edição, publicá-la abre a porta para o incremental.',
+    )
+  }
+  // Falhando por OUTRO motivo (rede, permissão, tipo): a regra até pode ser
+  // melhorada, mas trocar a cadência de um conjunto que erra toda vez só faz
+  // ele errar mais vezes por dia. O aviso sobe junto com a proposta.
+  if (base.health.failing) {
+    warnings.push(
+      `Este conjunto está FALHANDO: ${base.health.failuresSinceSuccess} execução(ões) com erro desde o último ` +
+      `sucesso${base.health.lastSuccessAt ? ` (${new Date(base.health.lastSuccessAt).toLocaleString('pt-BR')})` : ' — nunca houve um'}. ` +
+      `Último erro: ${(base.health.lastError ?? '').slice(0, 200)}. Resolva isto antes de aumentar a frequência.`,
+    )
+  }
 
   if (keys.error) {
     return {
@@ -301,6 +335,61 @@ export function decidePlan(base: PlanBase, fields: Field[], keys: TableKeys): In
   return { ...base, proposed, confidence, alreadyApplied, reasons, warnings, blocker: null }
 }
 
+// Compara os campos PUBLICADOS com as colunas que a fonte tem HOJE.
+//
+// Existe porque o mapeamento campo→coluna é gravado na publicação e nunca mais
+// conferido: se alguém renomeia ou remove a coluna na origem, o conjunto passa
+// a falhar em TODA execução (o SELECT da ingestão inclui a coluna que sumiu) e
+// nada no sistema diz o porquê — o erro fica só no histórico de execuções,
+// dentro da tela do conjunto, onde ninguém procura.
+async function fieldDrift(
+  ds: { connection_id: unknown; schema_name: unknown; object_name: unknown }, fields: Field[],
+): Promise<FieldDrift> {
+  try {
+    const cols = await discoverColumns(String(ds.connection_id), String(ds.schema_name), String(ds.object_name))
+    const existentes = new Set(cols.map((c) => c.name))
+    const publicadas = new Set(fields.map((f) => f.sourceColumn))
+    return {
+      missing: fields.filter((f) => !existentes.has(f.sourceColumn))
+        .map((f) => ({ key: f.key, sourceColumn: f.sourceColumn })),
+      extra: cols.map((c) => c.name).filter((n) => !publicadas.has(n)),
+      checked: true,
+    }
+  } catch {
+    // Fonte fora do ar ou sem permissão no catálogo: não dá para afirmar nada.
+    // Devolver "nada faltando" seria mentir; `checked: false` diz que não sabe.
+    return { missing: [], extra: [], checked: false }
+  }
+}
+
+// Como foram as últimas execuções. É o que responde, na tela, "por que esta
+// fonte não atualiza?" — muitas vezes a resposta não é a cadência, é que ela
+// vem falhando há dias e ninguém viu.
+async function syncHealth(datasetId: string): Promise<SyncHealth> {
+  const runs = (await db.query(
+    `select status, error, started_at from sync_runs
+      where dataset_id = $1 and status <> 'running'
+      order by started_at desc limit 50`,
+    [datasetId],
+  )).rows
+  const ultimo = runs[0]
+  const sucesso = runs.find((r) => String(r.status) === 'done')
+  // Conta os erros ATÉ o último sucesso — "falha há 3 dias" é mais útil que
+  // "12 erros no total", que não diz se já voltou ao normal.
+  let falhas = 0
+  for (const r of runs) {
+    if (String(r.status) === 'done') break
+    if (String(r.status) === 'error') falhas++
+  }
+  return {
+    lastSuccessAt: sucesso ? new Date(sucesso.started_at as string).toISOString() : null,
+    lastRunAt: ultimo ? new Date(ultimo.started_at as string).toISOString() : null,
+    lastError: (runs.find((r) => r.error)?.error as string | null) ?? null,
+    failuresSinceSuccess: falhas,
+    failing: !!ultimo && String(ultimo.status) === 'error',
+  }
+}
+
 // Lê o que a decisão precisa (catálogo do hub + catálogo da origem) e decide.
 export async function planFor(datasetId: string): Promise<IncrementalPlan> {
   const ds = (await db.query(
@@ -318,11 +407,14 @@ export async function planFor(datasetId: string): Promise<IncrementalPlan> {
   )).rows.map((r) => ({ key: String(r.key), sourceColumn: String(r.source_column), type: String(r.type) }))
 
   const keys = await discoverKeys(String(ds.connection_id), String(ds.schema_name), String(ds.object_name))
+  const drift = await fieldDrift(ds, fields)
+  const health = await syncHealth(String(ds.id))
 
   return decidePlan({
     datasetId: String(ds.id), slug: String(ds.slug), name: String(ds.name),
     connectionId: String(ds.connection_id), schema: String(ds.schema_name),
     table: String(ds.object_name), rowCount: ds.row_count == null ? null : Number(ds.row_count),
+    drift, health,
     current: {
       mode: String(ds.sync_mode) as IncrementalPlan['current']['mode'],
       incrementalKey: (ds.incremental_key as string | null) ?? null,

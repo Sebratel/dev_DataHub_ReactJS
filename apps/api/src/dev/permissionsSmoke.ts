@@ -75,6 +75,8 @@ const EXPECTED: Record<string, Record<string, Level>> = {
     'GET /:id/auto-incremental': 'admin',
     // Aplicar grava a regra em conjuntos de FONTE (planAll exclui calculados).
     'POST /auto-incremental/apply': 'master',
+    // Reconciliar apaga/cria campo e pode zerar a configuração de sync.
+    'POST /:id/reconcile-fields': 'master-src',
   },
   schedulesRouter: {
     'GET /': 'admin',

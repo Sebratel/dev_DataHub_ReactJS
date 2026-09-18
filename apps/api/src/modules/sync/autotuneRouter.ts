@@ -4,6 +4,8 @@
 //   GET  /datasets/auto-incremental          diagnostica TODOS   (admin)
 //   GET  /datasets/:id/auto-incremental      diagnostica um      (admin)
 //   POST /datasets/auto-incremental/apply    aplica em lote      (admin MASTER)
+//   POST /datasets/:id/reconcile-fields      casa os campos com a fonte
+//                                            (admin MASTER em conjunto de fonte)
 //
 // O apply NUNCA inventa: ele recalcula o plano no servidor e grava o que o
 // plano disser. O front manda quais conjuntos aplicar, não o que gravar —
@@ -16,6 +18,8 @@ import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { planAll, planFor } from './autotune.js'
 import { applySyncConfig } from './syncConfig.js'
+import { reconcileFields } from './reconcileFields.js'
+import { requireMasterOnSource } from './masterGuard.js'
 
 export const autotuneRouter = Router()
 
@@ -30,6 +34,7 @@ const adminOnly = [requireAuth({ role: 'admin' }), requireDb]
 // Já o APPLY é master: ele só mexe em conjuntos de FONTE (planAll exclui os
 // calculados), então a exigência é incondicional, sem olhar dataset a dataset.
 const masterOnly = [requireAuth({ role: 'master' }), requireDb]
+const masterOnSource = [...adminOnly, requireMasterOnSource]
 
 autotuneRouter.get('/auto-incremental', ...adminOnly, async (req, res) => {
   try {
@@ -111,4 +116,27 @@ autotuneRouter.post('/auto-incremental/apply', ...masterOnly, async (req, res) =
   await audit(req, 'datasets.auto-incremental', { type: 'dataset', id: `${applied} conjunto(s)` },
     { requested: ids.length, applied, scheduleId })
   res.json({ applied, results })
+})
+
+// Reconcilia os campos publicados com as colunas que a fonte tem hoje: remove
+// os que apontam para coluna inexistente (a causa de "column ... does not
+// exist" em toda execução) e, se pedido, publica colunas novas.
+//
+// Exige confirmação explícita do que fazer — `removeMissing` e `addColumns`
+// vêm do corpo. Reconciliar sozinho seria apagar campo de alguém sem perguntar.
+autotuneRouter.post('/:id/reconcile-fields', ...masterOnSource, async (req, res) => {
+  try {
+    const removeMissing = req.body?.removeMissing === true
+    const addColumns = Array.isArray(req.body?.addColumns)
+      ? (req.body.addColumns as unknown[]).map(String) : []
+    if (!removeMissing && !addColumns.length) {
+      return res.status(400).json({ error: 'Nada a fazer: informe removeMissing e/ou addColumns.' })
+    }
+    const r = await reconcileFields(req.params.id, { removeMissing, addColumns })
+    await audit(req, 'datasets.reconcile-fields', { type: 'dataset', id: req.params.id },
+      { removed: r.removed.map((x) => x.sourceColumn), added: r.added.map((x) => x.sourceColumn), cleared: r.clearedConfig })
+    res.json(r)
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
 })
