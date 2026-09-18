@@ -47,6 +47,12 @@ export const config = {
     // limite. Protege o servidor de uma sincronização descontrolada (ex.: OFFSET
     // relendo linhas). Defina no .env/stack conforme a maior tabela + folga.
     maxRows: Number(process.env.SYNC_MAX_ROWS) || 0,
+    // Teto de arquivos Parquet por conjunto antes de compactar mesmo sem ter
+    // nada a colapsar. A compactação virou condicional (só reescreve quando há
+    // identidade repetida) — sem este teto, um conjunto em cadência de minutos
+    // acumularia centenas de arquivinhos por dia e TODA leitura dele ficaria
+    // mais lenta. 24 ≈ duas horas de lotes a cada 5 min antes de juntar tudo.
+    compactMaxParts: Math.max(2, Number(process.env.SYNC_COMPACT_MAX_PARTS) || 24),
   },
 
   // Motor de consulta (DuckDB). Limites protegem o servidor de uma consulta

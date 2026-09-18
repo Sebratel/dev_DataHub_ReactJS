@@ -1,0 +1,297 @@
+// Smoke da padronização de atualização. Roda sem banco e sem fonte: valida as
+// quatro coisas que não dá para conferir só lendo o código —
+//   1. as consultas de catálogo passam pelo guard read-only (a lista de
+//      palavras proibidas é ampla: "create", "into", "cluster"… e uma consulta
+//      a information_schema esbarra nelas com facilidade);
+//   2. o parser de indexdef do Postgres extrai as colunas certas (é texto
+//      livre: índice parcial, expressão, DESC, opclass);
+//   3. a compactação condicional decide certo — o SQL da sondagem roda no
+//      DuckDB de verdade, sobre Parquet de verdade;
+//   4. o motor de decisão escolhe a regra certa em cada formato de tabela que
+//      existe nas fontes (created+modified, só PK, view, sem identidade…).
+// Uso: npm run autotune:smoke --workspace apps/api
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { checkReadOnly } from '../core/guard.js'
+import { duckQuery } from '../modules/query/duck.js'
+import { decidePlan, type Field, type PlanBase } from '../modules/sync/autotune.js'
+import type { TableKeys, IndexInfo } from '../connectors/introspect.js'
+
+let failures = 0
+function check(name: string, ok: boolean, detail = ''): void {
+  console.log(`${ok ? '  ok  ' : ' FALHA'} ${name}${detail ? ` — ${detail}` : ''}`)
+  if (!ok) failures++
+}
+
+// ── 1. Guard sobre as consultas de catálogo ──────────────────────────────
+const CATALOG_SQL: [string, string][] = [
+  ['pg: tipo do objeto',
+    `select table_type from information_schema.tables where table_schema = $1 and table_name = $2`],
+  ['pg: chave primária',
+    `select kcu.column_name, kcu.ordinal_position
+       from information_schema.table_constraints tc
+       join information_schema.key_column_usage kcu
+         on kcu.constraint_name = tc.constraint_name
+        and kcu.constraint_schema = tc.constraint_schema
+      where tc.table_schema = $1 and tc.table_name = $2
+        and tc.constraint_type = 'PRIMARY KEY'
+      order by kcu.ordinal_position`],
+  ['pg: índices',
+    `select indexname, indexdef from pg_indexes where schemaname = $1 and tablename = $2`],
+  ['mysql: índices',
+    `select index_name, seq_in_index, column_name, non_unique
+       from information_schema.statistics
+      where table_schema = ? and table_name = ?
+      order by index_name, seq_in_index`],
+]
+console.log('\n── guard read-only nas consultas de catálogo ──')
+for (const [name, sql] of CATALOG_SQL) {
+  const r = checkReadOnly(sql)
+  check(name, r.ok, r.ok ? '' : r.reason)
+}
+
+// ── 2. Parser de indexdef ────────────────────────────────────────────────
+const { parseIndexDefForTest } = await import('../connectors/introspect.js')
+console.log('\n── parser de indexdef (Postgres) ──')
+const CASES: [string, string, { unique: boolean; columns: string[] } | null][] = [
+  ['índice simples',
+    'CREATE INDEX idx_a ON public.t USING btree (created_at)',
+    { unique: false, columns: ['created_at'] }],
+  ['único composto',
+    'CREATE UNIQUE INDEX t_pkey ON public.t USING btree (tenant_id, id)',
+    { unique: true, columns: ['tenant_id', 'id'] }],
+  ['parcial (WHERE) não vaza para as colunas',
+    'CREATE INDEX idx_b ON public.t USING btree (modified_at) WHERE (ativo = true)',
+    { unique: false, columns: ['modified_at'] }],
+  ['DESC/NULLS e opclass ficam de fora',
+    'CREATE INDEX idx_c ON public.t USING btree (created_at DESC NULLS LAST, nome text_pattern_ops)',
+    { unique: false, columns: ['created_at', 'nome'] }],
+  ['expressão é descartada (não serve de keyset)',
+    'CREATE INDEX idx_d ON public.t USING btree (lower(email))',
+    null],
+  ['coluna entre aspas',
+    'CREATE UNIQUE INDEX idx_e ON public.t USING btree ("Id")',
+    { unique: true, columns: ['Id'] }],
+]
+for (const [name, def, expected] of CASES) {
+  const got = parseIndexDefForTest(def)
+  const same = JSON.stringify(got) === JSON.stringify(expected)
+  check(name, same, same ? '' : `esperado ${JSON.stringify(expected)}, veio ${JSON.stringify(got)}`)
+}
+
+// ── 3. Sondagem da compactação, no DuckDB de verdade ─────────────────────
+console.log('\n── compactação condicional (DuckDB) ──')
+const dir = mkdtempSync(join(tmpdir(), 'autotune-smoke-')).replace(/\\/g, '/')
+try {
+  const probe = async (keys: string[]) => {
+    const group = keys.map((k) => `"${k}"`).join(', ')
+    const { rows } = await duckQuery(
+      `select 1 as dup from read_parquet('${dir}/*.parquet') group by ${group} having count(*) > 1 limit 1`,
+    )
+    return rows.length > 0
+  }
+
+  // Lote só com linhas NOVAS: nenhuma identidade repetida → não compacta.
+  await duckQuery(
+    `copy (select * from (values (1,'a'),(2,'b'),(3,'c')) as t(id, nome))
+       to '${dir}/part-1.parquet' (format parquet)`,
+  )
+  check('lote só com linhas novas → dispensa compactação', (await probe(['id'])) === false)
+
+  // Segundo lote traz a versão nova da linha 2 → identidade repetida → compacta.
+  await duckQuery(
+    `copy (select * from (values (2,'b2'),(4,'d')) as t(id, nome))
+       to '${dir}/part-2.parquet' (format parquet)`,
+  )
+  check('lote com linha editada → exige compactação', (await probe(['id'])) === true)
+
+  // Identidade COMPOSTA: (id, nome) não repete, ainda que id repita.
+  check('identidade composta distingue as versões', (await probe(['id', 'nome'])) === false)
+} finally {
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// ── 4. Motor de decisão ─────────────────────────────────────────────────
+console.log('\n── escolha da regra por formato de tabela ──')
+
+const f = (sourceColumn: string, type: string, key = sourceColumn): Field => ({ key, sourceColumn, type })
+
+function keysOf(opts: {
+  pk?: string[]
+  uniques?: { name: string; columns: string[] }[]
+  indexes?: string[][]
+  isView?: boolean
+}): TableKeys {
+  const idx: IndexInfo[] = []
+  if (opts.pk?.length) idx.push({ name: 'pk', unique: true, primary: true, columns: opts.pk })
+  for (const u of opts.uniques ?? []) idx.push({ ...u, unique: true, primary: false })
+  for (const cols of opts.indexes ?? []) idx.push({ name: `i_${cols[0]}`, unique: false, primary: false, columns: cols })
+  return {
+    primaryKey: opts.pk ?? [],
+    uniques: idx.filter((i) => i.unique).sort((a, b) => a.columns.length - b.columns.length),
+    indexes: idx,
+    leadingColumns: new Set(idx.map((i) => i.columns[0])),
+    isView: !!opts.isView,
+  }
+}
+
+const baseOf = (over: Partial<PlanBase> = {}): PlanBase => ({
+  datasetId: 'd1', slug: 'conj', name: 'Conjunto', connectionId: 'elleven',
+  schema: 'public', table: 't', rowCount: 1000,
+  current: {
+    mode: 'snapshot', incrementalKey: null, incrementalKey2: null,
+    dedupeKeys: [], cadence: 'daily', watermarkLagMinutes: 0,
+  },
+  ...over,
+})
+
+// Cada caso abaixo vive no proprio escopo para poder reusar o nome `p`.
+// Um bloco nu (`{ ... }`) faria o mesmo, mas num arquivo sem ponto e virgula
+// ele gruda no `})` da linha anterior e o TypeScript passa a ler o objeto
+// como lista de parametros de uma arrow -- erro de sintaxe a 10 linhas de
+// distancia de onde parece estar. Uma funcao nomeada nao tem essa aresta.
+const cenario = (fn: () => void): void => fn()
+
+// O caso que motivou a migration 029: created + modified, PK numérica, tudo
+// indexado. É o desenho em que a cadência de minutos realmente cabe.
+cenario(() => {
+  const p = decidePlan(
+    baseOf(),
+    [f('id', 'number'), f('nome', 'text'), f('created_at', 'date'), f('updated_at', 'date')],
+    keysOf({ pk: ['id'], indexes: [['created_at'], ['updated_at']] }),
+  )
+  check('created + modified + PK indexados → duas chaves, identidade e minutos',
+    p.proposed?.incrementalKey === 'created_at' && p.proposed?.incrementalKey2 === 'updated_at'
+    && JSON.stringify(p.proposed?.dedupeKeys) === '["id"]' && p.proposed?.cadence === 'schedule'
+    && p.confidence === 'alta',
+    JSON.stringify(p.proposed))
+})
+
+// Mesma tabela SEM índice nas datas: a regra é a mesma, a cadência não.
+cenario(() => {
+  const p = decidePlan(
+    baseOf(),
+    [f('id', 'number'), f('created_at', 'date'), f('updated_at', 'date')],
+    keysOf({ pk: ['id'] }),
+  )
+  check('chave de data sem índice → cai para hora em hora e avisa',
+    p.proposed?.cadence === 'hourly' && p.warnings.some((w) => w.includes('NÃO é a primeira coluna')),
+    `cadência ${p.proposed?.cadence}`)
+})
+
+// Nomes em português, e um "data_atualizacao" que não pode virar "criação".
+cenario(() => {
+  const p = decidePlan(
+    baseOf(),
+    [f('codigo', 'number'), f('data_cadastro', 'date'), f('data_atualizacao', 'date')],
+    keysOf({ pk: ['codigo'], indexes: [['data_cadastro'], ['data_atualizacao']] }),
+  )
+  check('nomes em português não trocam criação por edição',
+    p.proposed?.incrementalKey === 'data_cadastro' && p.proposed?.incrementalKey2 === 'data_atualizacao',
+    JSON.stringify([p.proposed?.incrementalKey, p.proposed?.incrementalKey2]))
+})
+
+// Sem identidade: a 2ª chave TEM de ficar de fora, senão duplica a linha — é a
+// constraint do banco, e o motor não pode propor o que o banco recusa.
+cenario(() => {
+  const p = decidePlan(
+    baseOf(),
+    [f('nome', 'text'), f('created_at', 'date'), f('updated_at', 'date')],
+    keysOf({ indexes: [['created_at']] }),
+  )
+  check('sem identidade → 2ª chave suprimida (o banco a recusaria)',
+    p.proposed?.incrementalKey2 === null && p.proposed?.dedupeKeys.length === 0
+    && p.warnings.some((w) => w.includes('exige identidade')),
+    JSON.stringify(p.proposed))
+  check('sem identidade → folga de reconferência fica em zero',
+    p.proposed?.watermarkLagMinutes === 0)
+})
+
+// Só PK numérica, nenhuma data: pega inserção, não pega edição — e diz isso.
+cenario(() => {
+  const p = decidePlan(
+    baseOf(),
+    [f('id', 'number'), f('nome', 'text')],
+    keysOf({ pk: ['id'] }),
+  )
+  check('sem coluna de data → chave numérica, com o aviso de que edição não volta',
+    p.proposed?.incrementalKey === 'id' && p.proposed?.incrementalKey2 === null
+    && p.warnings.some((w) => w.includes('não pega EDIÇÕES')),
+    JSON.stringify(p.proposed))
+})
+
+// Nada serve: sem data e sem identificador. Tem de bloquear, não inventar.
+cenario(() => {
+  const p = decidePlan(
+    baseOf(),
+    [f('nome', 'text'), f('descricao', 'text')],
+    keysOf({}),
+  )
+  check('sem chave possível → bloqueia em vez de propor', p.proposed === null && !!p.blocker)
+})
+
+// Identidade COMPOSTA de índice único, com a PK fora dos campos publicados.
+cenario(() => {
+  const p = decidePlan(
+    baseOf(),
+    [f('tenant', 'text'), f('doc', 'text'), f('created_at', 'date')],
+    keysOf({
+      pk: ['id_interno'],
+      uniques: [{ name: 'u_doc', columns: ['tenant', 'doc'] }],
+      indexes: [['created_at']],
+    }),
+  )
+  check('PK não publicada → cai para o índice único composto',
+    JSON.stringify(p.proposed?.dedupeKeys) === '["tenant","doc"]', JSON.stringify(p.proposed?.dedupeKeys))
+})
+
+// Já configurado exatamente assim: não pode aparecer como pendente.
+cenario(() => {
+  const p = decidePlan(
+    baseOf({
+      current: {
+        mode: 'incremental', incrementalKey: 'created_at', incrementalKey2: 'updated_at',
+        dedupeKeys: ['id'], cadence: 'schedule', watermarkLagMinutes: 10,
+      },
+    }),
+    [f('id', 'number'), f('created_at', 'date'), f('updated_at', 'date')],
+    keysOf({ pk: ['id'], indexes: [['created_at'], ['updated_at']] }),
+  )
+  check('conjunto já padronizado é reconhecido como tal', p.alreadyApplied && !p.warnings.length,
+    `alreadyApplied=${p.alreadyApplied} avisos=${p.warnings.length}`)
+})
+
+// Incremental antigo ganhando identidade: precisa avisar que o total vai cair.
+cenario(() => {
+  const p = decidePlan(
+    baseOf({
+      current: {
+        mode: 'incremental', incrementalKey: 'created_at', incrementalKey2: null,
+        dedupeKeys: [], cadence: 'hourly', watermarkLagMinutes: 0,
+      },
+    }),
+    [f('id', 'number'), f('created_at', 'date'), f('updated_at', 'date')],
+    keysOf({ pk: ['id'], indexes: [['created_at'], ['updated_at']] }),
+  )
+  check('ganhar identidade avisa que o total de linhas vai cair',
+    p.warnings.some((w) => w.includes('VAI CAIR')))
+})
+
+// View: sem catálogo de índice, a identidade vira palpite e a confiança cai.
+cenario(() => {
+  const p = decidePlan(
+    baseOf(),
+    [f('id', 'number'), f('created_at', 'date')],
+    keysOf({ isView: true }),
+  )
+  check('view → identidade por palpite, marcada como tal',
+    JSON.stringify(p.proposed?.dedupeKeys) === '["id"]'
+    && p.warnings.some((w) => w.includes('PALPITE')) && p.confidence === 'baixa',
+    JSON.stringify(p.proposed))
+  check('view NÃO ganha cadência de minutos (custo invisível por trás dela)',
+    p.proposed?.cadence === 'hourly', `cadência ${p.proposed?.cadence}`)
+})
+
+console.log(`\n${failures ? `${failures} verificação(ões) falharam.` : 'Tudo certo.'}`)
+process.exit(failures ? 1 : 0)

@@ -623,3 +623,48 @@ export interface SessionUser {
   roles: string[]
   tenant: string
 }
+
+// ── Padronização da regra de atualização ──────────────────────
+// Proposta de configuração incremental para UM conjunto, deduzida do catálogo
+// da tabela de origem (chave primária, índices únicos, cobertura de índice).
+export interface PlanProposal {
+  mode: 'snapshot' | 'incremental'
+  /** Chave da 1ª passada — tipicamente a data de criação. */
+  incrementalKey: string | null
+  /** Chave da 2ª passada — a data de edição. Exige dedupeKeys. */
+  incrementalKey2: string | null
+  dedupeKeys: string[]
+  watermarkLagMinutes: number
+  /** 'schedule' = cabe cadência de minutos (chaves indexadas). */
+  cadence: 'daily' | 'hourly' | 'manual' | 'schedule'
+}
+
+export interface IncrementalPlan {
+  datasetId: string
+  slug: string
+  name: string
+  connectionId: string
+  schema: string
+  table: string
+  rowCount: number | null
+  current: {
+    mode: 'live' | 'snapshot' | 'incremental'
+    incrementalKey: string | null
+    incrementalKey2: string | null
+    dedupeKeys: string[]
+    cadence: 'daily' | 'hourly' | 'manual' | 'cascade' | 'schedule'
+    watermarkLagMinutes: number
+  }
+  /** null quando não há regra possível — veja `blocker`. */
+  proposed: PlanProposal | null
+  /** alta = identidade declarada no banco e chave de data indexada. */
+  confidence: 'alta' | 'media' | 'baixa'
+  /** true quando o conjunto já está exatamente como o plano propõe. */
+  alreadyApplied: boolean
+  /** Por que estas colunas foram escolhidas. */
+  reasons: string[]
+  /** Riscos de aplicar assim — chave sem índice, identidade por palpite… */
+  warnings: string[]
+  /** Motivo de não haver proposta nenhuma. */
+  blocker: string | null
+}

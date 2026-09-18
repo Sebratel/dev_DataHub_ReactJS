@@ -13,7 +13,8 @@
     "routes:check": "tsx src/dev/routesSmoke.ts",
     "ai:tools-check": "tsx src/dev/aiToolsCheck.ts",
     "export:smoke": "node --expose-gc --import tsx src/dev/exportSmoke.ts",
-    "auth:smoke": "tsx src/dev/authSmoke.ts"
+    "auth:smoke": "tsx src/dev/authSmoke.ts",
+    "autotune:smoke": "tsx src/dev/autotuneSmoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

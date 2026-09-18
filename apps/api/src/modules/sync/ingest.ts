@@ -128,6 +128,41 @@ async function cascadeToDependents(datasetId: string, visited: Set<string>): Pro
   }
 }
 
+// Compactar vale a pena? Duas perguntas baratas antes de um trabalho caro.
+//
+// A compactação lê TODAS as colunas do conjunto, recomprime e regrava. Num
+// agendamento de 5 em 5 minutos isso é o conjunto inteiro reescrito até 288
+// vezes por dia — e na maioria das vezes o lote trouxe só linhas NOVAS, sem
+// nenhuma identidade repetida para colapsar. Reescrever ali é gastar disco,
+// CPU e I/O do servidor para chegar exatamente ao mesmo conteúdo.
+//
+// Compacta quando:
+//   • existe identidade repetida (houve edição, ou as duas passadas trouxeram
+//     a mesma linha) — aí a compactação é o que mantém o dado correto; ou
+//   • o conjunto passou do teto de arquivos: sem isso, pular a compactação
+//     trocaria um problema pelo outro — 288 Parquets pequenos por dia deixam
+//     TODA leitura do conjunto mais lenta, para sempre.
+//
+// A sondagem lê só as colunas de identidade. Num Parquet (colunar) isso é uma
+// fração do custo de reescrever o conjunto: é por isso que perguntar antes sai
+// mais barato que fazer sempre.
+async function compactionNeeded(
+  dir: string, dedupeKeys: string[], parts: number,
+): Promise<{ needed: boolean; why: string }> {
+  if (parts > config.sync.compactMaxParts) {
+    return { needed: true, why: `${parts} arquivos (teto: ${config.sync.compactMaxParts})` }
+  }
+  const ident = (s: string) => `"${String(s).replace(/"/g, '""')}"`
+  const group = dedupeKeys.map(ident).join(', ')
+  const { rows } = await duckQuery(
+    `select 1 as dup from read_parquet('${parquetGlob(dir)}')
+      group by ${group} having count(*) > 1 limit 1`,
+  )
+  return rows.length
+    ? { needed: true, why: 'há identidade repetida para colapsar' }
+    : { needed: false, why: 'nenhuma identidade repetida' }
+}
+
 // Reescreve o conjunto de Parquets mantendo, para cada identidade (dedupeKeys),
 // apenas a linha MAIS RECENTE — o "upsert" que o lake não tinha. Devolve o
 // arquivo final.
@@ -221,6 +256,10 @@ async function runSync(datasetId: string): Promise<string> {
     stream.write(line + '\n', (e) => (e ? rej(e) : res())))
 
   let total = 0
+  // Custo da compactação desta execução — gravado no run para que "o que está
+  // pesando no servidor?" tenha resposta por medição, não por suposição.
+  let compacted = false
+  let compactMs: number | null = null
   const apiMetrics: PageMetric[] = [] // fontes http: latência/status por chamada
   // Um watermark POR CHAVE: as duas passadas avançam independentes uma da outra
   // (o maior "created" visto não diz nada sobre o maior "modified").
@@ -413,8 +452,18 @@ async function runSync(datasetId: string): Promise<string> {
         // NULL (como o Postgres, ao contrário do MySQL), então o created sozinho
         // já decide quando o modified é vazio, que é a maioria das linhas.
         const recency = [ds.incremental_key, ds.incremental_key_2].filter(Boolean).map(String)
-        const final = await compactLake(dir, dedupeKeys, recency, String(run.id))
-        await uploadToGcs(final, String(ds.tenant_slug), String(ds.slug))
+        const check = await compactionNeeded(dir, dedupeKeys, listParquet(dir).length)
+        if (check.needed) {
+          const t0 = Date.now()
+          const final = await compactLake(dir, dedupeKeys, recency, String(run.id))
+          compactMs = Date.now() - t0
+          compacted = true
+          console.log(`[sync] ${ds.slug}: compactado em ${compactMs} ms (${check.why}).`)
+          await uploadToGcs(final, String(ds.tenant_slug), String(ds.slug))
+        } else {
+          console.log(`[sync] ${ds.slug}: compactação dispensada (${check.why}).`)
+          await uploadToGcs(part, String(ds.tenant_slug), String(ds.slug))
+        }
       } else {
         await uploadToGcs(part, String(ds.tenant_slug), String(ds.slug))
       }
@@ -431,8 +480,9 @@ async function runSync(datasetId: string): Promise<string> {
       [datasetId, count, newWatermark, newWatermark2],
     )
     await db.query(
-      `update sync_runs set status = 'done', rows = $2, bytes = $3, finished_at = now() where id = $1`,
-      [run.id, total, dirBytes(dir)],
+      `update sync_runs set status = 'done', rows = $2, bytes = $3, finished_at = now(),
+                           compacted = $4, compact_ms = $5, parts = $6 where id = $1`,
+      [run.id, total, dirBytes(dir), compacted, compactMs, listParquet(dir).length],
     )
     console.log(`[sync] ${ds.slug}: ${mode}, ${total} linha(s) novas, total no lake ${count}.`)
     return `ok: ${total} linha(s)`

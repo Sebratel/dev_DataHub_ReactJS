@@ -16,6 +16,12 @@ import { api } from '@/lib/api'
 export interface RawRun {
   id: string; mode: string; status: SyncRun['status']; rows: number; bytes: number
   error: string | null; started_at: string; finished_at: string | null
+  // Custo da compactacao desta execucao. A compactacao reescreve o conjunto
+  // INTEIRO, e so acontece quando ha identidade repetida para colapsar (ou
+  // quando os arquivos passam do teto) -- ver ingest.ts. Sem estas tres
+  // colunas na tela, "por que este conjunto pesa no servidor?" so tinha
+  // resposta no log.
+  compacted?: boolean; compact_ms?: number | null; parts?: number | null
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -66,6 +72,7 @@ export default function RunsHistory({ runs }: { runs: RawRun[] }) {
           <th className="py-1.5 pr-4 font-medium">Modo</th>
           <th className="py-1.5 pr-4 font-medium">Status</th>
           <th className="py-1.5 pr-4 text-right font-medium">Linhas</th>
+          <th className="py-1.5 pr-4 font-medium">Compactação</th>
           <th className="py-1.5 font-medium">Erro</th>
         </tr>
       </thead>
@@ -82,6 +89,15 @@ export default function RunsHistory({ runs }: { runs: RawRun[] }) {
               {STATUS_LABEL[r.status] ?? r.status}
             </td>
             <td className="whitespace-nowrap py-1.5 pr-4 text-right">{Number(r.rows).toLocaleString('pt-BR')}</td>
+            {/* "dispensada" e o caso BOM e o mais comum: o lote so trouxe
+                linhas novas, entao nao havia nada a colapsar e o conjunto
+                inteiro nao precisou ser reescrito. */}
+            <td className="whitespace-nowrap py-1.5 pr-4 text-zinc-500">
+              {r.status !== 'done' ? '' : r.compacted
+                ? `${Number(r.compact_ms ?? 0).toLocaleString('pt-BR')} ms`
+                : 'dispensada'}
+              {r.parts != null && <span className="ml-1.5 text-zinc-400">· {r.parts} arq.</span>}
+            </td>
             {/* Erro completo, sem truncar: um erro do DuckDB costuma vir com o
                 trecho de SQL e a posição — cortado em 260px sobrava só o
                 começo, sem a parte que diz o que de fato deu errado. */}

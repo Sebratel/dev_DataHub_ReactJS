@@ -74,7 +74,10 @@ export function DialogProvider({ children }: { children: ReactNode }) {
             )}
             <div className="min-w-0">
               <h2 className="font-semibold">{confirmState.title ?? 'Confirmar'}</h2>
-              <p className="mt-1 text-sm text-zinc-500">{confirmState.message}</p>
+              {/* pre-line: uma confirmação que enumera consequências (quantos
+                  conjuntos recarregam, qual agendamento entra) precisa de
+                  parágrafo. Sem isto, as quebras viravam um bloco único. */}
+              <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-zinc-500">{confirmState.message}</p>
             </div>
           </div>
           <div className="mt-4 flex justify-end gap-2">
