@@ -15,6 +15,8 @@
 import { syncRouter } from '../modules/sync/syncRouter.js'
 import { autotuneRouter } from '../modules/sync/autotuneRouter.js'
 import { schedulesRouter } from '../modules/sync/schedulesRouter.js'
+import { accessRouter, ROLES } from '../modules/admin/accessRouter.js'
+import { isMaster, isEnvMaster, grantMaster, revokeMaster } from '../modules/auth/masterAdmins.js'
 import { config } from '../core/config.js'
 
 let failures = 0
@@ -78,6 +80,14 @@ const EXPECTED: Record<string, Record<string, Level>> = {
     // Reconciliar apaga/cria campo e pode zerar a configuração de sync.
     'POST /:id/reconcile-fields': 'master-src',
   },
+  // Só as rotas de MASTER do accessRouter entram na tabela: as demais (times,
+  // concessões, auditoria) são de admin e têm guard próprio por rota, fora do
+  // escopo desta verificação. Por isso este router é o único com `parcial`.
+  accessRouter: {
+    'GET /masters': 'master',
+    'POST /masters': 'master',
+    'DELETE /masters/:email': 'master',
+  },
   schedulesRouter: {
     'GET /': 'admin',
     // Criar um agendamento não muda nada sozinho: nada o segue ainda.
@@ -90,16 +100,18 @@ const EXPECTED: Record<string, Record<string, Level>> = {
   },
 }
 
-const ROUTERS: Record<string, unknown> = { syncRouter, autotuneRouter, schedulesRouter }
+const ROUTERS: Record<string, unknown> = { syncRouter, autotuneRouter, schedulesRouter, accessRouter }
 
 console.log('\n── nível de permissão por rota ──')
 for (const [routerName, expected] of Object.entries(EXPECTED)) {
   const actual = routesOf(ROUTERS[routerName])
 
   // 1. Nenhuma rota pode existir sem estar na tabela — é o que pega a rota
-  //    nova que alguém acrescentou copiando o guard do vizinho.
+  //    nova que alguém acrescentou copiando o guard do vizinho. O accessRouter
+  //    fica de fora desta exigência: ele tem dezenas de rotas de admin que não
+  //    são assunto deste smoke.
   for (const key of actual.keys()) {
-    if (!(key in expected)) {
+    if (routerName !== 'accessRouter' && !(key in expected)) {
       check(`${routerName}: ${key} declarada`, false,
         'rota sem nível declarado neste smoke — decida o nível dela e registre aqui')
     }
@@ -144,8 +156,44 @@ check('a lista não está vazia nesta configuração',
 // Um e-mail com papel 'admin' no banco não vira master por causa disso: o
 // único caminho é estar na lista do ambiente. Conferido aqui de forma direta.
 const forasteiro = 'qualquer.admin@sebratel.com.br'
-check('um admin fora da lista não é master',
-  !config.masterAdminEmails.includes(forasteiro))
+check('um admin fora da lista não é master', !isMaster(forasteiro))
+check('quem está no ambiente é master', isMaster(config.masterAdminEmails[0] ?? forasteiro))
+
+// ── A porta que NÃO pode abrir ───────────────────────────────────────────
+// PATCH /users/:email/role e operada por QUALQUER admin. Se 'master' virasse
+// uma opcao ali, qualquer admin se concederia master e a trava das fontes
+// deixaria de significar alguma coisa. Este e o teste mais importante do
+// arquivo: ele guarda a unica propriedade que sustenta todo o resto.
+console.log('\n── o papel master não pode ser auto-concedível ──')
+check("'master' fora do seletor de papéis que qualquer admin opera",
+  !(ROLES as readonly string[]).includes('master'), `ROLES = ${ROLES.join(', ')}`)
+
+// ── Regras de concessão e revogação ──────────────────────────────────────
+// As quatro recusas abaixo acontecem ANTES de qualquer acesso ao banco, então
+// rodam aqui sem Postgres.
+console.log('\n── regras de concessão e revogação ──')
+const envMaster = config.masterAdminEmails[0] ?? 'dono@sebratel.com.br'
+
+async function recusa(nome: string, fn: () => Promise<unknown>, trecho: string): Promise<void> {
+  try {
+    await fn()
+    check(nome, false, 'deveria ter recusado, mas passou')
+  } catch (e) {
+    const msg = (e as Error).message
+    check(nome, msg.includes(trecho), msg)
+  }
+}
+
+await recusa('master do ambiente não pode ser removido pela tela',
+  () => revokeMaster(envMaster, 'outro@sebratel.com.br'), 'caminho de recuperação')
+await recusa('ninguém remove o próprio acesso master',
+  () => revokeMaster('delegado@sebratel.com.br', 'delegado@sebratel.com.br'), 'seu próprio acesso')
+await recusa('e-mail de fora do domínio não vira master',
+  () => grantMaster('alguem@gmail.com', envMaster), 'domínio')
+await recusa('conceder a quem já é master pelo ambiente é recusado',
+  () => grantMaster(envMaster, envMaster), 'já é master pelo ambiente')
+
+check('isEnvMaster distingue a origem', isEnvMaster(envMaster) && !isEnvMaster('delegado@sebratel.com.br'))
 
 console.log(`\n${failures ? `${failures} verificação(ões) falharam.` : 'Tudo certo.'}`)
 process.exit(failures ? 1 : 0)

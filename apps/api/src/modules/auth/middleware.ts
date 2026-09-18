@@ -20,6 +20,7 @@ import type { SessionUser } from '@datahub/shared'
 import { config } from '../../core/config.js'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { verifyFirebaseIdToken } from './firebaseToken.js'
+import { isMaster } from './masterAdmins.js'
 
 const tokenCache = new Map<string, { user: SessionUser; exp: number }>()
 const TOKEN_TTL_MS = 5 * 60 * 1000
@@ -41,10 +42,10 @@ async function fetchGoogleProfile(token: string): Promise<GoogleProfile | null> 
 
 // Cria/atualiza o usuário no tenant padrão e devolve seus papéis.
 async function provisionUser(p: { email: string; name: string; picture?: string }): Promise<SessionUser> {
-  // O master NÃO vem do banco: vem da lista do ambiente. Se viesse do banco,
-  // qualquer admin poderia se promover pela tela de acessos e a restrição não
-  // valeria nada. Ver config.masterAdminEmails.
-  const master = config.masterAdminEmails.includes(p.email)
+  // Master vem do AMBIENTE (raiz de confiança) ou de uma concessão feita por
+  // outro master na tela — nunca do papel 'admin', que qualquer admin concede
+  // a si mesmo. Ver masterAdmins.ts.
+  const master = isMaster(p.email)
   if (!isDbAvailable()) {
     return { ...p, roles: config.adminEmails.includes(p.email) ? ['admin'] : ['viewer'], tenant: 'sebratel', master }
   }
@@ -127,7 +128,16 @@ async function getUserFromToken(token: string): Promise<SessionUser | null> {
 export const MASTER_ONLY_MESSAGE =
   'Somente o administrador master pode alterar como as FONTES atualizam (modo, chaves, ' +
   'identidade da linha e cadência). Conjuntos calculados seguem liberados para editores. ' +
-  'A lista de masters fica em MASTER_ADMIN_EMAILS, no ambiente do servidor.'
+  'Um master pode conceder o acesso a outra pessoa em Usuários e Acessos.'
+
+// Descarta o que estiver em cache para um e-mail (ou tudo). Chamado ao
+// conceder/revogar master: sem isto, uma revogação só valeria quando o cache
+// de token vencesse — até 5 minutos de poder depois de ter sido retirado.
+export function invalidateTokenCache(email?: string): void {
+  if (!email) { tokenCache.clear(); return }
+  const alvo = email.trim().toLowerCase()
+  for (const [k, v] of tokenCache) if (v.user.email.toLowerCase() === alvo) tokenCache.delete(k)
+}
 
 declare module 'express-serve-static-core' {
   interface Request {

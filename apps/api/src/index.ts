@@ -34,6 +34,7 @@ import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging } from './core/lake.js'
 import { reloadConnections } from './connectors/store.js'
+import { reloadMasterAdmins } from './modules/auth/masterAdmins.js'
 import { ensureApiMetricsDataset, ensureApiSummaryDerived, ensureApiMetricsDashboard, ensureApiRuntimeWidget } from './modules/catalog/apiMetricsDataset.js'
 
 // Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
@@ -116,11 +117,15 @@ app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
 // para todo mundo — e o sintoma (403 em quem sempre pôde) não apontaria para a
 // variável que faltou.
 if (config.masterAdminEmails.length) {
-  console.log(`[auth] admin master: ${config.masterAdminEmails.join(', ')} (altera a atualização das fontes).`)
+  console.log(
+    `[auth] admin master pelo ambiente: ${config.masterAdminEmails.join(', ')} ` +
+    '(raiz de confiança; outros podem ser concedidos em Usuários e Acessos).',
+  )
 } else {
   console.warn(
-    '[auth] NENHUM admin master configurado — ninguém poderá alterar a regra de atualização das ' +
-    'FONTES. Defina MASTER_ADMIN_EMAILS (ou ADMIN_EMAILS) no ambiente do servidor.',
+    '[auth] NENHUM admin master no ambiente. Se também não houver nenhum concedido pela tela, ' +
+    'ninguém poderá alterar a regra de atualização das FONTES — e não haverá caminho de ' +
+    'recuperação. Defina MASTER_ADMIN_EMAILS (ou ADMIN_EMAILS) na stack.',
   )
 }
 
@@ -135,6 +140,9 @@ try {
 }
 // Carrega as conexões GERENCIADAS (cadastradas na tela) para o registry.
 if (isDbAvailable()) {
+  // Masters concedidos pela tela — a checagem é contra um Set em memória.
+  await reloadMasterAdmins().catch((e) =>
+    console.warn(`[auth] carga inicial de masters falhou: ${(e as Error).message}`))
   await reloadConnections().catch((e) =>
     console.warn(`[connections] carga inicial falhou: ${(e as Error).message}`))
   // Registro de upstreams do gateway no cache de processo (o proxy não pode ir

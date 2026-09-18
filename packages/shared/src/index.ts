@@ -618,6 +618,18 @@ export interface MlTrainOutcome {
   skippedRows: number
 }
 
+// ── Admin master ──────────────────────────────────────────────
+// Duas origens: 'env' vem de MASTER_ADMIN_EMAILS no servidor e NÃO é removível
+// pela tela (é o caminho de recuperação); 'granted' foi concedido por outro
+// master em Usuários e Acessos.
+export interface MasterAdmin {
+  email: string
+  origin: 'env' | 'granted'
+  grantedBy: string | null
+  note: string
+  createdAt: string | null
+}
+
 // ── Auth ──────────────────────────────────────────────────────
 export interface SessionUser {
   email: string

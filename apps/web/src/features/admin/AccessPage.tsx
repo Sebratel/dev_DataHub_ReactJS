@@ -3,10 +3,15 @@
 //   • Times — grupos para conceder acesso a conjuntos em bloco; cria time e
 //     gerencia membros. A concessão de conjuntos vive no diálogo "Acessos" de
 //     cada conjunto (detalhe do dataset).
+//   • Admin master — só aparece para quem JÁ é master. Fica fora do seletor de
+//     papel da aba Usuários de propósito: aquele seletor é operado por qualquer
+//     admin, e um "master" ali seria auto-concedível.
 import { useEffect, useState } from 'react'
-import { UsersRound, UserCog, Plus, Trash2, Loader2, X } from 'lucide-react'
+import { UsersRound, UserCog, Plus, Trash2, Loader2, X, ShieldCheck } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useConfirm } from '@/components/Dialogs'
+import { useAuthStore } from '@/store/authStore'
+import MastersTab from './MastersTab'
 
 interface UserRow { email: string; name: string; picture: string | null; lastLoginAt: string | null; roles: string[] }
 interface TeamRow { id: string; slug: string; name: string; description: string; memberCount: number }
@@ -15,7 +20,8 @@ interface Member { email: string; name: string | null }
 const ROLE_LABEL: Record<string, string> = { admin: 'Administrador', editor: 'Editor', viewer: 'Visualizador' }
 
 export default function AccessPage() {
-  const [tab, setTab] = useState<'users' | 'teams'>('users')
+  const [tab, setTab] = useState<'users' | 'teams' | 'masters'>('users')
+  const isMaster = useAuthStore((s) => !!s.user?.master)
   return (
     <div className="mx-auto min-w-0 max-w-[1600px]">
       <h1 className="text-[17px] font-semibold">Usuários e Acessos</h1>
@@ -26,6 +32,9 @@ export default function AccessPage() {
         {[
           { t: 'users' as const, icon: UserCog, label: 'Usuários' },
           { t: 'teams' as const, icon: UsersRound, label: 'Times' },
+          // A aba só existe para quem é master — quem não é não tem o que
+          // fazer nela, e a API recusaria a listagem de qualquer forma.
+          ...(isMaster ? [{ t: 'masters' as const, icon: ShieldCheck, label: 'Admin master' }] : []),
         ].map(({ t, icon: Icon, label }) => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm transition-colors ${tab === t
@@ -35,7 +44,9 @@ export default function AccessPage() {
           </button>
         ))}
       </div>
-      <div className="mt-4">{tab === 'users' ? <UsersTab /> : <TeamsTab />}</div>
+      <div className="mt-4">
+        {tab === 'users' ? <UsersTab /> : tab === 'teams' ? <TeamsTab /> : <MastersTab />}
+      </div>
     </div>
   )
 }

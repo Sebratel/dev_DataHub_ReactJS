@@ -62,9 +62,11 @@ Redeploys puxam o branch e rebuildam as imagens (`pull_policy: build`). O volume
   usuários batem no lake, nunca nos bancos de produção.
 - Credenciais só existem no `.env` (nunca no banco nem no git).
 - **Alterar como uma FONTE atualiza** (modo, chaves incrementais, identidade da
-  linha, cadência e agendamento) é do **admin master** — a lista está em
-  `MASTER_ADMIN_EMAILS` no ambiente do servidor, não no banco, porque o papel
-  `admin` é concedido pela própria tela de acessos e qualquer admin poderia se
-  promover. Conjuntos **calculados** seguem com admin/editor: rodam sobre o
-  lake e não tocam fonte. Disparar e cancelar uma carga continuam com admin —
-  são operação, não mudança de regra.
+  linha, cadência e agendamento) é do **admin master**. Duas origens:
+  `MASTER_ADMIN_EMAILS` no ambiente do servidor — raiz de confiança, não
+  removível pela tela, é o caminho de recuperação — e concessões feitas em
+  *Usuários e Acessos › Admin master*, **que só um master pode fazer**. O papel
+  `admin` não serve para isso: ele é concedido pela própria tela de acessos, e
+  qualquer admin poderia se promover. Conjuntos **calculados** seguem com
+  admin/editor: rodam sobre o lake e não tocam fonte. Disparar e cancelar uma
+  carga continuam com admin — são operação, não mudança de regra.

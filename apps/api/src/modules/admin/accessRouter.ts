@@ -2,6 +2,12 @@
 // Administração de acessos (Sprint 8). Montado em /api/v1/admin.
 //   Usuários (admin):      GET  /users               lista com papéis
 //                          PATCH /users/:email/role  define papel (admin|editor|viewer)
+//   Admin master (MASTER): GET    /masters            lista as duas origens
+//                          POST   /masters            concede
+//                          DELETE /masters/:email     revoga
+//     Separado de /users/:email/role de propósito: aquela rota é administrada
+//     por 'admin', e 'admin' nao e fronteira entre administradores (qualquer
+//     admin concede 'admin' a si mesmo por ela). Master so se concede a master.
 //   Times (admin):         GET/POST /teams · PATCH/DELETE /teams/:id
 //                          GET/POST /teams/:id/members · DELETE /teams/:id/members/:email
 //   Concessões (admin ou DONO do conjunto):
@@ -14,7 +20,8 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
-import { requireAuth, audit } from '../auth/middleware.js'
+import { requireAuth, audit, invalidateTokenCache } from '../auth/middleware.js'
+import { listMasterAdmins, grantMaster, revokeMaster } from '../auth/masterAdmins.js'
 
 export const accessRouter = Router()
 
@@ -23,8 +30,12 @@ accessRouter.use(requireAuth(), (req, res, next) => {
   next()
 })
 
-const ROLES = ['admin', 'editor', 'viewer'] as const
+// Exportado para o smoke de permissões: 'master' NUNCA pode entrar aqui. Esta
+// rota é operada por qualquer admin — um master concedível por ela seria
+// auto-concedível, e a trava das fontes deixaria de significar alguma coisa.
+export const ROLES = ['admin', 'editor', 'viewer'] as const
 const adminOnly = requireAuth({ role: 'admin' })
+const masterOnly = requireAuth({ role: 'master' })
 
 async function tenantId(slug: string): Promise<string> {
   return String((await db.query('select id from tenants where slug = $1', [slug])).rows[0]?.id)
@@ -328,3 +339,38 @@ accessRouter.delete('/datasets/:slug/grants/:id', requireManageable(async (req, 
   await audit(req, 'access.dataset.grant.revoke', { type: 'dataset', id: ds.slug })
   res.json({ ok: true })
 }))
+
+// ─── Admin master ──────────────────────────────────────────────
+// Duas origens: o ambiente do servidor (raiz de confiança, não removível pela
+// tela) e as concessões feitas aqui. Ver masterAdmins.ts.
+accessRouter.get('/masters', masterOnly, async (_req, res) => {
+  res.json({ masters: await listMasterAdmins() })
+})
+
+accessRouter.post('/masters', masterOnly, async (req, res) => {
+  try {
+    const email = String(req.body?.email ?? '')
+    const note = String(req.body?.note ?? '').slice(0, 200)
+    await grantMaster(email, req.user!.email, note)
+    // A pessoa pode estar com sessão aberta: sem limpar o cache do token dela,
+    // o acesso novo só valeria no próximo ciclo de 5 minutos.
+    invalidateTokenCache(email)
+    await audit(req, 'access.master.grant', { type: 'user', id: email.toLowerCase() }, { note })
+    res.status(201).json({ ok: true })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+accessRouter.delete('/masters/:email', masterOnly, async (req, res) => {
+  try {
+    await revokeMaster(req.params.email, req.user!.email)
+    // Aqui a limpeza importa mais: sem ela, quem perdeu o acesso continuaria
+    // podendo alterar as fontes por até 5 minutos.
+    invalidateTokenCache(req.params.email)
+    await audit(req, 'access.master.revoke', { type: 'user', id: req.params.email.toLowerCase() })
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
