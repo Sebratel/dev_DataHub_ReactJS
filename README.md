@@ -61,3 +61,10 @@ Redeploys puxam o branch e rebuildam as imagens (`pull_policy: build`). O volume
 - Ingestão apenas em janela de madrugada, incremental e em lotes — consultas de
   usuários batem no lake, nunca nos bancos de produção.
 - Credenciais só existem no `.env` (nunca no banco nem no git).
+- **Alterar como uma FONTE atualiza** (modo, chaves incrementais, identidade da
+  linha, cadência e agendamento) é do **admin master** — a lista está em
+  `MASTER_ADMIN_EMAILS` no ambiente do servidor, não no banco, porque o papel
+  `admin` é concedido pela própria tela de acessos e qualquer admin poderia se
+  promover. Conjuntos **calculados** seguem com admin/editor: rodam sobre o
+  lake e não tocam fonte. Disparar e cancelar uma carga continuam com admin —
+  são operação, não mudança de regra.

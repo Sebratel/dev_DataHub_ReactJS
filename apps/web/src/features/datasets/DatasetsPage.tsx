@@ -49,6 +49,10 @@ export default function DatasetsPage() {
   const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
   // Agendamento em lote e' admin (mesma regra do backend em schedulesRouter).
   const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
+  // Aplicar agendamento a um conjunto de FONTE muda como a produção é
+  // consultada — do admin master. Se a seleção tiver só calculados, segue
+  // liberado para admin (eles rodam sobre o lake, não tocam fonte).
+  const isMaster = useAuthStore((s) => !!s.user?.master)
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scheduling, setScheduling] = useState(false)
@@ -158,14 +162,22 @@ export default function DatasetsPage() {
               ]}
             />
             <SearchInput value={query} onChange={setQuery} placeholder="Buscar por nome, slug ou etiqueta…" />
-            {isAdmin && selected.size > 0 && (
-              <button
-                onClick={() => setScheduling(true)}
-                className="flex h-[30px] items-center gap-1.5 rounded-lg bg-accent px-3 text-[12px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover"
-              >
-                <CalendarClock size={13} /> Agendar atualização ({selected.size})
-              </button>
-            )}
+            {isAdmin && selected.size > 0 && (() => {
+              const fontes = (datasets ?? []).filter((d) => selected.has(d.id) && d.kind !== 'derived').length
+              const travado = fontes > 0 && !isMaster
+              return (
+                <button
+                  onClick={() => setScheduling(true)}
+                  disabled={travado}
+                  title={travado
+                    ? `${fontes} conjunto(s) de fonte na seleção — somente o administrador master agenda a atualização de fontes.`
+                    : undefined}
+                  className="flex h-[30px] items-center gap-1.5 rounded-lg bg-accent px-3 text-[12px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover disabled:opacity-50"
+                >
+                  <CalendarClock size={13} /> Agendar atualização ({selected.size})
+                </button>
+              )
+            })()}
           </Toolbar>
 
           <Card>

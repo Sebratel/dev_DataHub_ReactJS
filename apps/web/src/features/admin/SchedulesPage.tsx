@@ -2,10 +2,11 @@
 // minutos), aplicados em lote a conjuntos de dados. Ver ScheduleAssignDialog
 // (na tela de Conjuntos) para o fluxo de "selecionei N, aplica a todos".
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Loader2, Pencil, Trash2, X, CalendarClock } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, Pencil, Trash2, X, CalendarClock, Lock } from 'lucide-react'
 import { WEEKDAY_LABELS, type SyncSchedule, type DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useConfirm } from '@/components/Dialogs'
+import { useAuthStore } from '@/store/authStore'
 import { Page, PageHeader, ErrorBanner, EmptyState } from '@/components/ui/Page'
 import { Card, CardHead } from '@/components/ui/Card'
 
@@ -19,6 +20,11 @@ function weekdaysLabel(mask: number): string {
 
 export default function SchedulesPage() {
   const confirm = useConfirm()
+  // Editar ou apagar um agendamento muda a cadência de TODOS os conjuntos que
+  // o seguem de uma vez. Quando algum deles é de FONTE, isso é mudar como a
+  // produção é consultada — e aí só o admin master. Agendamento que só rege
+  // conjunto calculado continua liberado para admin.
+  const isMaster = useAuthStore((st) => !!st.user?.master)
   const [schedules, setSchedules] = useState<SyncSchedule[] | null>(null)
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -102,6 +108,11 @@ export default function SchedulesPage() {
             {schedules.map((s) => {
               const members = byScheduleId.get(s.id) ?? []
               const isOpen = expanded === s.id
+              // sourceCount vem da API; na falta dela (resposta antiga em
+              // cache), cair para "tem fonte" é o lado seguro do erro.
+              const fontes = s.sourceCount ?? s.datasetCount ?? 0
+              const travado = fontes > 0 && !isMaster
+              const motivo = `Este agendamento rege ${fontes} conjunto(s) de fonte — somente o administrador master pode alterá-lo.`
               return (
                 <div key={s.id}>
                   <div className="flex items-center gap-3 p-3">
@@ -118,12 +129,13 @@ export default function SchedulesPage() {
                     </button>
                     <div className="flex shrink-0 items-center gap-0.5">
                       {busyId === s.id && <Loader2 size={13} className="mr-1 animate-spin text-zinc-400" />}
-                      <button onClick={() => setEditing(s)} title="Editar"
-                        className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
+                      {travado && <Lock size={12} className="mr-1 shrink-0 text-zinc-400" aria-label={motivo} />}
+                      <button onClick={() => setEditing(s)} disabled={travado} title={travado ? motivo : 'Editar'}
+                        className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
                         <Pencil size={14} strokeWidth={1.6} />
                       </button>
-                      <button onClick={() => void remove(s)} disabled={busyId === s.id} title="Excluir"
-                        className="rounded-md p-1.5 text-zinc-400 hover:bg-crit-soft hover:text-crit disabled:opacity-50 dark:hover:bg-crit/10 dark:hover:text-crit-dark">
+                      <button onClick={() => void remove(s)} disabled={travado || busyId === s.id} title={travado ? motivo : 'Excluir'}
+                        className="rounded-md p-1.5 text-zinc-400 hover:bg-crit-soft hover:text-crit disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-crit/10 dark:hover:text-crit-dark">
                         <Trash2 size={14} strokeWidth={1.6} />
                       </button>
                     </div>
@@ -137,8 +149,12 @@ export default function SchedulesPage() {
                           {members.map((d) => (
                             <div key={d.id} className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[12px] dark:border-zinc-800 dark:bg-zinc-900">
                               <span className="truncate">{d.name}</span>
-                              <button onClick={() => void unassign(d.id)} disabled={busyId === d.id} title="Tirar deste agendamento"
-                                className="shrink-0 text-zinc-300 hover:text-crit disabled:opacity-50 dark:text-zinc-600">
+                              <button onClick={() => void unassign(d.id)}
+                                disabled={busyId === d.id || (d.kind !== 'derived' && !isMaster)}
+                                title={d.kind !== 'derived' && !isMaster
+                                  ? 'Somente o administrador master tira um conjunto de fonte do agendamento.'
+                                  : 'Tirar deste agendamento'}
+                                className="shrink-0 text-zinc-300 hover:text-crit disabled:opacity-40 dark:text-zinc-600">
                                 <X size={13} />
                               </button>
                             </div>

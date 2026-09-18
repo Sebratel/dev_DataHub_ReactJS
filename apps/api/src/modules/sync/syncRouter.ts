@@ -4,6 +4,7 @@ import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { enqueueSync, requestCancel } from './ingest.js'
 import { applySyncConfig, type SyncConfigInput } from './syncConfig.js'
+import { requireMasterOnSource } from './masterGuard.js'
 
 export const syncRouter = Router()
 
@@ -15,11 +16,16 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
   next()
 }
 const adminOnly = [requireAuth({ role: 'admin' }), requireDb]
+// Mudar a REGRA de atualização de uma fonte é do admin master; num conjunto
+// calculado, segue admin (ver masterGuard.ts). Disparar e cancelar uma carga
+// continuam com admin: são operação, não mudança de regra — e tirá-las do
+// time de operação impediria reexecutar uma carga que falhou de madrugada.
+const masterOnSource = [...adminOnly, requireMasterOnSource]
 
 // Modo de sincronização, chaves incrementais, identidade da linha, piso e
 // CADÊNCIA do dataset. A regra em si mora em syncConfig.ts — compartilhada com
 // a padronização em lote, para as duas não divergirem.
-syncRouter.patch('/:id/sync-config', ...adminOnly, async (req, res) => {
+syncRouter.patch('/:id/sync-config', ...masterOnSource, async (req, res) => {
   try {
     const r = await applySyncConfig(req.params.id, (req.body ?? {}) as SyncConfigInput)
     await audit(req, 'datasets.sync-config', { type: 'dataset', id: r.slug }, r.applied)

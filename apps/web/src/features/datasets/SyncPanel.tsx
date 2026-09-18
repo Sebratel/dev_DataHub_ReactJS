@@ -9,9 +9,10 @@
 // nada, em SQL); escolher 'created' nunca trazia edição. Agora são duas chaves,
 // uma passada para cada, e a identidade da linha junta as duas pontas.
 import { useState } from 'react'
-import { Play, Loader2, Square, Fingerprint } from 'lucide-react'
+import { Play, Loader2, Square, Fingerprint, Lock } from 'lucide-react'
 import type { DatasetDetail } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
 import RunsHistory, { useSyncRuns } from './RunsHistory'
 import DedupeKeysDialog from './DedupeKeysDialog'
 
@@ -103,6 +104,12 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     }
   }
 
+  // Mudar COMO uma fonte atualiza é do admin master — o servidor recusa de
+  // qualquer jeito (403). Aqui a tela desabilita antes do clique e diz o
+  // porquê: descobrir a regra só depois de preencher tudo e apertar Salvar é
+  // o pior jeito de aprender que não se pode.
+  const isMaster = useAuthStore((s) => !!s.user?.master)
+
   const campos = dataset.fields.filter((f) => !f.hidden)
   const numericOrDateFields = campos.filter((f) => f.type === 'number' || f.type === 'date')
   const rotulo = (key: string) => campos.find((f) => f.key === key)?.label ?? key
@@ -111,6 +118,22 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
   return (
     <div className="mt-5 rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-900">
       <h2 className="text-sm font-medium uppercase tracking-wider text-zinc-400">Sincronização com o lake (admin)</h2>
+
+      {!isMaster && (
+        <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
+          <Lock size={14} className="mt-0.5 shrink-0 text-zinc-400" />
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Somente o <strong>administrador master</strong> altera como uma fonte atualiza — modo, chaves,
+            identidade da linha e cadência mexem na carga sobre os bancos de produção. Você continua podendo
+            <strong> sincronizar agora</strong> e acompanhar o histórico. Conjuntos calculados seguem liberados.
+          </p>
+        </div>
+      )}
+
+      {/* fieldset + display:contents: desabilita TODO controle de configuração
+          de uma vez, sem mudar o layout. Marcar campo a campo deixaria um de
+          fora na próxima vez que alguém acrescentasse um. */}
+      <fieldset disabled={!isMaster} className="contents">
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="text-sm">
           <span className="mb-1 block text-xs text-zinc-500">Modo</span>
@@ -258,10 +281,15 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
         </div>
       )}
 
+      </fieldset>
+
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           onClick={saveConfig}
-          disabled={busy || (mode === 'incremental' && !incKey)}
+          // Fora do fieldset porque "Sincronizar agora" e "Parar" são vizinhos
+          // dele e continuam valendo para admin — operar não é reconfigurar.
+          disabled={!isMaster || busy || (mode === 'incremental' && !incKey)}
+          title={isMaster ? undefined : 'Somente o administrador master altera a atualização de uma fonte.'}
           className="rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
         >
           Salvar configuração

@@ -15,6 +15,23 @@ export const config = {
   adminEmails: (process.env.ADMIN_EMAILS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 
+  // ADMIN MASTER — quem pode mudar COMO as FONTES atualizam (modo, chaves,
+  // identidade, cadência). Um degrau acima de 'admin', e por um motivo
+  // concreto: o papel 'admin' vive no banco e QUALQUER admin pode conceder
+  // 'admin' a quem quiser pela tela de acessos, inclusive a si mesmo. Ou seja,
+  // 'admin' não é fronteira entre administradores — não adiantaria nada apoiar
+  // esta restrição nele.
+  //
+  // Por isso a lista mora no AMBIENTE do servidor (stack do Portainer), onde o
+  // aplicativo não escreve: não há caminho dentro do sistema para alguém se
+  // promover a master. Mudar quem é master é um ato de deploy, de propósito.
+  //
+  // Sem MASTER_ADMIN_EMAILS, herda ADMIN_EMAILS — que hoje já é só o dono do
+  // hub, então a regra entra valendo sem precisar mexer na stack. Definir a
+  // variável separa as duas listas quando elas precisarem divergir.
+  masterAdminEmails: (process.env.MASTER_ADMIN_EMAILS || process.env.ADMIN_EMAILS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+
   auth: {
     // Projeto Firebase que emite os ID tokens. Definido = a API passa a aceitar
     // login por Firebase (assinatura conferida localmente, sem chamar o Google

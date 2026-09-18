@@ -13,10 +13,11 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Wand2, Loader2, ChevronDown, ChevronRight, AlertTriangle, Check, Ban, RefreshCw, CalendarClock,
+  Wand2, Loader2, ChevronDown, ChevronRight, AlertTriangle, Check, Ban, RefreshCw, CalendarClock, Lock,
 } from 'lucide-react'
 import type { IncrementalPlan, SyncSchedule } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
 import { useConfirm } from '@/components/Dialogs'
 import { Page, PageHeader, ErrorBanner, EmptyState, FilterChips, PrimaryButton } from '@/components/ui/Page'
 import { Card, CardHead } from '@/components/ui/Card'
@@ -53,6 +54,10 @@ function ruleSummary(r: {
 
 export default function AutotunePage() {
   const confirm = useConfirm()
+  // O DIAGNÓSTICO é aberto a admin: estudar o que precisa mudar e levar pronto
+  // ao master vale mais do que esconder a tela. Só o APLICAR é do master —
+  // ele grava a regra de atualização de conjuntos de FONTE.
+  const isMaster = useAuthStore((s) => !!s.user?.master)
   const [plans, setPlans] = useState<IncrementalPlan[] | null>(null)
   const [schedules, setSchedules] = useState<SyncSchedule[]>([])
   const [scheduleId, setScheduleId] = useState('')
@@ -176,6 +181,17 @@ export default function AutotunePage() {
 
       {error && <ErrorBanner message={error} onRetry={load} />}
 
+      {!isMaster && (
+        <div className="mb-2.5 flex items-start gap-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+          <Lock size={14} className="mt-0.5 shrink-0 text-zinc-400" />
+          <p className="text-[12px] leading-relaxed text-zinc-500">
+            Você pode <strong>consultar</strong> o diagnóstico à vontade — ele é só leitura do catálogo das
+            fontes e não muda nada. <strong>Aplicar</strong> é do administrador master, porque grava a regra
+            de atualização de conjuntos de fonte e mexe na carga sobre os bancos de produção.
+          </p>
+        </div>
+      )}
+
       {plans === null ? (
         <Card><p className="px-3 py-10 text-center text-[12px] text-zinc-500">Lendo o catálogo das fontes…</p></Card>
       ) : (
@@ -218,7 +234,7 @@ export default function AutotunePage() {
 
               <button
                 onClick={() => setSelected(new Set(groups.alta.map((p) => p.datasetId)))}
-                disabled={!groups.alta.length}
+                disabled={!isMaster || !groups.alta.length}
                 className="h-[30px] rounded-lg border border-zinc-200 px-2.5 text-[12px] font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-800"
               >
                 Marcar os {groups.alta.length} prontos
@@ -237,7 +253,8 @@ export default function AutotunePage() {
                 <PrimaryButton
                   icon={applying ? undefined : Wand2}
                   onClick={apply}
-                  disabled={!selected.size || applying}
+                  disabled={!isMaster || !selected.size || applying}
+                  title={isMaster ? undefined : 'Somente o administrador master aplica a regra nas fontes.'}
                 >
                   {applying ? <Loader2 size={14} className="animate-spin" /> : null}
                   Aplicar
@@ -269,7 +286,7 @@ export default function AutotunePage() {
                           type="checkbox"
                           checked={selected.has(p.datasetId)}
                           onChange={() => toggle(p.datasetId)}
-                          disabled={!canSelect}
+                          disabled={!canSelect || !isMaster}
                           className="mt-1 h-[13px] w-[13px] shrink-0 accent-info disabled:opacity-30"
                           aria-label={`Selecionar ${p.name}`}
                         />

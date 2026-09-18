@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────
-// Padronização da regra de atualização (admin).
+// Padronização da regra de atualização.
 //
-//   GET  /datasets/auto-incremental          diagnostica TODOS os conjuntos
-//   GET  /datasets/:id/auto-incremental      diagnostica um
-//   POST /datasets/auto-incremental/apply    aplica em lote o que foi proposto
+//   GET  /datasets/auto-incremental          diagnostica TODOS   (admin)
+//   GET  /datasets/:id/auto-incremental      diagnostica um      (admin)
+//   POST /datasets/auto-incremental/apply    aplica em lote      (admin MASTER)
 //
 // O apply NUNCA inventa: ele recalcula o plano no servidor e grava o que o
 // plano disser. O front manda quais conjuntos aplicar, não o que gravar —
@@ -24,6 +24,12 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
   next()
 }
 const adminOnly = [requireAuth({ role: 'admin' }), requireDb]
+// O DIAGNÓSTICO fica com admin de propósito: é leitura pura do catálogo e não
+// muda nada. Um admin conseguir estudar o que precisa mudar — e levar isso
+// pronto ao master — vale mais do que esconder a tela dele.
+// Já o APPLY é master: ele só mexe em conjuntos de FONTE (planAll exclui os
+// calculados), então a exigência é incondicional, sem olhar dataset a dataset.
+const masterOnly = [requireAuth({ role: 'master' }), requireDb]
 
 autotuneRouter.get('/auto-incremental', ...adminOnly, async (req, res) => {
   try {
@@ -46,7 +52,7 @@ autotuneRouter.get('/:id/auto-incremental', ...adminOnly, async (req, res) => {
 // aquele agendamento; os demais recebem a cadência que o plano indicar
 // (hora em hora), porque cadência de minutos em chave sem índice é justamente
 // o que este diagnóstico existe para evitar.
-autotuneRouter.post('/auto-incremental/apply', ...adminOnly, async (req, res) => {
+autotuneRouter.post('/auto-incremental/apply', ...masterOnly, async (req, res) => {
   const ids = Array.isArray(req.body?.datasetIds) ? (req.body.datasetIds as unknown[]).map(String) : []
   if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um conjunto.' })
   const scheduleId = req.body?.scheduleId ? String(req.body.scheduleId) : null

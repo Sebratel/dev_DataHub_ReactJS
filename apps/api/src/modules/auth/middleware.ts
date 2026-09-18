@@ -41,8 +41,12 @@ async function fetchGoogleProfile(token: string): Promise<GoogleProfile | null> 
 
 // Cria/atualiza o usuário no tenant padrão e devolve seus papéis.
 async function provisionUser(p: { email: string; name: string; picture?: string }): Promise<SessionUser> {
+  // O master NÃO vem do banco: vem da lista do ambiente. Se viesse do banco,
+  // qualquer admin poderia se promover pela tela de acessos e a restrição não
+  // valeria nada. Ver config.masterAdminEmails.
+  const master = config.masterAdminEmails.includes(p.email)
   if (!isDbAvailable()) {
-    return { ...p, roles: config.adminEmails.includes(p.email) ? ['admin'] : ['viewer'], tenant: 'sebratel' }
+    return { ...p, roles: config.adminEmails.includes(p.email) ? ['admin'] : ['viewer'], tenant: 'sebratel', master }
   }
   const tenant = (await db.query(`select id, slug from tenants where slug = 'sebratel'`)).rows[0]
   const user = (await db.query(
@@ -66,7 +70,7 @@ async function provisionUser(p: { email: string; name: string; picture?: string 
     [user.id],
   )).rows.map((r) => r.name as string)
 
-  return { email: p.email, name: p.name, picture: p.picture, roles, tenant: tenant.slug }
+  return { email: p.email, name: p.name, picture: p.picture, roles, tenant: tenant.slug, master }
 }
 
 // Um ID token do Firebase é um JWT: três partes separadas por ponto, a
@@ -118,14 +122,21 @@ async function getUserFromToken(token: string): Promise<SessionUser | null> {
   return user
 }
 
+// Uma mensagem só para as rotas que exigem master. Ela diz QUEM pode e COMO
+// mudar isso — um 403 que apenas nega manda a pessoa perguntar no corredor.
+export const MASTER_ONLY_MESSAGE =
+  'Somente o administrador master pode alterar como as FONTES atualizam (modo, chaves, ' +
+  'identidade da linha e cadência). Conjuntos calculados seguem liberados para editores. ' +
+  'A lista de masters fica em MASTER_ADMIN_EMAILS, no ambiente do servidor.'
+
 declare module 'express-serve-static-core' {
   interface Request {
     user?: SessionUser
   }
 }
 
-export function requireAuth({ role }: { role?: 'admin' | 'editor' } = {}) {
-  return async (req: Request, res: Response, next: NextFunction) => {
+export function requireAuth({ role }: { role?: 'master' | 'admin' | 'editor' } = {}) {
+  const mw = async (req: Request, res: Response, next: NextFunction) => {
     const raw = req.headers.authorization || ''
     const m = /^Bearer (.+)$/.exec(raw)
     if (!m) {
@@ -146,6 +157,9 @@ export function requireAuth({ role }: { role?: 'admin' | 'editor' } = {}) {
     let user: SessionUser | null = null
     try { user = await getUserFromToken(m[1]) } catch { user = null }
     if (!user) return res.status(401).json({ error: 'Sessão inválida ou expirada. Entre novamente.' })
+    if (role === 'master' && !user.master) {
+      return res.status(403).json({ error: MASTER_ONLY_MESSAGE })
+    }
     if (role === 'admin' && !user.roles.includes('admin')) {
       return res.status(403).json({ error: 'Apenas administradores podem executar esta ação.' })
     }
@@ -155,6 +169,12 @@ export function requireAuth({ role }: { role?: 'admin' | 'editor' } = {}) {
     req.user = user
     next()
   }
+  // Nome legível no lugar de uma arrow anônima. Serve a duas coisas: o rastro
+  // de pilha passa a dizer QUAL nível recusou, e o nível de cada rota vira algo
+  // que dá para conferir de fora — é o que o smoke de permissões faz, para que
+  // uma rota nova sem guard falhe no teste em vez de só em produção.
+  Object.defineProperty(mw, 'name', { value: `requireAuth:${role ?? 'any'}` })
+  return mw
 }
 
 // Auditoria best-effort — nunca derruba a request.

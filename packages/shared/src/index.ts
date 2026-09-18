@@ -296,6 +296,9 @@ export interface SyncSchedule {
   /** Bitmask: bit 0 = domingo .. bit 6 = sabado (Date.getDay()). Ao menos 1 bit. */
   weekdays: number
   datasetCount?: number // presente so na listagem administrativa
+  /** Quantos desses conjuntos são de FONTE — editar/apagar o agendamento
+   *  mexe na cadência deles, e isso é do admin master. */
+  sourceCount?: number
 }
 
 export const WEEKDAY_LABELS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'] as const
@@ -622,6 +625,11 @@ export interface SessionUser {
   picture?: string
   roles: string[]
   tenant: string
+  // ADMIN MASTER: pode mudar COMO as FONTES atualizam (modo, chaves,
+  // identidade, cadência). Não é um papel do banco — vem da lista no ambiente
+  // do servidor, justamente porque qualquer admin consegue conceder 'admin' a
+  // si mesmo pela tela de acessos. Conjuntos CALCULADOS seguem com 'editor'.
+  master: boolean
 }
 
 // ── Padronização da regra de atualização ──────────────────────

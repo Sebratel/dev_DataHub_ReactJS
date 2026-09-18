@@ -110,6 +110,20 @@ app.use('/api/public/v1', publicRouter)
 
 app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
 
+// Quem pode mexer em como as FONTES atualizam. Anunciado no boot porque a
+// lista vem do ambiente da stack, não do banco: sem isto, uma stack sem
+// MASTER_ADMIN_EMAILS nem ADMIN_EMAILS trancaria a configuração das fontes
+// para todo mundo — e o sintoma (403 em quem sempre pôde) não apontaria para a
+// variável que faltou.
+if (config.masterAdminEmails.length) {
+  console.log(`[auth] admin master: ${config.masterAdminEmails.join(', ')} (altera a atualização das fontes).`)
+} else {
+  console.warn(
+    '[auth] NENHUM admin master configurado — ninguém poderá alterar a regra de atualização das ' +
+    'FONTES. Defina MASTER_ADMIN_EMAILS (ou ADMIN_EMAILS) no ambiente do servidor.',
+  )
+}
+
 await runMigrations()
 // Remove JSONL de staging órfão de uma carga anterior morta na marra (evita
 // acúmulo de dezenas de GB no volume do lake). No boot não há sync rodando.
