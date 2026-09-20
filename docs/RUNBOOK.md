@@ -4,6 +4,10 @@ Guia prático para operar o hub: sincronização, incidentes de disco/sobrecarga
 os "botões" (variáveis de ambiente) de proteção. Para a arquitetura, ver o
 código; aqui é o **o que fazer quando**.
 
+> Para **decidir e validar** a regra de atualização de cada conjunto (qual
+> chave, identidade da linha, cadência), o guia é
+> [TREINAMENTO-ATUALIZACAO-FONTES](./TREINAMENTO-ATUALIZACAO-FONTES.md).
+
 > Convenções: comandos de **host** rodam no servidor (SSH/Portainer console).
 > Comandos de **container** usam `docker exec`. Ajuste nomes se a stack mudar.
 
@@ -15,8 +19,19 @@ código; aqui é o **o que fazer quando**.
 - **Uma sincronização por vez** no hub inteiro (fila sequencial em memória).
 - **Modos**: `snapshot` (recarrega tudo), `incremental` (só o que mudou, por
   watermark/keyset) e `live` (não vai pro lake).
-- **Cadência por conjunto**: `daily` (janela `ETL_HOUR`), `hourly`, `manual`.
-- Tudo isso é configurado por admin na tela do conjunto → "Sincronização com o lake".
+- **Incremental usa DUAS chaves** (criação e edição), uma passada keyset para
+  cada, e uma **identidade da linha** que faz a versão nova substituir a antiga
+  em vez de conviver com ela. Sem identidade, o incremental só acrescenta.
+- **Cadência por conjunto**: `daily` (janela `ETL_HOUR`), `hourly`, `manual`,
+  `schedule` (segue um agendamento: janela + dias + intervalo em minutos) e
+  `cascade` (só calculados — recalcula quando a origem atualiza).
+- A **compactação** (reescrever o conjunto para colapsar duplicatas) é
+  condicional: só roda quando há identidade repetida ou quando os arquivos
+  passam de `SYNC_COMPACT_MAX_PARTS`. O histórico mostra `dispensada` ou o
+  tempo gasto.
+- Configurado na tela do conjunto → "Sincronização com o lake", ou em lote em
+  **Administração › Padronizar atualização**. Mexer na regra de um conjunto de
+  FONTE exige **admin master**; calculados seguem com admin/editor.
 
 **Regra de ouro:** tabela grande = **incremental**, nunca snapshot. Snapshot com
 `OFFSET` numa tabela grande/ativa relê linhas, não converge e pode encher o disco.
