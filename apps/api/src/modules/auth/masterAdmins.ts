@@ -33,6 +33,11 @@ export function isMaster(email: string): boolean {
   return config.masterAdminEmails.includes(e) || granted.has(e)
 }
 
+/** Existe algum master, de qualquer origem? Falso = configuração quebrada. */
+export function anyMasterConfigured(): boolean {
+  return config.masterAdminEmails.length > 0 || granted.size > 0
+}
+
 /** Veio do ambiente — a tela não pode remover. */
 export function isEnvMaster(email: string): boolean {
   return config.masterAdminEmails.includes(norm(email))

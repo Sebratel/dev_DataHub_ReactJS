@@ -68,6 +68,12 @@ services:
       # cada login). Vazio = só o caminho antigo.
       FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # ADMIN MASTER — unico que altera COMO as FONTES atualizam. Precisa estar
+      # AQUI: este bloco lista as variaveis uma a uma, entao o que for definido
+      # na stack sem constar nesta lista simplesmente nao chega ao container --
+      # a variavel fica na tela do Portainer parecendo configurada, e a API
+      # nunca a ve. Vazio = herda ADMIN_EMAILS.
+      MASTER_ADMIN_EMAILS: ${MASTER_ADMIN_EMAILS:-}
       CONNECTIONS_SECRET: ${CONNECTIONS_SECRET:-}
       DATAHUB_DB_HOST: datahub-db
       DATAHUB_DB_PORT: 5432
@@ -80,6 +86,9 @@ services:
       SYNC_STAGING_DIR: ${SYNC_STAGING_DIR:-}
       SOURCE_STATEMENT_TIMEOUT_MS: ${SOURCE_STATEMENT_TIMEOUT_MS:-120000}
       SYNC_MAX_ROWS: ${SYNC_MAX_ROWS:-30000000}
+      # Teto de arquivos Parquet por conjunto antes de compactar mesmo sem ter
+      # nada a colapsar (a compactacao so roda quando ha identidade repetida).
+      SYNC_COMPACT_MAX_PARTS: ${SYNC_COMPACT_MAX_PARTS:-24}
       # Motor de consulta (DuckDB) — teto GLOBAL do DuckDB (não é por consulta).
       # 6GB dentro dos 12g da API deixa ~6g pro Node + embeddings + SO. Consultas
       # e cargas grandes derramam pra disco (spill) em vez de estourar (OOM).
@@ -87,6 +96,12 @@ services:
       DUCK_THREADS: ${DUCK_THREADS:-6}
       DUCK_QUERY_TIMEOUT_MS: ${DUCK_QUERY_TIMEOUT_MS:-30000}
       DUCK_MAX_CONCURRENCY: ${DUCK_MAX_CONCURRENCY:-3}
+      # Pistas separadas: consulta ad-hoc (notebook, previa) e export nao podem
+      # ocupar os slots dos paineis.
+      DUCK_MAX_ADHOC_CONCURRENCY: ${DUCK_MAX_ADHOC_CONCURRENCY:-2}
+      DUCK_MAX_EXPORT_CONCURRENCY: ${DUCK_MAX_EXPORT_CONCURRENCY:-1}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-}
+      GATEWAY_MAX_BODY: ${GATEWAY_MAX_BODY:-}
       # Fontes de dados (somente leitura — use usuário só-SELECT).
       DB_ELLEVEN_HOST: ${DB_ELLEVEN_HOST:-}
       DB_ELLEVEN_DATABASE: ${DB_ELLEVEN_DATABASE:-}

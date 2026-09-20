@@ -639,9 +639,16 @@ export interface SessionUser {
   tenant: string
   // ADMIN MASTER: pode mudar COMO as FONTES atualizam (modo, chaves,
   // identidade, cadência). Não é um papel do banco — vem da lista no ambiente
-  // do servidor, justamente porque qualquer admin consegue conceder 'admin' a
-  // si mesmo pela tela de acessos. Conjuntos CALCULADOS seguem com 'editor'.
+  // do servidor ou de uma concessão feita por outro master, justamente porque
+  // qualquer admin consegue conceder 'admin' a si mesmo pela tela de acessos.
+  // Conjuntos CALCULADOS seguem com 'editor'.
   master: boolean
+  // Existe ALGUÉM como master no servidor? `false` é um estado de configuração
+  // quebrada — ninguém consegue mexer nas fontes e não há a quem pedir. Sem
+  // este sinal, a tela só saberia dizer "peça ao master", mandando a pessoa
+  // procurar alguém que não existe; foi o que aconteceu quando a variável
+  // MASTER_ADMIN_EMAILS ficou de fora do docker-compose e nunca chegou à API.
+  masterConfigured: boolean
 }
 
 // ── Padronização da regra de atualização ──────────────────────

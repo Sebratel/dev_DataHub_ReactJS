@@ -109,6 +109,11 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
   // porquê: descobrir a regra só depois de preencher tudo e apertar Salvar é
   // o pior jeito de aprender que não se pode.
   const isMaster = useAuthStore((s) => !!s.user?.master)
+  // Ninguém é master no servidor. É estado de configuração quebrada, não de
+  // permissão: mandar "peça ao master" aqui manda procurar alguém que não
+  // existe — foi exatamente o beco em que o dono do hub caiu quando a variável
+  // MASTER_ADMIN_EMAILS ficou de fora do docker-compose e nunca chegou à API.
+  const semMaster = useAuthStore((s) => s.user != null && !s.user.masterConfigured)
 
   const campos = dataset.fields.filter((f) => !f.hidden)
   const numericOrDateFields = campos.filter((f) => f.type === 'number' || f.type === 'date')
@@ -120,14 +125,29 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
       <h2 className="text-sm font-medium uppercase tracking-wider text-zinc-400">Sincronização com o lake (admin)</h2>
 
       {!isMaster && (
-        <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
-          <Lock size={14} className="mt-0.5 shrink-0 text-zinc-400" />
-          <p className="text-xs leading-relaxed text-zinc-500">
-            Somente o <strong>administrador master</strong> altera como uma fonte atualiza — modo, chaves,
-            identidade da linha e cadência mexem na carga sobre os bancos de produção. Você continua podendo
-            <strong> sincronizar agora</strong> e acompanhar o histórico. Conjuntos calculados seguem liberados.
-          </p>
-        </div>
+        semMaster ? (
+          <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/30">
+            <Lock size={14} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <p className="text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+              <strong>Nenhum administrador master está configurado neste servidor</strong> — por isso ninguém
+              consegue alterar como as fontes atualizam, nem há a quem pedir. Defina{' '}
+              <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/50">MASTER_ADMIN_EMAILS</code> nas
+              variáveis da stack (ou <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/50">ADMIN_EMAILS</code>,
+              que ela herda) e faça o redeploy. Confira também se a variável consta do{' '}
+              <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/50">docker-compose.yml</code>: o que
+              não estiver listado lá não chega ao contêiner, por mais que apareça preenchido no Portainer.
+            </p>
+          </div>
+        ) : (
+          <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
+            <Lock size={14} className="mt-0.5 shrink-0 text-zinc-400" />
+            <p className="text-xs leading-relaxed text-zinc-500">
+              Somente o <strong>administrador master</strong> altera como uma fonte atualiza — modo, chaves,
+              identidade da linha e cadência mexem na carga sobre os bancos de produção. Você continua podendo
+              <strong> sincronizar agora</strong> e acompanhar o histórico. Conjuntos calculados seguem liberados.
+            </p>
+          </div>
+        )
       )}
 
       {/* fieldset + display:contents: desabilita TODO controle de configuração

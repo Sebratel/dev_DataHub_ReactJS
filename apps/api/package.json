@@ -15,7 +15,8 @@
     "export:smoke": "node --expose-gc --import tsx src/dev/exportSmoke.ts",
     "auth:smoke": "tsx src/dev/authSmoke.ts",
     "autotune:smoke": "tsx src/dev/autotuneSmoke.ts",
-    "perms:smoke": "tsx src/dev/permissionsSmoke.ts"
+    "perms:smoke": "tsx src/dev/permissionsSmoke.ts",
+    "env:smoke": "tsx src/dev/envSmoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

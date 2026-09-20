@@ -20,7 +20,7 @@ import type { SessionUser } from '@datahub/shared'
 import { config } from '../../core/config.js'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { verifyFirebaseIdToken } from './firebaseToken.js'
-import { isMaster } from './masterAdmins.js'
+import { isMaster, anyMasterConfigured } from './masterAdmins.js'
 
 const tokenCache = new Map<string, { user: SessionUser; exp: number }>()
 const TOKEN_TTL_MS = 5 * 60 * 1000
@@ -46,8 +46,9 @@ async function provisionUser(p: { email: string; name: string; picture?: string 
   // outro master na tela — nunca do papel 'admin', que qualquer admin concede
   // a si mesmo. Ver masterAdmins.ts.
   const master = isMaster(p.email)
+  const masterConfigured = anyMasterConfigured()
   if (!isDbAvailable()) {
-    return { ...p, roles: config.adminEmails.includes(p.email) ? ['admin'] : ['viewer'], tenant: 'sebratel', master }
+    return { ...p, roles: config.adminEmails.includes(p.email) ? ['admin'] : ['viewer'], tenant: 'sebratel', master, masterConfigured }
   }
   const tenant = (await db.query(`select id, slug from tenants where slug = 'sebratel'`)).rows[0]
   const user = (await db.query(
@@ -71,7 +72,7 @@ async function provisionUser(p: { email: string; name: string; picture?: string 
     [user.id],
   )).rows.map((r) => r.name as string)
 
-  return { email: p.email, name: p.name, picture: p.picture, roles, tenant: tenant.slug, master }
+  return { email: p.email, name: p.name, picture: p.picture, roles, tenant: tenant.slug, master, masterConfigured }
 }
 
 // Um ID token do Firebase é um JWT: três partes separadas por ponto, a
