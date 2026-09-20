@@ -96,6 +96,15 @@ watermark. Cada passada ordena pela sua coluna e continua usando o índice dela.
 > não usa índice: viraria varredura completa da tabela a cada lote, contra a
 > produção, a cada poucos minutos. Exatamente o que queremos evitar.
 
+**E quando a tabela não tem data nenhuma?** Aí a chave pode ser uma coluna
+numérica crescente — mas ela precisa ser **única por linha**, e isso o hub
+confere no catálogo (chave primária de uma coluna só, ou índice único de uma
+coluna só). Nome com cara de identificador não basta: `id_agente`, primeira
+coluna de uma chave composta, repete a cada registro do mesmo agente. Numa
+leitura incremental isso **não dá erro — pula linhas**: o corte avança para o
+valor repetido e o resto do grupo é descartado. Quando não há coluna
+comprovadamente única, o diagnóstico prefere não propor nada.
+
 ### 2.3 Identidade da linha
 
 As duas passadas **se sobrepõem de propósito**: uma linha criada *e* editada na
@@ -246,8 +255,17 @@ Só aparece para quem já é master. Lista as duas origens:
    os conjuntos que caberiam em minutos ficam de hora em hora.
 4. Marque os conjuntos — ou use **Marcar os N prontos**.
 5. **Aplicar**. Leia a confirmação: ela diz quantos passam para cadência de
-   minutos e **quantos vão recarregar a tabela inteira uma vez**.
-6. Vá ao conjunto e **Sincronizar agora**, ou espere o agendamento.
+   minutos, **quantos deixam o agendamento que seguem hoje** e **quantos vão
+   recarregar a tabela inteira uma vez**.
+   > Pedir cadência fixa (diária/hora em hora) a um conjunto que hoje segue um
+   > agendamento nomeado **tira ele desse agendamento**. É o comportamento
+   > correto — cadência fixa e agendamento são excludentes —, mas é uma
+   > mudança que ninguém adivinha; por isso a confirmação conta.
+6. **Leia o painel de resultado** que aparece no topo: `N de M conjunto(s)
+   aplicado(s)`. Se algum falhar, o painel lista o motivo agrupado e os nomes
+   dos conjuntos afetados — ele **não some** com a reanálise, então dá para ler
+   com calma.
+7. Vá ao conjunto e **Sincronizar agora**, ou espere o agendamento.
 
 > **Aplicar muda só a configuração.** O efeito no lake aparece na próxima
 > sincronização.
@@ -303,6 +321,13 @@ há quantas execuções ele se repete.
    *Conjuntos*, selecionando os conjuntos e usando **Agendar atualização**.
 2. Defina janela e intervalo. Sugestão inicial: **07:00–19:00, seg–sex, a cada
    10 minutos**. Comece conservador.
+
+> ⚠️ **Dias da semana valem para TUDO que segue o agendamento.** Um agendamento
+> marcado só de seg–sex não sincroniza nada no sábado e no domingo — na segunda
+> de manhã o dado tem mais de dois dias. Foi o que produziu um "frescor mediano
+> de 47 h" observado num domingo. Se o conjunto precisa estar fresco todo dia,
+> marque os sete dias, ainda que com intervalo maior no fim de semana (para
+> isso, use dois agendamentos).
 3. Na tela de padronização, escolha esse agendamento no seletor **Cadência de
    minutos** antes de aplicar.
 
@@ -360,6 +385,8 @@ métrica substitui: prova que a 2ª chave e a identidade estão funcionando junt
 | `Sincronização abortada: excedeu N linhas` | disjuntor `SYNC_MAX_ROWS` — provável carga em fuga | usar incremental e/ou definir piso |
 | `Para usar duas chaves é preciso definir a identidade da linha` | 2ª chave sem identidade | definir a identidade primeiro |
 | `Somente o administrador master pode alterar…` | ação restrita a master | ver seção 9 |
+| `Falha ao trocar a cadência de um conjunto que segue um agendamento nomeado` | defeito do servidor | avisar quem mantém o Data Hub — não é a sua seleção |
+| `Nenhuma coluna serve de chave incremental` | tabela sem data de criação e sem coluna comprovadamente única | manter em snapshot, ou publicar a coluna de data se ela existir |
 | `Nenhum administrador master está configurado neste servidor` | configuração do servidor, não permissão | avisar quem cuida da stack |
 | Conjunto some do lake / total zerado | recarga em andamento após troca de modo | aguardar a 1ª carga terminar |
 

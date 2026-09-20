@@ -16,7 +16,8 @@
     "auth:smoke": "tsx src/dev/authSmoke.ts",
     "autotune:smoke": "tsx src/dev/autotuneSmoke.ts",
     "perms:smoke": "tsx src/dev/permissionsSmoke.ts",
-    "env:smoke": "tsx src/dev/envSmoke.ts"
+    "env:smoke": "tsx src/dev/envSmoke.ts",
+    "sqlconfig:smoke": "tsx src/dev/syncConfigSqlSmoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
@@ -32,6 +33,7 @@
     "tsx": "^4.22.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.10",

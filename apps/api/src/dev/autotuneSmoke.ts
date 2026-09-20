@@ -351,5 +351,72 @@ cenario(() => {
     p.warnings.join(' | '))
 })
 
+// ── 6. Chave numérica precisa ser ÚNICA POR LINHA ───────────────────────
+// Três conjuntos reais receberam chave que repete. Numa passada keyset isso
+// não trava: o cursor avança para o valor repetido e o `>` DESCARTA o resto do
+// grupo. Some dado, sem erro. Nome com cara de id não prova unicidade —
+// só o catálogo prova.
+console.log('\n── chave numérica só serve se for única por linha ──')
+
+cenario(() => {
+  // db_matrix_login: PK composta (id_agente, data_login). `id_agente` repete a
+  // cada login do mesmo agente.
+  const p = decidePlan(
+    baseOf(),
+    [f('id_agente', 'number'), f('data_login', 'date'), f('duracao', 'number')],
+    keysOf({ pk: ['id_agente', 'data_login'] }),
+  )
+  check('1ª coluna de PK composta NÃO vira chave incremental',
+    p.proposed?.incrementalKey !== 'id_agente',
+    `propôs ${p.proposed?.incrementalKey ?? 'nada (bloqueou)'}`)
+})
+
+cenario(() => {
+  // UMovMe - customfield: `cet_id` é chave estrangeira; a PK é `cfd_id`.
+  const p = decidePlan(
+    baseOf(),
+    [f('cet_id', 'number'), f('valor', 'text')],
+    keysOf({ pk: ['cfd_id'], indexes: [['cet_id']] }), // cfd_id não publicado
+  )
+  check('chave estrangeira NÃO vira chave incremental',
+    p.proposed?.incrementalKey !== 'cet_id',
+    `propôs ${p.proposed?.incrementalKey ?? 'nada (bloqueou)'}`)
+})
+
+cenario(() => {
+  // Sem data e sem coluna única publicada: bloquear é a resposta certa.
+  const p = decidePlan(
+    baseOf(),
+    [f('id_agente', 'number'), f('id_fila', 'number')],
+    keysOf({ pk: ['id_agente', 'id_fila'] }),
+  )
+  check('sem coluna única por linha, bloqueia em vez de adivinhar',
+    p.proposed === null && !!p.blocker && p.blocker.includes('ÚNICA POR LINHA'),
+    p.blocker ?? JSON.stringify(p.proposed))
+})
+
+cenario(() => {
+  // PK de coluna única continua servindo — a correção não pode ter fechado
+  // o caminho legítimo.
+  const p = decidePlan(
+    baseOf(),
+    [f('id', 'number'), f('nome', 'text')],
+    keysOf({ pk: ['id'] }),
+  )
+  check('PK de uma coluna só continua servindo de chave',
+    p.proposed?.incrementalKey === 'id', JSON.stringify(p.proposed))
+})
+
+cenario(() => {
+  // Índice único de uma coluna também prova unicidade, mesmo sem ser PK.
+  const p = decidePlan(
+    baseOf(),
+    [f('numero_nota', 'number'), f('valor', 'number')],
+    keysOf({ pk: ['id_interno'], uniques: [{ name: 'u_nota', columns: ['numero_nota'] }] }),
+  )
+  check('índice único de uma coluna serve de chave',
+    p.proposed?.incrementalKey === 'numero_nota', JSON.stringify(p.proposed))
+})
+
 console.log(`\n${failures ? `${failures} verificação(ões) falharam.` : 'Tudo certo.'}`)
 process.exit(failures ? 1 : 0)

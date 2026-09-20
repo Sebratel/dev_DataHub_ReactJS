@@ -14,7 +14,11 @@ import { useAuthStore } from '@/store/authStore'
 import { currentToken, refresh } from '@/store/authProvider'
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  // Corpo da resposta, quando veio JSON. Uma rota de LOTE responde detalhe por
+  // item (quantos aplicaram, quais falharam e por quê) junto de um status de
+  // erro; sem guardar o corpo aqui, esse detalhe se perdia no throw e a tela
+  // só conseguia dizer "Erro 422".
+  constructor(public status: number, message: string, public body?: unknown) {
     super(message)
   }
 }
@@ -43,10 +47,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let message = `Erro ${res.status}`
-    try { message = ((await res.json()) as { error?: string }).error || message } catch { /* corpo não-JSON */ }
+    let body: unknown
+    try {
+      body = await res.json()
+      message = (body as { error?: string }).error || message
+    } catch { /* corpo não-JSON */ }
     // 401 que sobreviveu à renovação: aí sim a credencial não serve mais.
     if (res.status === 401 && token) useAuthStore.getState().logout()
-    throw new ApiError(res.status, message)
+    throw new ApiError(res.status, message, body)
   }
   return res.json() as Promise<T>
 }

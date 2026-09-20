@@ -203,11 +203,26 @@ export function decidePlan(base: PlanBase, fields: Field[], keys: TableKeys): In
   // Sem nenhuma coluna de data: resta a chave numérica crescente, que pega
   // inserção e não pega edição. Vale a pena mesmo assim — é a diferença entre
   // recarregar a tabela inteira toda noite e ler só o que entrou.
+  //
+  // MAS a coluna precisa ser ÚNICA POR LINHA, e isso não se descobre pelo
+  // nome. Uma passada keyset lê `where chave > cursor order by chave limit n`:
+  // se o valor repete e o lote corta no meio de um grupo, o cursor avança para
+  // esse valor e o `>` DESCARTA o resto do grupo. Não dá erro, não trava — só
+  // some dado, em silêncio, para sempre.
+  //
+  // Foi o que aconteceu ao aceitar nome com cara de id: `id_agente` (primeira
+  // coluna de uma PK composta `(id_agente, data_login)`, repete a cada login do
+  // mesmo agente) e `cet_id` (chave estrangeira; a PK da tabela era outra).
+  // Por isso a unicidade agora vem do CATÁLOGO — PK de coluna única ou índice
+  // único de coluna única —, nunca do nome. Na dúvida, não propõe.
+  const unicasPorLinha = new Set<string>([
+    ...(keys.primaryKey.length === 1 ? [keys.primaryKey[0]] : []),
+    ...keys.uniques.filter((u) => u.columns.length === 1).map((u) => u.columns[0]),
+  ])
   let key1 = created
   let numericFallback = false
   if (!key1) {
-    const pkCol = keys.primaryKey.length === 1 ? keys.primaryKey[0] : null
-    const f = fields.find((x) => x.type === 'number' && (x.sourceColumn === pkCol || ID_LIKE.test(norm(x.sourceColumn))))
+    const f = fields.find((x) => x.type === 'number' && unicasPorLinha.has(x.sourceColumn))
     if (f) { key1 = f; numericFallback = true }
   }
 
@@ -215,9 +230,12 @@ export function decidePlan(base: PlanBase, fields: Field[], keys: TableKeys): In
     return {
       ...base, proposed: null, confidence: 'baixa', alreadyApplied: false, reasons, warnings,
       blocker:
-        'Nenhuma coluna serve de chave incremental: não há campo de data com cara de "criado em" ' +
-        'nem identificador numérico crescente publicado. Este conjunto continua em snapshot — se a ' +
-        'tabela for grande, prefira cadência diária.',
+        'Nenhuma coluna serve de chave incremental. Não há campo de data com cara de "criado em", e ' +
+        'nenhuma coluna numérica publicada é ÚNICA POR LINHA segundo o catálogo (chave primária de uma ' +
+        'coluna só, ou índice único de uma coluna só). Coluna numérica que repete não serve: a leitura ' +
+        'incremental avançaria o corte e descartaria o resto do grupo repetido, sem erro nenhum. ' +
+        'Este conjunto continua em snapshot — se a tabela for grande, prefira cadência diária, ou publique ' +
+        'uma coluna de data de criação, se ela existir na tabela.',
     }
   }
 

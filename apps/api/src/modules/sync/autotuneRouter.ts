@@ -36,6 +36,24 @@ const adminOnly = [requireAuth({ role: 'admin' }), requireDb]
 const masterOnly = [requireAuth({ role: 'master' }), requireDb]
 const masterOnSource = [...adminOnly, requireMasterOnSource]
 
+// Mensagem crua do Postgres não ajuda quem está na tela — e vaza nome de
+// constraint e de coluna para o cliente. Traduz o que sabemos nomear e mantém
+// o resto como veio (melhor um texto técnico do que nenhum).
+function legivel(e: Error): string {
+  const m = e.message
+  if (m.includes('datasets_schedule_pairing_check')) {
+    return 'Falha ao trocar a cadência de um conjunto que segue um agendamento nomeado. ' +
+      'Isto é um defeito do servidor, não da sua seleção — avise quem mantém o Data Hub.'
+  }
+  if (m.includes('datasets_key2_needs_dedupe')) {
+    return 'A 2ª chave incremental exige identidade da linha definida.'
+  }
+  if (m.includes('violates check constraint')) {
+    return `O banco recusou a gravação por uma regra de consistência (${m.split('"')[1] ?? 'desconhecida'}).`
+  }
+  return m
+}
+
 autotuneRouter.get('/auto-incremental', ...adminOnly, async (req, res) => {
   try {
     res.json({ plans: await planAll(req.user!.tenant) })
@@ -70,20 +88,34 @@ autotuneRouter.post('/auto-incremental/apply', ...masterOnly, async (req, res) =
     if (!ok) return res.status(404).json({ error: 'Agendamento não encontrado.' })
   }
 
-  const results: { datasetId: string; slug: string; ok: boolean; cadence?: string; error?: string }[] = []
+  // Nome de cada conjunto ANTES de tentar gravar. Sem isto, uma falha antes do
+  // planFor reportava o UUID no lugar do nome, e quem lia o erro tinha de
+  // cruzar ids à mão para saber o que falhou — num lote de dezenas, inviável.
+  const nomes = new Map<string, string>(
+    (await db.query(
+      `select d.id, d.name from datasets d join tenants t on t.id = d.tenant_id
+        where d.id = any($1::uuid[]) and t.slug = $2`,
+      [ids, req.user!.tenant],
+    )).rows.map((r) => [String(r.id), String(r.name)]),
+  )
+  const nomeDe = (id: string) => nomes.get(id) ?? id
+
+  const results: { datasetId: string; slug: string; name: string; ok: boolean; cadence?: string; error?: string; detached?: boolean }[] = []
   for (const id of ids) {
     try {
       // Confere o tenant aqui: o plano não filtra por tenant, e um id vindo de
       // fora não pode alcançar conjunto de outro inquilino.
-      const owns = (await db.query(
-        `select 1 from datasets d join tenants t on t.id = d.tenant_id where d.id = $1 and t.slug = $2`,
-        [id, req.user!.tenant],
-      )).rows[0]
-      if (!owns) { results.push({ datasetId: id, slug: id, ok: false, error: 'Conjunto não encontrado.' }); continue }
+      if (!nomes.has(id)) {
+        results.push({ datasetId: id, slug: id, name: id, ok: false, error: 'Conjunto não encontrado.' })
+        continue
+      }
 
       const plan = await planFor(id)
       if (!plan.proposed) {
-        results.push({ datasetId: id, slug: plan.slug, ok: false, error: plan.blocker ?? 'Sem proposta para este conjunto.' })
+        results.push({
+          datasetId: id, slug: plan.slug, name: plan.name, ok: false,
+          error: plan.blocker ?? 'Sem proposta para este conjunto.',
+        })
         continue
       }
       const minutes = plan.proposed.cadence === 'schedule' && !!scheduleId
@@ -106,16 +138,26 @@ autotuneRouter.post('/auto-incremental/apply', ...masterOnly, async (req, res) =
           [id, scheduleId],
         )
       }
-      results.push({ datasetId: id, slug: r.slug, ok: true, cadence: minutes ? 'schedule' : plan.proposed.cadence })
+      results.push({
+        datasetId: id, slug: r.slug, name: plan.name, ok: true,
+        cadence: minutes ? 'schedule' : plan.proposed.cadence,
+        detached: r.detachedFromSchedule && !minutes,
+      })
     } catch (e) {
-      results.push({ datasetId: id, slug: id, ok: false, error: (e as Error).message })
+      results.push({ datasetId: id, slug: nomeDe(id), name: nomeDe(id), ok: false, error: legivel(e as Error) })
     }
   }
 
   const applied = results.filter((r) => r.ok).length
   await audit(req, 'datasets.auto-incremental', { type: 'dataset', id: `${applied} conjunto(s)` },
     { requested: ids.length, applied, scheduleId })
-  res.json({ applied, results })
+  // O status HTTP precisa contar a verdade. Respondendo 200 a um lote
+  // integralmente recusado, qualquer cliente que confie no status — inclusive
+  // a nossa própria tela — mostra sucesso e o administrador sai achando que
+  // aplicou. Foi exatamente o que aconteceu com um lote de 44 conjuntos.
+  //   200 = tudo aplicou · 207 = parcial · 422 = nada aplicou
+  const status = applied === ids.length ? 200 : applied > 0 ? 207 : 422
+  res.status(status).json({ applied, requested: ids.length, results })
 })
 
 // Reconcilia os campos publicados com as colunas que a fonte tem hoje: remove

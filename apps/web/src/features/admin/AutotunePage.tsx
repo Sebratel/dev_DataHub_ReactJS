@@ -16,7 +16,7 @@ import {
   Wand2, Loader2, ChevronDown, ChevronRight, AlertTriangle, Check, Ban, RefreshCw, CalendarClock, Lock, Wrench,
 } from 'lucide-react'
 import type { IncrementalPlan, SyncSchedule } from '@datahub/shared'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { useConfirm } from '@/components/Dialogs'
 import { Page, PageHeader, ErrorBanner, EmptyState, FilterChips, PrimaryButton } from '@/components/ui/Page'
@@ -40,6 +40,14 @@ const CADENCE_LABEL: Record<string, string> = {
 }
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('pt-BR'))
+
+// Resposta do apply em lote. Chega com status 200 (tudo), 207 (parcial) ou
+// 422 (nada) — nos três casos com o mesmo corpo, item a item.
+interface ApplyResponse {
+  applied: number
+  requested: number
+  results: { datasetId: string; name: string; ok: boolean; error?: string; detached?: boolean }[]
+}
 
 // Resumo de uma configuração numa linha só — o que a tabela mostra sem expandir.
 function ruleSummary(r: {
@@ -70,6 +78,10 @@ export default function AutotunePage() {
   const [loading, setLoading] = useState(false)
   const [applying, setApplying] = useState(false)
   const [reconciling, setReconciling] = useState<string | null>(null)
+  // Relatório da última aplicação. Estado SEPARADO de `error` de propósito:
+  // `load()` zera `error` ao reanalisar, e era isso que apagava o resultado
+  // antes de ele aparecer.
+  const [report, setReport] = useState<ApplyResponse | null>(null)
 
   function load() {
     setLoading(true)
@@ -132,6 +144,10 @@ export default function AutotunePage() {
     const minutes = chosen.filter((p) => p.proposed?.cadence === 'schedule').length
     const reloads = chosen.filter((p) => p.current.mode !== 'incremental').length
     const sched = schedules.find((s) => s.id === scheduleId)
+    // Pedir cadência fixa a um conjunto que hoje segue um agendamento nomeado
+    // TIRA ele do agendamento. É consequência real e some sem aviso.
+    const saem = chosen.filter((p) =>
+      p.current.cadence === 'schedule' && !(p.proposed?.cadence === 'schedule' && scheduleId)).length
 
     const ok = await confirm({
       title: `Aplicar a ${ids.length} conjunto(s)`,
@@ -141,6 +157,9 @@ export default function AutotunePage() {
           : minutes
             ? `${minutes} conjunto(s) cabem em cadência de minutos, mas nenhum agendamento foi escolhido — eles ficam de hora em hora.`
             : '',
+        saem
+          ? `${saem} conjunto(s) DEIXAM o agendamento que seguem hoje e passam a usar a cadência proposta.`
+          : '',
         reloads
           ? `${reloads} conjunto(s) mudam de modo: a PRIMEIRA carga lê a tabela inteira uma vez. Prefira aplicar fora do horário de pico.`
           : '',
@@ -152,19 +171,26 @@ export default function AutotunePage() {
 
     setApplying(true)
     setError(null)
+    setReport(null)
     try {
-      const r = await api<{ applied: number; results: { slug: string; ok: boolean; error?: string }[] }>(
+      const r = await api<ApplyResponse>(
         '/api/v1/datasets/auto-incremental/apply',
         { method: 'POST', body: JSON.stringify({ datasetIds: ids, scheduleId: scheduleId || null }) },
       )
-      const falhas = r.results.filter((x) => !x.ok)
-      if (falhas.length) {
-        setError(`${r.applied} aplicado(s); ${falhas.length} falhou(ram): ` +
-          falhas.map((f) => `${f.slug} — ${f.error}`).join(' · '))
-      }
+      // O relatório vai para um estado PRÓPRIO, e não para `error`: o `load()`
+      // logo abaixo começa zerando `error`, então a mensagem era apagada antes
+      // de a tela desenhá-la. O resultado prático era o pior possível — um lote
+      // inteiro recusado pelo banco, e a tela reanalisando em silêncio como se
+      // tivesse dado certo.
+      setReport(r)
       load()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao aplicar.')
+      // 422 = nada aplicou. O corpo com o detalhe por conjunto vem junto do
+      // erro (ver ApiError.body) — é o que permite dizer QUAL falhou e por quê,
+      // em vez de só "Erro 422".
+      const corpo = e instanceof ApiError ? (e.body as ApplyResponse | undefined) : undefined
+      if (corpo?.results) { setReport(corpo); load() }
+      else setError(e instanceof Error ? e.message : 'Falha ao aplicar.')
     } finally {
       setApplying(false)
     }
@@ -223,6 +249,55 @@ export default function AutotunePage() {
       </PageHeader>
 
       {error && <ErrorBanner message={error} onRetry={load} />}
+
+      {report && (() => {
+        const falhas = report.results.filter((r) => !r.ok)
+        const saiu = report.results.filter((r) => r.ok && r.detached).length
+        // Agrupa por MOTIVO: num lote de dezenas, a mesma causa costuma
+        // derrubar todo mundo, e repetir a mensagem N vezes esconde isso.
+        const porMotivo = new Map<string, string[]>()
+        for (const f of falhas) {
+          const k = f.error ?? 'Motivo não informado.'
+          porMotivo.set(k, [...(porMotivo.get(k) ?? []), f.name])
+        }
+        const tudoOk = falhas.length === 0
+        return (
+          <div className={`mb-2.5 rounded-2xl border p-3 ${tudoOk
+            ? 'border-ok/40 bg-ok-soft dark:bg-ok/10'
+            : 'border-crit/40 bg-crit-soft dark:bg-crit/10'}`}>
+            <div className="flex items-start gap-2.5">
+              {tudoOk
+                ? <Check size={14} className="mt-0.5 shrink-0 text-ok dark:text-ok-dark" />
+                : <AlertTriangle size={14} className="mt-0.5 shrink-0 text-crit dark:text-crit-dark" />}
+              <div className="min-w-0 flex-1">
+                <p className={`text-[12px] font-medium ${tudoOk
+                  ? 'text-ok dark:text-ok-dark' : 'text-crit dark:text-crit-dark'}`}>
+                  {report.applied} de {report.requested} conjunto(s) aplicado(s)
+                  {falhas.length > 0 && ` · ${falhas.length} falhou(ram)`}
+                </p>
+                {saiu > 0 && (
+                  <p className="mt-1 text-[11.5px] text-zinc-600 dark:text-zinc-300">
+                    {saiu} conjunto(s) deixaram o agendamento que seguiam e passaram à cadência proposta.
+                  </p>
+                )}
+                {[...porMotivo.entries()].map(([motivo, nomes]) => (
+                  <div key={motivo} className="mt-2">
+                    <p className="text-[11.5px] leading-relaxed text-crit dark:text-crit-dark">{motivo}</p>
+                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                      {nomes.slice(0, 6).join(', ')}
+                      {nomes.length > 6 && ` e mais ${nomes.length - 6}`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setReport(null)}
+                className="shrink-0 rounded-md px-1.5 text-[11px] text-zinc-500 hover:underline">
+                fechar
+              </button>
+            </div>
+          </div>
+        )
+      })()}
 
       {!isMaster && (
         <div className="mb-2.5 flex items-start gap-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">

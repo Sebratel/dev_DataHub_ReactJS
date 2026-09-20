@@ -32,6 +32,10 @@ export interface SyncConfigResult {
   }
   /** true quando a mudança invalidou o progresso e a próxima carga recomeça. */
   watermarkReset: boolean
+  /** true quando o conjunto DEIXOU de seguir um agendamento nomeado. Quem
+   *  chama precisa dizer isso na tela: é uma consequência real de pedir
+   *  cadência fixa, e some sem aviso se ninguém contar. */
+  detachedFromSchedule: boolean
 }
 
 export async function applySyncConfig(datasetId: string, input: SyncConfigInput): Promise<SyncConfigResult> {
@@ -85,7 +89,7 @@ export async function applySyncConfig(datasetId: string, input: SyncConfigInput)
   }
 
   const current = (await db.query(
-    `select sync_mode, sync_since, sync_since_days, incremental_key, incremental_key_2
+    `select sync_mode, sync_since, sync_since_days, incremental_key, incremental_key_2, schedule_id
        from datasets where id = $1`, [datasetId],
   )).rows[0]
   if (!current) throw new Error('Conjunto de dados não encontrado.')
@@ -102,9 +106,26 @@ export async function applySyncConfig(datasetId: string, input: SyncConfigInput)
   const reset2 = resetAll || (current.incremental_key_2 ?? null) !== (key2 || null)
 
   const row = (await db.query(
+    // schedule_id CAI JUNTO quando a cadência muda. A constraint
+    // datasets_schedule_pairing_check exige que `sync_cadence = 'schedule'` e
+    // `schedule_id is not null` andem juntos; esta rota só grava cadências de
+    // relógio fixo (daily/hourly/manual), então deixar o schedule_id antigo
+    // produz exatamente o par proibido — cadência 'hourly' com agendamento
+    // preenchido — e o Postgres recusa a linha inteira.
+    //
+    // Era invisível enquanto a única porta era a tela do conjunto, que evita
+    // reenviar a cadência quando o conjunto segue um agendamento. A
+    // padronização em lote não tem como evitar: ela justamente TIRA conjuntos
+    // do agendamento diário para colocá-los em outra cadência. Resultado: 100%
+    // do lote recusado pelo banco.
+    //
+    // Sair do agendamento é o comportamento correto aqui, e não um efeito
+    // colateral: pedir cadência fixa a um conjunto que segue agendamento é
+    // pedir para ele parar de seguir o agendamento.
     `update datasets set
        sync_mode = $2, incremental_key = $3, incremental_key_2 = $4,
        sync_cadence = coalesce($5, sync_cadence),
+       schedule_id = case when $5 is null then schedule_id else null end,
        sync_since = $6, sync_since_days = $7,
        dedupe_keys = $8, watermark_lag_minutes = $9,
        watermark   = case when $10 then null else watermark end,
@@ -122,5 +143,6 @@ export async function applySyncConfig(datasetId: string, input: SyncConfigInput)
       syncCadence: syncCadence ?? null, since, sinceDays, dedupe, lag,
     },
     watermarkReset: reset1 || reset2,
+    detachedFromSchedule: syncCadence != null && current.schedule_id != null,
   }
 }
