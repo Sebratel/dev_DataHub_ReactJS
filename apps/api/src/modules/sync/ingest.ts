@@ -172,14 +172,40 @@ async function compactionNeeded(
 // fica vazio em disco — uma queda do processo ali perde o dado. Nesta ordem, o
 // pior caso de uma queda no meio é o conjunto ficar com linhas repetidas até a
 // próxima compactação, que conserta sozinha. Perder dado não conserta.
+// Uma chave incremental identifica a linha; NEM TODA identifica um INSTANTE.
+// Quando a tabela de origem não tem coluna de criação, o hub usa o `id`
+// numérico como 1ª chave ("linha nova = id maior"). Juntar esse `id` com a 2ª
+// chave num `greatest(id, updated_at)` é comparar número com data: o DuckDB
+// recusa a consulta inteira ("Cannot combine types of DOUBLE and TIMESTAMP") e
+// a compactação — logo, a sincronização — falha em toda execução.
+//
+// E, mesmo que o banco aceitasse, não faria sentido: `id` não é um instante,
+// então ordenar por "o maior entre um id e uma data" não diz qual versão da
+// linha é a mais recente.
+//
+// Regra: quem decide recência são as chaves TEMPORAIS. Havendo alguma, só elas
+// entram. Não havendo nenhuma (tabela sem data de espécie alguma), usa a
+// primeira chave sozinha — aí não há o que comparar, e uma coluna só nunca
+// mistura tipo com ninguém.
+export interface RecencyKey { key: string; isDate: boolean }
+
+export function recencyExpression(keys: RecencyKey[]): string {
+  const ident = (s: string) => `"${String(s).replace(/"/g, '""')}"`
+  const datas = keys.filter((k) => k.isDate)
+  const usadas = datas.length ? datas : keys.slice(0, 1)
+  if (!usadas.length) return 'NULL'
+  // greatest() só entre colunas do MESMO tipo — é a regra que faltava.
+  return usadas.length > 1
+    ? `greatest(${usadas.map((k) => ident(k.key)).join(', ')})`
+    : ident(usadas[0].key)
+}
+
 export async function compactLake(
-  dir: string, dedupeKeys: string[], recencyKeys: string[], runId: string,
+  dir: string, dedupeKeys: string[], recencyKeys: RecencyKey[], runId: string,
 ): Promise<string> {
   const ident = (s: string) => `"${String(s).replace(/"/g, '""')}"`
   const partition = dedupeKeys.map(ident).join(', ')
-  const recency = recencyKeys.length > 1
-    ? `greatest(${recencyKeys.map(ident).join(', ')})`
-    : recencyKeys.length === 1 ? ident(recencyKeys[0]) : 'NULL'
+  const recency = recencyExpression(recencyKeys)
   // Extensão .tmp de propósito: fica FORA do glob *.parquet, senão o próprio
   // read_parquet desta consulta leria o arquivo que ela ainda está escrevendo.
   const tmp = join(dir, `compact-${runId}.tmp`).replace(/\\/g, '/')
@@ -451,7 +477,14 @@ async function runSync(datasetId: string): Promise<string> {
         // maior que o created, vale o modified". O greatest do DuckDB IGNORA
         // NULL (como o Postgres, ao contrário do MySQL), então o created sozinho
         // já decide quando o modified é vazio, que é a maioria das linhas.
-        const recency = [ds.incremental_key, ds.incremental_key_2].filter(Boolean).map(String)
+        //
+        // O TIPO de cada chave viaja junto: uma 1ª chave numérica (tabela sem
+        // coluna de criação) não pode entrar no greatest ao lado de uma data.
+        // Ver recencyExpression.
+        const tipoDe = new Map(fields.map((f) => [String(f.key), String(f.type)]))
+        const recency: RecencyKey[] = [ds.incremental_key, ds.incremental_key_2]
+          .filter(Boolean).map(String)
+          .map((key) => ({ key, isDate: tipoDe.get(key) === 'date' }))
         const check = await compactionNeeded(dir, dedupeKeys, listParquet(dir).length)
         if (check.needed) {
           const t0 = Date.now()

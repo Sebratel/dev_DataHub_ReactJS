@@ -96,6 +96,13 @@ watermark. Cada passada ordena pela sua coluna e continua usando o índice dela.
 > não usa índice: viraria varredura completa da tabela a cada lote, contra a
 > produção, a cada poucos minutos. Exatamente o que queremos evitar.
 
+**E quando a tabela só tem a data de EDIÇÃO?** Aí a 1ª chave vira o `id`
+numérico (que faz o papel de "linha nova") e a 2ª continua sendo `updated_at`.
+É uma combinação legítima e comum — mas repare que, nesse arranjo, a **folga de
+reconferência** é a única proteção contra uma edição com carimbo retroativo
+cair atrás do corte. O diagnóstico já propõe 10 minutos nesse caso; não zere
+sem motivo.
+
 **E quando a tabela não tem data nenhuma?** Aí a chave pode ser uma coluna
 numérica crescente — mas ela precisa ser **única por linha**, e isso o hub
 confere no catálogo (chave primária de uma coluna só, ou índice único de uma
@@ -382,6 +389,7 @@ métrica substitui: prova que a 2ª chave e a identidade estão funcionando junt
 |---|---|---|
 | `column "x" does not exist` | campo publicado aponta para coluna removida/renomeada na origem | Roteiro B |
 | `Sincronização incremental não convergiu: a chave "x" não avançou` | a chave escolhida não é crescente/única o bastante | trocar por outra (ex.: `id`) |
+| `Binder Error: Cannot combine types of … - an explicit cast is required` | defeito do servidor na compactação (chave numérica comparada com data) | corrigido em 21/09/2026; se reaparecer, avisar quem mantém o Data Hub |
 | `Sincronização abortada: excedeu N linhas` | disjuntor `SYNC_MAX_ROWS` — provável carga em fuga | usar incremental e/ou definir piso |
 | `Para usar duas chaves é preciso definir a identidade da linha` | 2ª chave sem identidade | definir a identidade primeiro |
 | `Somente o administrador master pode alterar…` | ação restrita a master | ver seção 9 |

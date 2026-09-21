@@ -301,9 +301,17 @@ export function decidePlan(base: PlanBase, fields: Field[], keys: TableKeys): In
   }
 
   // 5) Folga de reconferência: só faz sentido em chave de DATA, e só é segura
-  //    com identidade (ela reledita de propósito, e quem absorve a repetição é
-  //    a compactação). Sem identidade, folga = duplicata garantida.
-  const lag = !numericFallback && identity ? 10 : 0
+  //    com identidade (ela relê de propósito, e quem absorve a repetição é a
+  //    compactação). Sem identidade, folga = duplicata garantida.
+  //
+  //    O que importa é haver ALGUMA chave temporal, não a 1ª ser temporal: o
+  //    motor aplica a folga por chave e ignora as não-temporais (ver `lagged`
+  //    em ingest.ts). Numa tabela sem coluna de criação — 1ª chave numérica, 2ª
+  //    chave `updated_at` — a folga é a ÚNICA proteção contra uma edição com
+  //    carimbo retroativo cair atrás do corte e sumir; amarrá-la à 1ª chave
+  //    deixava justamente esse caso desprotegido.
+  const temChaveDeData = !numericFallback || !!key2
+  const lag = temChaveDeData && identity ? 10 : 0
   if (lag) {
     reasons.push(
       `Folga de reconferência: ${lag} min — edição que chega com carimbo atrasado (transação longa, ` +

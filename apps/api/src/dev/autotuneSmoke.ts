@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkReadOnly } from '../core/guard.js'
 import { duckQuery } from '../modules/query/duck.js'
+import { recencyExpression } from '../modules/sync/ingest.js'
 import { decidePlan, type Field, type PlanBase } from '../modules/sync/autotune.js'
 import type { TableKeys, IndexInfo } from '../connectors/introspect.js'
 
@@ -110,6 +111,66 @@ try {
   check('identidade composta distingue as versões', (await probe(['id', 'nome'])) === false)
 } finally {
   rmSync(dir, { recursive: true, force: true })
+}
+
+// ── 3b. Recência da compactação: tipos não podem se misturar ────────────
+// Quando a tabela de origem não tem coluna de criação, a 1ª chave vira o `id`
+// numérico. Juntá-lo à 2ª chave num greatest(id, updated_at) faz o DuckDB
+// recusar a consulta inteira — "Cannot combine types of DOUBLE and TIMESTAMP" —
+// e a compactação falha em TODA execução. Foi o que travou um conjunto real em
+// 50 execuções seguidas, sem nunca sincronizar.
+console.log('\n── recência da compactação (DuckDB) ──')
+const dir2 = mkdtempSync(join(tmpdir(), 'recency-smoke-')).replace(/\\/g, '/')
+try {
+  // Duas versões da MESMA linha: a antiga nunca editada (updated_at nulo) e a
+  // nova, editada. A compactação tem de ficar com a editada.
+  await duckQuery(
+    `copy (
+       select * from (values
+         (1, 'antiga', cast(null as timestamp)),
+         (1, 'nova',   timestamp '2026-09-21 10:00:00'),
+         (2, 'unica',  cast(null as timestamp))
+       ) as t(id, valor, updated_at)
+     ) to '${dir2}/part-1.parquet' (format parquet)`,
+  )
+
+  const compactar = async (keys: { key: string; isDate: boolean }[]) => {
+    const { rows } = await duckQuery(
+      `select * exclude (__rn) from (
+         select *, row_number() over (
+           partition by "id" order by ${recencyExpression(keys)} desc nulls last
+         ) as __rn
+         from read_parquet('${dir2}/*.parquet')
+       ) where __rn = 1 order by id`,
+    )
+    return rows as { id: number; valor: string }[]
+  }
+
+  // O caso do bug: 1ª chave numérica + 2ª chave temporal.
+  const misto = [{ key: 'id', isDate: false }, { key: 'updated_at', isDate: true }]
+  check('expressão não mistura número com data',
+    !recencyExpression(misto).includes('greatest'), recencyExpression(misto))
+  try {
+    const linhas = await compactar(misto)
+    check('compacta sem erro de tipo e mantém a versão editada',
+      linhas.length === 2 && linhas[0].valor === 'nova',
+      linhas.map((l) => `${l.id}:${l.valor}`).join(', '))
+  } catch (e) {
+    check('compacta sem erro de tipo e mantém a versão editada', false, (e as Error).message)
+  }
+
+  // O caso comum (duas datas) não pode ter regredido: as duas continuam valendo.
+  const duasDatas = [{ key: 'updated_at', isDate: true }, { key: 'criado_em', isDate: true }]
+  check('duas chaves temporais continuam usando greatest',
+    recencyExpression(duasDatas) === 'greatest("updated_at", "criado_em")',
+    recencyExpression(duasDatas))
+
+  // Só chave numérica (sem data nenhuma): usa ela mesma, sem greatest.
+  check('chave única numérica é usada sozinha',
+    recencyExpression([{ key: 'id', isDate: false }]) === '"id"')
+  check('sem chave nenhuma devolve NULL', recencyExpression([]) === 'NULL')
+} finally {
+  rmSync(dir2, { recursive: true, force: true })
 }
 
 // ── 4. Motor de decisão ─────────────────────────────────────────────────
@@ -405,6 +466,22 @@ cenario(() => {
   )
   check('PK de uma coluna só continua servindo de chave',
     p.proposed?.incrementalKey === 'id', JSON.stringify(p.proposed))
+})
+
+cenario(() => {
+  // O formato de `db_senior_collaborators`: sem coluna de criação, mas COM
+  // `updated_at`. A 1ª chave é o id numérico e a 2ª é temporal — e é a folga
+  // que impede uma edição com carimbo retroativo de cair atrás do corte.
+  const p = decidePlan(
+    baseOf(),
+    [f('id', 'number'), f('updated_at', 'date'), f('nome', 'text')],
+    keysOf({ pk: ['id'], indexes: [['updated_at']] }),
+  )
+  check('id numérico + updated_at: as duas chaves entram',
+    p.proposed?.incrementalKey === 'id' && p.proposed?.incrementalKey2 === 'updated_at',
+    JSON.stringify(p.proposed))
+  check('com 2ª chave temporal, a folga de reconferência entra mesmo com 1ª chave numérica',
+    p.proposed?.watermarkLagMinutes === 10, `folga ${p.proposed?.watermarkLagMinutes}`)
 })
 
 cenario(() => {
