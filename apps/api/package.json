@@ -17,7 +17,8 @@
     "autotune:smoke": "tsx src/dev/autotuneSmoke.ts",
     "perms:smoke": "tsx src/dev/permissionsSmoke.ts",
     "env:smoke": "tsx src/dev/envSmoke.ts",
-    "sqlconfig:smoke": "tsx src/dev/syncConfigSqlSmoke.ts"
+    "sqlconfig:smoke": "tsx src/dev/syncConfigSqlSmoke.ts",
+    "tz:smoke": "tsx src/dev/timezoneSmoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

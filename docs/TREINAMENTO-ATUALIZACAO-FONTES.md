@@ -18,7 +18,7 @@ segurança se o resultado ficou correto.
 ## Sumário
 
 1. [O problema que isso resolve](#1-o-problema-que-isso-resolve)
-2. [Cinco conceitos](#2-cinco-conceitos)
+2. [Seis conceitos](#2-seis-conceitos)
 3. [As telas](#3-as-telas)
 4. [Roteiro A — padronizar um conjunto](#4-roteiro-a--padronizar-um-conjunto)
 5. [Roteiro B — destravar um conjunto parado](#5-roteiro-b--destravar-um-conjunto-parado)
@@ -58,7 +58,7 @@ para cada conjunto, com o motivo e os riscos. Você confere e aplica — em lote
 
 ---
 
-## 2. Cinco conceitos
+## 2. Seis conceitos
 
 Leia esta seção uma vez. É o que permite discordar da proposta quando ela
 estiver errada — e ela vai estar errada em alguns casos.
@@ -142,7 +142,23 @@ quando a chave não tem índice**, e avisa. A saída correta não é ignorar o a
 **Views** também ficam em "de hora em hora", mesmo parecendo perfeitas: o custo
 real é o da consulta por trás delas, que o diagnóstico não enxerga.
 
-### 2.5 Compactação
+### 2.5 Fuso horário: o lake guarda hora LOCAL
+
+Todo horário no lake é **hora local de Brasília**, igual ao que a tabela de
+origem mostra. Não há conversão para UTC em lugar nenhum do caminho — os
+drivers entregam a data como texto e quem converte é o DuckDB, uma vez só.
+
+Isso importa na hora de validar: se um horário no lake estiver **3 horas
+adiantado** em relação à fonte, não é arredondamento nem atraso de
+sincronização — é defeito de conversão, e vale abrir chamado. Até 28/09/2026
+era o que acontecia com toda fonte Postgres.
+
+> O mesmo defeito tinha um efeito pior e invisível: o corte do incremental
+> (watermark) ficava 3 horas no futuro, e as linhas criadas nesse intervalo
+> nunca eram lidas. Conjunto que "parou de receber linhas novas mas não dá
+> erro" é o sintoma — confira o horário antes de suspeitar da cadência.
+
+### 2.6 Compactação
 
 Substituir a versão antiga de uma linha significa **reescrever o conjunto**.
 Fazer isso a cada execução, 288 vezes por dia, é caro em disco e CPU — e na
@@ -389,6 +405,8 @@ métrica substitui: prova que a 2ª chave e a identidade estão funcionando junt
 |---|---|---|
 | `column "x" does not exist` | campo publicado aponta para coluna removida/renomeada na origem | Roteiro B |
 | `Sincronização incremental não convergiu: a chave "x" não avançou` | a chave escolhida não é crescente/única o bastante | trocar por outra (ex.: `id`) |
+| horário no lake 3 h adiantado em relação à fonte | conversão de fuso | corrigido em 28/09/2026; se reaparecer, abrir chamado |
+| conjunto para de trazer linhas novas, sem erro | watermark no futuro (fuso) | idem — conferir o horário do último registro no lake |
 | `Binder Error: Cannot combine types of … - an explicit cast is required` | defeito do servidor na compactação (chave numérica comparada com data) | corrigido em 21/09/2026; se reaparecer, avisar quem mantém o Data Hub |
 | `Sincronização abortada: excedeu N linhas` | disjuntor `SYNC_MAX_ROWS` — provável carga em fuga | usar incremental e/ou definir piso |
 | `Para usar duas chaves é preciso definir a identidade da linha` | 2ª chave sem identidade | definir a identidade primeiro |

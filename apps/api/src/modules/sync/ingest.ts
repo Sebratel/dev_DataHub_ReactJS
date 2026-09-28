@@ -19,6 +19,32 @@ import { materializeDerived, referencedSlugs } from '../transform/derive.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+// Data no formato que as FONTES entendem: 'AAAA-MM-DD HH:MM:SS.mmm' em hora
+// LOCAL, sem sufixo de fuso.
+//
+// `toISOString()` não serve para isto, e o motivo é traiçoeiro: ele devolve UTC
+// com `Z`, e tanto o Postgres quanto o MySQL IGNORAM o `Z` ao comparar com uma
+// coluna `timestamp`/`datetime` — leem o horário como se já fosse local. Num
+// fuso -03 isso joga o corte 3 horas no FUTURO, e todas as linhas criadas nesse
+// intervalo deixam de ser lidas, sem erro nenhum.
+export function timestampLocal(d: Date): string {
+  const p = (n: number, casas = 2) => String(n).padStart(casas, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+}
+
+// Watermark gravado ANTES da correção de fuso: veio de `toISOString()` e está
+// em UTC ('...T18:10:35.684Z'), portanto 3 horas à frente do que a coluna
+// contém. Enquanto ficar assim, o conjunto não lê mais nada até o relógio real
+// alcançá-lo. Reescreve para hora local na leitura; a gravação do fim da
+// execução já sai no formato novo, então cada conjunto se acerta numa execução.
+const ISO_COM_FUSO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/
+export function normalizaWatermark(mark: string | null): string | null {
+  if (mark == null || !ISO_COM_FUSO.test(mark)) return mark
+  const t = new Date(mark)
+  return Number.isNaN(t.getTime()) ? mark : timestampLocal(t)
+}
+
 // Progresso ao vivo: grava o parcial em sync_runs.rows a cada lote. O painel de
 // sync já lê essa coluna a cada 2s, então o contador sobe na tela em vez de
 // ficar em 0 até o fim. Não-fatal: um erro aqui não derruba a sincronização.
@@ -335,7 +361,7 @@ async function runSync(datasetId: string): Promise<string> {
       const floor: string | null = ds.sync_since != null
         ? String(ds.sync_since)
         : ds.sync_since_days != null
-          ? new Date(Date.now() - Number(ds.sync_since_days) * 86_400_000).toISOString()
+          ? timestampLocal(new Date(Date.now() - Number(ds.sync_since_days) * 86_400_000))
           : null
 
       // Folga de reconferência: rebobina o watermark N minutos. Sem ela, uma
@@ -348,7 +374,7 @@ async function runSync(datasetId: string): Promise<string> {
         if (!lag || !isDate) return mark
         const t = new Date(mark)
         if (Number.isNaN(t.getTime())) return mark
-        return new Date(t.getTime() - lag * 60_000).toISOString()
+        return timestampLocal(new Date(t.getTime() - lag * 60_000))
       }
 
       // UMA passada keyset sobre UMA chave: WHERE key {>|>=} $bound ORDER BY key
@@ -380,7 +406,13 @@ async function runSync(datasetId: string): Promise<string> {
           total += rows.length
           if (rows.length) {
             const v = rows[rows.length - 1][exposedKey]
-            const s = v instanceof Date ? v.toISOString() : String(v)
+            // Os drivers entregam data como TEXTO (MySQL por `dateStrings`,
+            // Postgres pelo override de tipos em pools.ts), então o caminho
+            // normal é `String(v)`. O ramo do Date fica como rede de segurança
+            // para qualquer driver futuro — e formata em hora LOCAL, nunca com
+            // `toISOString()`: em UTC o watermark voltaria a ficar 3h à frente
+            // da coluna e o corte pularia linhas em silêncio.
+            const s = v instanceof Date ? timestampLocal(v) : String(v)
             // Trava anti-loop: um lote CHEIO cujo cursor NÃO avançou significa
             // que a chave não está progredindo (valor repetido/não extraído) e a
             // carga releria as MESMAS linhas para sempre (foi o que bateu 86,7M
@@ -414,9 +446,9 @@ async function runSync(datasetId: string): Promise<string> {
       // ordena pela SUA coluna e continua indexada. Elas se sobrepõem de
       // propósito (linha criada E editada na janela vem nas duas); quem resolve
       // a repetição é a compactação por dedupe_keys, mais abaixo.
-      newWatermark = await keysetPass(String(ds.incremental_key), newWatermark)
+      newWatermark = await keysetPass(String(ds.incremental_key), normalizaWatermark(newWatermark))
       if (ds.incremental_key_2) {
-        newWatermark2 = await keysetPass(String(ds.incremental_key_2), newWatermark2)
+        newWatermark2 = await keysetPass(String(ds.incremental_key_2), normalizaWatermark(newWatermark2))
       }
     } else {
       // Snapshot paginado. OFFSET SEM ORDER BY pode reler/pular linhas e, com

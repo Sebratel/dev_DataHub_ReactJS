@@ -47,6 +47,54 @@ export function resetPool(id: string): void {
   const my = mysqlPools.get(id); if (my) { mysqlPools.delete(id); void my.end().catch(() => {}) }
 }
 
+// ── Datas do Postgres vêm como TEXTO, igual ao MySQL ─────────────────────
+// Por padrão o driver do Postgres converte data/hora num `Date` do
+// JavaScript. Parece inofensivo e não é: um `timestamp without time zone`
+// não carrega fuso nenhum, mas o driver o interpreta no fuso do PROCESSO, e
+// dali em diante o valor deixa de ser o que estava na tabela.
+//
+// O estrago aparece duas vezes, e a segunda é grave:
+//
+//  1. NO LAKE. O `Date` é serializado por JSON.stringify → toISOString() →
+//     UTC. `15:10` da fonte vira `18:10Z`, e o DuckDB, ao converter para
+//     TIMESTAMP, descarta o `Z` e grava `18:10`. Todo horário de fonte
+//     Postgres ficava 3 horas adiantado no lake.
+//
+//  2. NO WATERMARK — pior. O maior valor lido era gravado como `18:10Z` e, na
+//     execução seguinte, comparado com a coluna: o Postgres IGNORA o `Z` ao
+//     comparar com `timestamp` e lê `18:10`. Ou seja, o corte ia parar 3 horas
+//     no FUTURO e as linhas criadas nesse intervalo nunca eram lidas. Sem
+//     erro, sem aviso — só faltava dado.
+//
+// O MySQL já não tinha nenhum dos dois problemas, porque usa `dateStrings`.
+// Aqui fazemos o mesmo: o texto da fonte atravessa o pipeline intacto, e quem
+// converte para data é o DuckDB, uma vez só, no fim.
+//
+// O override é POR POOL (opção `types`), nunca global: o banco de metadados do
+// próprio hub usa a mesma biblioteca e continua recebendo `Date`, como o
+// código dele espera.
+const OIDS_DE_DATA = new Set([
+  1082, // date
+  1083, // time
+  1114, // timestamp without time zone
+  1184, // timestamp with time zone
+  1266, // time with time zone
+])
+const textoParaDatas = {
+  getTypeParser: ((oid: number, format?: unknown) =>
+    OIDS_DE_DATA.has(oid)
+      ? (v: string) => v
+      : (pg.types.getTypeParser as (o: number, f?: unknown) => unknown)(oid, format)
+  ) as typeof pg.types.getTypeParser,
+}
+
+// Fuso da SESSÃO na fonte. Só afeta `timestamp with time zone`, que o servidor
+// renderiza como texto no fuso da sessão: sem fixar, o valor dependeria da
+// configuração de cada servidor de origem e mudaria de fonte para fonte. Fixado
+// no fuso do processo (TZ do container, America/Sao_Paulo), fica igual ao resto
+// do hub — o agendador também raciocina em hora local.
+const FUSO_LOCAL = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+
 function getPgPool(def: ConnectorDef): pg.Pool {
   let pool = pgPools.get(def.id)
   if (pool) return pool
@@ -58,6 +106,16 @@ function getPgPool(def: ConnectorDef): pg.Pool {
     max: 3,
     connectionTimeoutMillis: 15_000,
     statement_timeout: config.sources.statementTimeoutMs,
+    types: textoParaDatas,
+  })
+  // Fuso da sessão por CONEXÃO, e não pelo parâmetro `options` do handshake:
+  // um pgbouncer no caminho recusa `options` e a conexão nem se estabelece —
+  // trocaríamos um horário errado por uma fonte inalcançável. Aqui o pior caso
+  // é a sessão ficar no fuso padrão do servidor, que é o comportamento de
+  // antes. Mesmo padrão do `set session max_execution_time` do MySQL.
+  pool.on('connect', (client) => {
+    client.query(`set time zone '${FUSO_LOCAL.replace(/'/g, "''")}'`).catch((e: unknown) =>
+      console.warn(`[pools] não foi possível fixar o fuso da sessão em "${def.id}": ${(e as Error).message}`))
   })
   pgPools.set(def.id, pool)
   return pool
