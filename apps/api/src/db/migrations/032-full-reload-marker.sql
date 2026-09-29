@@ -1,0 +1,18 @@
+-- Quando o conjunto foi lido INTEIRO pela última vez.
+--
+-- O diagnóstico de "precisa de recarga" nasceu decidindo só pela FORMA do
+-- conjunto — fonte Postgres, em incremental, com coluna de data. Isso responde
+-- "este conjunto foi afetado pelo defeito de fuso?", que é uma pergunta
+-- diferente de "ele ainda precisa ser corrigido?". O resultado é que o contador
+-- nunca baixava: recarregava-se 57 conjuntos e continuavam 57 na lista, sem
+-- jeito de saber o que já tinha sido feito.
+--
+-- Esta coluna fecha a pergunta certa. Ela é gravada ao fim de uma execução
+-- bem-sucedida que releu a fonte INTEIRA (replaceParts) — carga completa,
+-- snapshot ou recarga explícita.
+--
+-- Começando NULA em todo mundo, ela também serve de marco do conserto sem
+-- precisar de data de corte: só o código já corrigido escreve aqui, então
+-- "tem data" significa, por construção, "foi relido depois da correção de
+-- fuso". Uma recarga feita antes do deploy não deixou marca nenhuma.
+alter table datasets add column last_full_reload_at timestamptz;

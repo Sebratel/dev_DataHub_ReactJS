@@ -652,9 +652,15 @@ async function runSync(datasetId: string): Promise<string> {
       : 0
 
     await db.query(
+      // last_full_reload_at só avança quando a fonte foi lida INTEIRA
+      // (replaceParts) — carga completa, snapshot ou recarga explícita. É o que
+      // permite a tela responder "este conjunto ainda precisa ser recarregado?"
+      // em vez de só "ele foi afetado?": sem esta marca, o contador de
+      // pendentes nunca baixava por mais que se recarregasse.
       `update datasets set row_count = $2, last_sync_at = now(), watermark = $3, watermark_2 = $4,
+                          last_full_reload_at = case when $5 then now() else last_full_reload_at end,
                           updated_at = now() where id = $1`,
-      [datasetId, count, newWatermark, newWatermark2],
+      [datasetId, count, newWatermark, newWatermark2, replaceParts],
     )
     await db.query(
       `update sync_runs set status = 'done', rows = $2, bytes = $3, finished_at = now(),

@@ -555,6 +555,26 @@ export default function AutotunePage() {
               </div>
             </div>
             )}
+            {/* "Aplicar" com nada marcado não faz nada, e o botão desabilitado
+                não conta o porquê. Quando não sobrou nada pronto, a tela diz
+                onde foram parar os que faltam — senão parece defeito. */}
+            {filter !== 'recarga' && !groups.alta.length && (
+              <p className="border-t border-zinc-200 px-3 py-2 text-[11.5px] leading-relaxed text-zinc-500 dark:border-zinc-800">
+                <strong>Nada pronto para aplicar.</strong>{' '}
+                {groups.revisar.length > 0 && (
+                  <>
+                    {groups.revisar.length} conjunto(s) estão em <strong>Conferir antes</strong> — têm proposta,
+                    mas com aviso; abra cada um, leia o aviso e marque se concordar.{' '}
+                  </>
+                )}
+                {groups.bloqueado.length > 0 && (
+                  <>
+                    {groups.bloqueado.length} estão em <strong>Sem regra possível</strong>, com o motivo em cada um.{' '}
+                  </>
+                )}
+                {groups.ok.length > 0 && <>Os outros {groups.ok.length} já estão padronizados.</>}
+              </p>
+            )}
             {filter !== 'recarga' && !schedules.length && (
               <p className="border-t border-zinc-200 px-3 py-2 text-[11.5px] leading-relaxed text-zinc-500 dark:border-zinc-800">
                 Nenhum agendamento cadastrado ainda. Sem um agendamento, os conjuntos que caberiam em cadência de

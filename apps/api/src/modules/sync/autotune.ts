@@ -432,7 +432,8 @@ async function syncHealth(datasetId: string): Promise<SyncHealth> {
 // data. Nesses, o que está gravado continua 3h adiantado, e onde a 2ª chave é
 // temporal ainda faltam as linhas que o corte no futuro pulou.
 async function reloadNeed(
-  ds: { id: unknown; connection_id: unknown; sync_mode: unknown }, fields: Field[],
+  ds: { id: unknown; connection_id: unknown; sync_mode: unknown; last_full_reload_at: unknown },
+  fields: Field[],
 ): Promise<ReloadNeed> {
   // Tamanho e ritmo saem do histórico de execuções — é o que permite dizer
   // "este leva 40 minutos" em vez de "pode demorar".
@@ -460,6 +461,11 @@ async function reloadNeed(
     reason = 'Nenhuma coluna de data neste conjunto — não há horário para corrigir.'
   } else if (modo !== 'incremental') {
     reason = 'Está em snapshot: relê a tabela inteira a cada execução, então já se corrigiu sozinho.'
+  } else if (ds.last_full_reload_at != null) {
+    // A coluna nasceu nula e só é escrita pelo código JÁ corrigido, então ter
+    // data significa, por construção, "relido depois da correção de fuso".
+    const quando = new Date(String(ds.last_full_reload_at)).toLocaleString('pt-BR')
+    reason = `Já foi relido por inteiro em ${quando} — o histórico deste conjunto está corrigido.`
   } else {
     needed = true
     reason = 'Fonte Postgres em incremental: os horários já gravados seguem 3h adiantados, ' +
@@ -485,7 +491,7 @@ export async function planFor(datasetId: string): Promise<IncrementalPlan> {
   const ds = (await db.query(
     `select id, slug, name, connection_id, schema_name, object_name, row_count,
             sync_mode, incremental_key, incremental_key_2, dedupe_keys,
-            sync_cadence, schedule_id, watermark_lag_minutes
+            sync_cadence, schedule_id, watermark_lag_minutes, last_full_reload_at
        from datasets where id = $1 and kind <> 'derived'`,
     [datasetId],
   )).rows[0]

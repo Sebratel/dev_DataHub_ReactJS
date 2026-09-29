@@ -214,6 +214,37 @@ const explicada = (await pg.query<{ n: number }>(
   `select count(*)::int as n from sync_runs where error like 'Interrompida:%'`)).rows[0].n
 check('as órfãs ganham um motivo legível', explicada === 2, `${explicada} explicada(s)`)
 
+// ── Marca de recarga completa ───────────────────────────────────────────
+// Sem ela, "precisa de recarga" só respondia "este conjunto FOI afetado?", e o
+// contador ficava parado em 57 por mais que se recarregasse. A marca só avança
+// quando a fonte foi lida INTEIRA (replaceParts) — é o que transforma a
+// pergunta em "ainda PRECISA?".
+console.log('\n── marca de recarga completa ──')
+await pg.exec(`
+  alter table datasets add column last_full_reload_at timestamptz;
+  alter table datasets add column row_count bigint;
+  alter table datasets add column last_sync_at timestamptz;
+`)
+
+const MARCAR = `update datasets set row_count = $2, last_sync_at = now(),
+       last_full_reload_at = case when $3 then now() else last_full_reload_at end,
+       updated_at = now() where id = $1 returning last_full_reload_at`
+
+// Execução INCREMENTAL (replaceParts = false): não marca. É o ponto todo —
+// uma execução normal não reescreve o passado, então não conserta nada.
+const inc = await novoConjunto('daily', null)
+const r1 = (await pg.query<{ last_full_reload_at: string | null }>(MARCAR, [inc, 10, false])).rows[0]
+check('execução incremental NÃO marca recarga', r1.last_full_reload_at === null)
+
+// Execução que releu a fonte inteira: marca.
+const r2 = (await pg.query<{ last_full_reload_at: string | null }>(MARCAR, [inc, 10, true])).rows[0]
+check('execução completa marca a recarga', r2.last_full_reload_at !== null)
+
+// E a marca NÃO se perde numa execução incremental posterior.
+const r3 = (await pg.query<{ last_full_reload_at: string | null }>(MARCAR, [inc, 20, false])).rows[0]
+check('incremental posterior preserva a marca',
+  String(r3.last_full_reload_at) === String(r2.last_full_reload_at))
+
 await pg.close()
 console.log(`\n${failures ? `${failures} verificação(ões) falharam.` : 'Tudo certo.'}`)
 process.exit(failures ? 1 : 0)
