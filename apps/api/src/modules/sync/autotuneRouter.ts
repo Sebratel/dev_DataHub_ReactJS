@@ -10,6 +10,7 @@
 //                                            (admin MASTER em conjunto de fonte)
 //   POST /datasets/reload                    o mesmo, para vários de uma vez
 //                                            (admin MASTER)
+//   GET  /datasets/sync-queue                o que está rodando e o que espera
 //
 // O apply NUNCA inventa: ele recalcula o plano no servidor e grava o que o
 // plano disser. O front manda quais conjuntos aplicar, não o que gravar —
@@ -21,7 +22,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { planAll, planFor } from './autotune.js'
-import { enqueueSync } from './ingest.js'
+import { enqueueSync, pendingSyncs } from './ingest.js'
 import { applySyncConfig } from './syncConfig.js'
 import { reconcileFields } from './reconcileFields.js'
 import { requireMasterOnSource } from './masterGuard.js'
@@ -272,4 +273,54 @@ autotuneRouter.post('/reload', ...masterOnly, async (req, res) => {
     { requested: ids.length, queued })
   const status = queued === ids.length ? 202 : queued > 0 ? 207 : 422
   res.status(status).json({ queued, requested: ids.length, results })
+})
+
+// A fila de sincronização, de uma vez só: o que roda agora, o que espera e o
+// que acabou de terminar.
+//
+// Existe porque depois de mandar recarregar uma dúzia de conjuntos não havia
+// onde acompanhar: o histórico mora DENTRO da página de cada conjunto, e o que
+// ainda nem começou não aparecia em lugar nenhum. Restava abrir conjunto por
+// conjunto e adivinhar a ordem.
+autotuneRouter.get('/sync-queue', ...adminOnly, async (req, res) => {
+  const nomes = new Map<string, string>(
+    (await db.query(
+      `select d.id, d.name from datasets d join tenants t on t.id = d.tenant_id where t.slug = $1`,
+      [req.user!.tenant],
+    )).rows.map((r) => [String(r.id), String(r.name)]),
+  )
+
+  const rodando = (await db.query(
+    `select r.id, r.dataset_id, r.mode, r.rows, r.started_at
+       from sync_runs r join datasets d on d.id = r.dataset_id join tenants t on t.id = d.tenant_id
+      where r.status = 'running' and t.slug = $1
+      order by r.started_at limit 5`,
+    [req.user!.tenant],
+  )).rows
+
+  const recentes = (await db.query(
+    `select r.id, r.dataset_id, r.mode, r.status, r.rows, r.error, r.started_at, r.finished_at
+       from sync_runs r join datasets d on d.id = r.dataset_id join tenants t on t.id = d.tenant_id
+      where r.status <> 'running' and t.slug = $1
+      order by r.finished_at desc nulls last limit 15`,
+    [req.user!.tenant],
+  )).rows
+
+  // Só os que este inquilino enxerga — a fila em memória é do processo inteiro.
+  const esperando = pendingSyncs().filter((id) => nomes.has(id))
+
+  res.json({
+    running: rodando.map((r) => ({
+      datasetId: String(r.dataset_id), name: nomes.get(String(r.dataset_id)) ?? String(r.dataset_id),
+      mode: String(r.mode), rows: Number(r.rows ?? 0),
+      startedAt: new Date(r.started_at as string).toISOString(),
+    })),
+    pending: esperando.map((id) => ({ datasetId: id, name: nomes.get(id)! })),
+    recent: recentes.map((r) => ({
+      datasetId: String(r.dataset_id), name: nomes.get(String(r.dataset_id)) ?? String(r.dataset_id),
+      mode: String(r.mode), status: String(r.status), rows: Number(r.rows ?? 0),
+      error: (r.error as string | null) ?? null,
+      finishedAt: r.finished_at ? new Date(r.finished_at as string).toISOString() : null,
+    })),
+  })
 })

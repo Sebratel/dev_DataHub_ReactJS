@@ -402,6 +402,12 @@ quanto ocupam no lake e a fila estimada. Quem **não** precisa também aparece
 explicado — conjunto em snapshot se refaz sozinho a cada execução, e fonte
 MySQL nunca foi afetada.
 
+**Onde acompanhar:** o card **Fila de sincronização**, no topo da própria tela
+de *Padronizar atualização*. Ele mostra o que está rodando agora (com linhas e
+tempo decorrido), quem está na espera e por qual ordem, e as últimas que
+terminaram. Atualiza sozinho e **some quando não há nada na fila** — então, se
+ele não aparece, é porque acabou.
+
 **Como conduzir sem apertar a plataforma:**
 
 - as sincronizações rodam **uma de cada vez** no hub inteiro, então a recarga
@@ -453,6 +459,8 @@ métrica substitui: prova que a 2ª chave e a identidade estão funcionando junt
 | `Sincronização incremental não convergiu: a chave "x" não avançou` | a chave escolhida não é crescente/única o bastante | trocar por outra (ex.: `id`) |
 | horário no lake 3 h adiantado em relação à fonte | conversão de fuso | corrigido em 28/09/2026; se reaparecer, abrir chamado |
 | conjunto para de trazer linhas novas, sem erro | watermark no futuro (fuso) | idem — conferir o horário do último registro no lake |
+| `maximum_object_size ... exceeded while reading file ... .jsonl` | linha da tabela maior que o teto do DuckDB **ou** arquivo de staging cortado no meio | teto subiu para 64 MB em 29/09/2026; se persistir, a mensagem agora diz quando é arquivo truncado (falta de espaço em disco) |
+| `Arquivo de staging incompleto: N bytes sem a quebra de linha final` | a escrita foi interrompida — quase sempre disco cheio no volume do lake | liberar espaço e sincronizar de novo; o conteúdo antigo continua intacto |
 | `Binder Error: Cannot combine types of … - an explicit cast is required` | defeito do servidor na compactação (chave numérica comparada com data) | corrigido em 21/09/2026; se reaparecer, avisar quem mantém o Data Hub |
 | `Sincronização abortada: excedeu N linhas` | disjuntor `SYNC_MAX_ROWS` — provável carga em fuga | usar incremental e/ou definir piso |
 | `Para usar duas chaves é preciso definir a identidade da linha` | 2ª chave sem identidade | definir a identidade primeiro |

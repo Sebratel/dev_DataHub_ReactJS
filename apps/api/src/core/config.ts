@@ -70,6 +70,14 @@ export const config = {
     // acumularia centenas de arquivinhos por dia e TODA leitura dele ficaria
     // mais lenta. 24 ≈ duas horas de lotes a cada 5 min antes de juntar tudo.
     compactMaxParts: Math.max(2, Number(process.env.SYNC_COMPACT_MAX_PARTS) || 24),
+    // Teto do DuckDB para UMA linha do JSONL de staging (uma linha = uma linha
+    // da tabela). O padrão dele é 16 MB, e uma linha maior que isso derruba a
+    // conversão inteira com "maximum_object_size exceeded" — aconteceu numa
+    // tabela de ERP com coluna de texto grande. É buffer de leitura, não
+    // memória reservada: subir o teto não custa nada enquanto as linhas forem
+    // pequenas, e evita a falha quando uma delas não for.
+    maxJsonObjectBytes: Math.max(
+      16 * 1024 * 1024, Number(process.env.SYNC_MAX_JSON_OBJECT_BYTES) || 64 * 1024 * 1024),
   },
 
   // Motor de consulta (DuckDB). Limites protegem o servidor de uma consulta

@@ -83,6 +83,8 @@ const EXPECTED: Record<string, Record<string, Level>> = {
     'POST /:id/reload': 'master-src',
     // Em lote: só toca conjunto de fonte, então exige master sem condição.
     'POST /reload': 'master',
+    // Leitura pura da fila — acompanhar não é mexer.
+    'GET /sync-queue': 'admin',
   },
   // Só as rotas de MASTER do accessRouter entram na tabela: as demais (times,
   // concessões, auditoria) são de admin e têm guard próprio por rota, fora do

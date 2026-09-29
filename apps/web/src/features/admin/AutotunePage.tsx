@@ -21,6 +21,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useConfirm } from '@/components/Dialogs'
 import { Page, PageHeader, ErrorBanner, EmptyState, FilterChips, PrimaryButton } from '@/components/ui/Page'
 import { Card, CardHead } from '@/components/ui/Card'
+import SyncQueueCard from './SyncQueueCard'
 import { Pill, type Tone } from '@/components/ui/Pill'
 
 type Filter = 'falhando' | 'recarga' | 'todos' | 'alta' | 'revisar' | 'ok' | 'bloqueado'
@@ -351,6 +352,10 @@ export default function AutotunePage() {
       </PageHeader>
 
       {error && <ErrorBanner message={error} onRetry={load} />}
+
+      {/* Some sozinho quando não há nada rodando nem esperando — é justamente
+          depois de um lote que a pergunta "e agora?" aparece. */}
+      <SyncQueueCard />
 
       {report && (() => {
         const falhas = report.results.filter((r) => !r.ok)

@@ -6,7 +6,7 @@
 //   • SELECT simples de colunas, sem regra de negócio (guard read-only).
 // O lote vai para JSONL temporário; no fim, o DuckDB converte para Parquet.
 // ─────────────────────────────────────────────────────────────────────────
-import { createWriteStream, unlinkSync, existsSync, renameSync } from 'node:fs'
+import { createWriteStream, unlinkSync, existsSync, renameSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { join } from 'node:path'
 import { config } from '../../core/config.js'
 import { db } from '../../db/pool.js'
@@ -99,10 +99,28 @@ function jsonLine(row: Record<string, unknown>): string {
 // nem em fontes diferentes (prioridade absoluta: não pesar na produção).
 let queue: Promise<unknown> = Promise.resolve()
 
+// Quem está ESPERANDO na fila. A fila em si é uma cadeia de promessas, que não
+// dá para inspecionar — e sem esta lista não havia como responder "mandei
+// recarregar 12 conjuntos, e agora?": o que já rodou aparece no histórico de
+// cada um, mas o que ainda vai rodar não aparecia em lugar nenhum.
+const aguardando: string[] = []
+export function pendingSyncs(): string[] {
+  return [...aguardando]
+}
+
 // `visited` evita ciclo infinito quando A cascateia para B e B (por engano)
 // cascateia de volta para A — cada slug só dispara cascata uma vez por corrida.
 export function enqueueSync(datasetId: string, visited: Set<string> = new Set()): Promise<string> {
-  const job = queue.then(() => runSync(datasetId)).catch((e) => {
+  aguardando.push(datasetId)
+  const job = queue.then(() => {
+    // Sai da espera no instante em que COMEÇA a rodar — daí em diante quem
+    // conta a história é o sync_run, com status 'running'.
+    const i = aguardando.indexOf(datasetId)
+    if (i >= 0) aguardando.splice(i, 1)
+    return runSync(datasetId)
+  }).catch((e) => {
+    const i = aguardando.indexOf(datasetId)
+    if (i >= 0) aguardando.splice(i, 1)
     console.error(`[sync] falha: ${(e as Error).message}`)
     return `erro: ${(e as Error).message}`
   })
@@ -472,6 +490,28 @@ async function runSync(datasetId: string): Promise<string> {
     }
     await new Promise<void>((res, rej) => stream.end((e: unknown) => (e ? rej(e) : res())))
 
+    // O staging TEM de terminar em quebra de linha: cada linha é uma linha da
+    // tabela, e o escritor sempre fecha com '\n'. Não terminando, o arquivo foi
+    // cortado no meio da escrita — disco cheio, processo morto, volume que
+    // sumiu. Sem esta conferência, quem aparece depois é um erro do DuckDB
+    // ("maximum_object_size exceeded") que manda procurar no lugar errado: a
+    // suspeita recai sobre o tamanho de uma linha, não sobre o arquivo truncado.
+    if (total > 0) {
+      const bytes = statSync(jsonl).size
+      const fd = openSync(jsonl, 'r')
+      try {
+        const ultimo = Buffer.alloc(1)
+        readSync(fd, ultimo, 0, 1, bytes - 1)
+        if (ultimo[0] !== 0x0a) {
+          throw new Error(
+            `Arquivo de staging incompleto: ${bytes.toLocaleString('pt-BR')} bytes sem a quebra de linha final. ` +
+            'A escrita foi interrompida no meio — quase sempre falta de espaço em disco no volume do lake. ' +
+            'Libere espaço e sincronize de novo; o conteúdo antigo do conjunto continua intacto.',
+          )
+        }
+      } finally { closeSync(fd) }
+    }
+
     // JSONL → Parquet (zstd). Snapshot substitui as partes; incremental acrescenta.
     if (total > 0) {
       const part = join(dir, `part-${run.id}.parquet`).replace(/\\/g, '/')
@@ -492,8 +532,15 @@ async function runSync(datasetId: string): Promise<string> {
         if (f.type === 'json') return `cast(${k} as VARCHAR) as ${k}`
         return k
       }).join(', ')
+      // maximum_object_size: teto do DuckDB para UMA linha do JSONL, que aqui é
+      // UMA linha da tabela. O padrão dele é 16 MB e derruba a conversão
+      // inteira quando alguma linha passa disso — uma tabela de ERP com coluna
+      // de texto grande basta. O erro que aparece ("maximum_object_size
+      // exceeded") não diz que o problema é UMA linha específica, e manda
+      // procurar no lugar errado.
       const src = fields.length
-        ? `read_json(${sqlit(jsonl.replace(/\\/g, '/'))}, columns={${cols}}, format='newline_delimited')`
+        ? `read_json(${sqlit(jsonl.replace(/\\/g, '/'))}, columns={${cols}}, format='newline_delimited', ` +
+          `maximum_object_size=${config.sync.maxJsonObjectBytes})`
         : `read_json_auto('${jsonl.replace(/\\/g, '/')}')` // sem campos: fallback improvável
       await duckQuery(`copy (select ${selectList || '*'} from ${src}) to '${part}' (format parquet, compression zstd)`)
       if (replaceParts) clearParquet(dir, join(dir, `part-${run.id}.parquet`))

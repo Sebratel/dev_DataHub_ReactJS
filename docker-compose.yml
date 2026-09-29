@@ -89,6 +89,10 @@ services:
       # Teto de arquivos Parquet por conjunto antes de compactar mesmo sem ter
       # nada a colapsar (a compactacao so roda quando ha identidade repetida).
       SYNC_COMPACT_MAX_PARTS: ${SYNC_COMPACT_MAX_PARTS:-24}
+      # Teto do DuckDB para UMA linha do JSONL de staging (uma linha da tabela).
+      # O padrao dele e 16 MB e derruba a conversao quando alguma linha passa
+      # disso. 64 MB por padrao: e buffer de leitura, nao memoria reservada.
+      SYNC_MAX_JSON_OBJECT_BYTES: ${SYNC_MAX_JSON_OBJECT_BYTES:-67108864}
       # Motor de consulta (DuckDB) — teto GLOBAL do DuckDB (não é por consulta).
       # 6GB dentro dos 12g da API deixa ~6g pro Node + embeddings + SO. Consultas
       # e cargas grandes derramam pra disco (spill) em vez de estourar (OOM).
