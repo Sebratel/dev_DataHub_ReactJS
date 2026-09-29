@@ -131,19 +131,57 @@ let queue: Promise<unknown> = Promise.resolve()
 // recarregar 12 conjuntos, e agora?": o que já rodou aparece no histórico de
 // cada um, mas o que ainda vai rodar não aparecia em lugar nenhum.
 const aguardando: string[] = []
+// Pedidos de cancelamento de quem AINDA não começou. A fila é uma cadeia de
+// promessas: não dá para arrancar um elo dela, então o elo roda e consulta isto
+// para desistir sem trabalho nenhum.
+const canceladas = new Set<string>()
+
 export function pendingSyncs(): string[] {
   return [...aguardando]
+}
+
+// Tira da fila quem ainda não começou. Sem `ids`, esvazia a fila inteira.
+// Não toca em quem JÁ está rodando — para isso existe o cancelamento
+// cooperativo (requestCancel), que interrompe entre os lotes.
+export function cancelPending(ids?: string[]): string[] {
+  const alvo = ids?.length ? ids : [...aguardando]
+  const removidos: string[] = []
+  for (const id of alvo) {
+    const i = aguardando.indexOf(id)
+    if (i >= 0) { aguardando.splice(i, 1); canceladas.add(id); removidos.push(id) }
+  }
+  return removidos
 }
 
 // `visited` evita ciclo infinito quando A cascateia para B e B (por engano)
 // cascateia de volta para A — cada slug só dispara cascata uma vez por corrida.
 export function enqueueSync(datasetId: string, visited: Set<string> = new Set()): Promise<string> {
+  // JÁ na fila ou rodando: não entra de novo. Sem esta trava a fila se
+  // multiplica sozinha, por dois caminhos independentes:
+  //
+  //   • o agendador roda a cada minuto e decide pelo `last_sync_at`, que só
+  //     avança no FIM de uma execução bem-sucedida. Enquanto um conjunto espera
+  //     numa fila longa, ele continua "vencido" e é enfileirado de novo a cada
+  //     minuto — uma recarga de 3h rendia dezenas de cópias do mesmo conjunto;
+  //   • a cascata enfileira cada calculado uma vez por FONTE que termina. Dez
+  //     fontes sincronizando põem o mesmo calculado dez vezes na fila.
+  //
+  // O efeito não era só visual: cada cópia relê a tabela inteira de novo,
+  // ocupando horas de fila para chegar ao mesmo resultado.
+  if (aguardando.includes(datasetId) || runningDatasetId === datasetId) {
+    return Promise.resolve('já estava na fila')
+  }
   aguardando.push(datasetId)
   const job = queue.then(() => {
     // Sai da espera no instante em que COMEÇA a rodar — daí em diante quem
     // conta a história é o sync_run, com status 'running'.
     const i = aguardando.indexOf(datasetId)
     if (i >= 0) aguardando.splice(i, 1)
+    // Tirado da fila enquanto esperava: desiste sem tocar na fonte.
+    if (canceladas.delete(datasetId)) {
+      console.log(`[sync] ${datasetId}: retirado da fila antes de começar.`)
+      return 'retirado da fila'
+    }
     return runSync(datasetId)
   }).catch((e) => {
     const i = aguardando.indexOf(datasetId)

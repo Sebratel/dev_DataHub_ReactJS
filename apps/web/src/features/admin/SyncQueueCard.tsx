@@ -9,18 +9,28 @@
 // rodando" é quase sempre uma linha só, e a fila é o resto. É essa forma que o
 // card mostra: a de cima é agora, as de baixo são a espera.
 import { useEffect, useState } from 'react'
-import { Loader2, Check, X, Clock } from 'lucide-react'
+import { Loader2, Check, X, Clock, GitMerge } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Card, CardHead } from '@/components/ui/Card'
 
 interface Fila {
-  running: { datasetId: string; name: string; mode: string; rows: number; startedAt: string }[]
-  pending: { datasetId: string; name: string }[]
+  running: { datasetId: string; name: string; kind: string; mode: string; rows: number; startedAt: string }[]
+  pending: { datasetId: string; name: string; kind: string }[]
   recent: {
-    datasetId: string; name: string; mode: string; status: string
+    datasetId: string; name: string; kind: string; mode: string; status: string
     rows: number; error: string | null; finishedAt: string | null
   }[]
 }
+
+// Conjunto CALCULADO na fila não é engano: ele roda SQL sobre o lake e disputa
+// a mesma fila sequencial das fontes. Esconder faria a fila mentir sobre por
+// que os outros esperam — mas sem a marca é difícil saber o que a linha faz ali.
+const Calculado = () => (
+  <span className="inline-flex shrink-0 items-center gap-1 rounded px-1 text-[10px] text-zinc-400"
+    title="Conjunto calculado: roda SQL sobre o lake, não lê da fonte">
+    <GitMerge size={10} /> calculado
+  </span>
+)
 
 const hora = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'
@@ -39,6 +49,22 @@ function decorrido(desde: string): string {
 
 export default function SyncQueueCard() {
   const [fila, setFila] = useState<Fila | null>(null)
+  const [tirando, setTirando] = useState(false)
+
+  const carregarAgora = () =>
+    api<Fila>('/api/v1/datasets/sync-queue').then(setFila).catch(() => { /* acessório */ })
+
+  // Tira da fila quem ainda não começou. Não interrompe o que já está rodando —
+  // para isso existe "Parar", na tela do conjunto.
+  async function tirarDaFila(ids?: string[]) {
+    setTirando(true)
+    try {
+      await api('/api/v1/datasets/sync-queue/cancel', {
+        method: 'POST', body: JSON.stringify({ datasetIds: ids ?? [] }),
+      })
+      await carregarAgora()
+    } catch { /* o próximo poll mostra o estado real */ } finally { setTirando(false) }
+  }
 
   useEffect(() => {
     let vivo = true
@@ -67,6 +93,16 @@ export default function SyncQueueCard() {
         title="Fila de sincronização"
         sub={`${running.length} rodando · ${pending.length} na espera`}
       >
+        {pending.length > 0 && (
+          <button
+            onClick={() => void tirarDaFila()}
+            disabled={tirando}
+            className="text-[11px] font-medium text-zinc-500 hover:text-crit hover:underline disabled:opacity-50 dark:hover:text-crit-dark"
+            title="Tira da fila tudo que ainda não começou. O que está rodando continua."
+          >
+            esvaziar a espera
+          </button>
+        )}
         <span className="text-[10.5px] text-zinc-400">atualiza sozinho</span>
       </CardHead>
 
@@ -75,6 +111,7 @@ export default function SyncQueueCard() {
           <div key={r.datasetId} className="flex items-center gap-2.5 px-3 py-2">
             <Loader2 size={13} className="shrink-0 animate-spin text-info dark:text-info-dark" />
             <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{r.name}</span>
+            {r.kind === 'derived' && <Calculado />}
             <span className="shrink-0 text-[11px] tabular-nums text-zinc-500">
               {r.rows.toLocaleString('pt-BR')} linhas · {decorrido(r.startedAt)}
             </span>
@@ -85,7 +122,16 @@ export default function SyncQueueCard() {
           <div key={p.datasetId} className="flex items-center gap-2.5 px-3 py-2">
             <Clock size={13} className="shrink-0 text-zinc-300 dark:text-zinc-600" />
             <span className="min-w-0 flex-1 truncate text-[12px] text-zinc-500">{p.name}</span>
+            {p.kind === 'derived' && <Calculado />}
             <span className="shrink-0 text-[11px] tabular-nums text-zinc-400">{i + 1}º na fila</span>
+            <button
+              onClick={() => void tirarDaFila([p.datasetId])}
+              disabled={tirando}
+              title="Tirar da fila"
+              className="shrink-0 rounded p-0.5 text-zinc-300 hover:text-crit disabled:opacity-40 dark:text-zinc-600"
+            >
+              <X size={12} />
+            </button>
           </div>
         ))}
       </div>

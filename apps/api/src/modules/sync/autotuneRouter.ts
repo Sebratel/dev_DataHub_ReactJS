@@ -11,6 +11,7 @@
 //   POST /datasets/reload                    o mesmo, para vários de uma vez
 //                                            (admin MASTER)
 //   GET  /datasets/sync-queue                o que está rodando e o que espera
+//   POST /datasets/sync-queue/cancel         tira da fila quem ainda não começou
 //
 // O apply NUNCA inventa: ele recalcula o plano no servidor e grava o que o
 // plano disser. O front manda quais conjuntos aplicar, não o que gravar —
@@ -22,7 +23,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { planAll, planFor } from './autotune.js'
-import { enqueueSync, pendingSyncs } from './ingest.js'
+import { enqueueSync, pendingSyncs, cancelPending } from './ingest.js'
 import { applySyncConfig } from './syncConfig.js'
 import { reconcileFields } from './reconcileFields.js'
 import { requireMasterOnSource } from './masterGuard.js'
@@ -283,12 +284,19 @@ autotuneRouter.post('/reload', ...masterOnly, async (req, res) => {
 // ainda nem começou não aparecia em lugar nenhum. Restava abrir conjunto por
 // conjunto e adivinhar a ordem.
 autotuneRouter.get('/sync-queue', ...adminOnly, async (req, res) => {
-  const nomes = new Map<string, string>(
+  // O KIND viaja junto do nome: na fila convivem conjuntos de FONTE (que leem
+  // da produção) e CALCULADOS (que rodam SQL sobre o lake). Eles disputam a
+  // mesma fila sequencial, então esconder os calculados faria a fila mentir
+  // sobre por que os outros estão esperando — mas sem a distinção visível, é
+  // difícil entender o que cada linha está fazendo ali.
+  const info = new Map<string, { name: string; kind: string }>(
     (await db.query(
-      `select d.id, d.name from datasets d join tenants t on t.id = d.tenant_id where t.slug = $1`,
+      `select d.id, d.name, d.kind from datasets d join tenants t on t.id = d.tenant_id where t.slug = $1`,
       [req.user!.tenant],
-    )).rows.map((r) => [String(r.id), String(r.name)]),
+    )).rows.map((r) => [String(r.id), { name: String(r.name), kind: String(r.kind) }]),
   )
+  const nomeDeId = (id: string) => info.get(id)?.name ?? id
+  const kindDeId = (id: string) => info.get(id)?.kind ?? 'source'
 
   const rodando = (await db.query(
     `select r.id, r.dataset_id, r.mode, r.rows, r.started_at
@@ -307,20 +315,46 @@ autotuneRouter.get('/sync-queue', ...adminOnly, async (req, res) => {
   )).rows
 
   // Só os que este inquilino enxerga — a fila em memória é do processo inteiro.
-  const esperando = pendingSyncs().filter((id) => nomes.has(id))
+  const esperando = pendingSyncs().filter((id) => info.has(id))
 
   res.json({
     running: rodando.map((r) => ({
-      datasetId: String(r.dataset_id), name: nomes.get(String(r.dataset_id)) ?? String(r.dataset_id),
+      datasetId: String(r.dataset_id), name: nomeDeId(String(r.dataset_id)),
+      kind: kindDeId(String(r.dataset_id)),
       mode: String(r.mode), rows: Number(r.rows ?? 0),
       startedAt: new Date(r.started_at as string).toISOString(),
     })),
-    pending: esperando.map((id) => ({ datasetId: id, name: nomes.get(id)! })),
+    pending: esperando.map((id) => ({ datasetId: id, name: nomeDeId(id), kind: kindDeId(id) })),
     recent: recentes.map((r) => ({
-      datasetId: String(r.dataset_id), name: nomes.get(String(r.dataset_id)) ?? String(r.dataset_id),
+      datasetId: String(r.dataset_id), name: nomeDeId(String(r.dataset_id)),
+      kind: kindDeId(String(r.dataset_id)),
       mode: String(r.mode), status: String(r.status), rows: Number(r.rows ?? 0),
       error: (r.error as string | null) ?? null,
       finishedAt: r.finished_at ? new Date(r.finished_at as string).toISOString() : null,
     })),
   })
+})
+
+// Tira da fila quem ainda NÃO começou. Sem `datasetIds`, esvazia a fila.
+//
+// É admin, não master: retirar da fila não muda a regra de atualização de
+// ninguém — é a mesma natureza de "Parar" uma carga em andamento, que também é
+// admin. O que foi retirado volta a ser enfileirado no próximo tick da cadência
+// normal, então nada se perde em definitivo.
+autotuneRouter.post('/sync-queue/cancel', ...adminOnly, async (req, res) => {
+  const ids = Array.isArray(req.body?.datasetIds) ? (req.body.datasetIds as unknown[]).map(String) : []
+
+  // Restringe ao inquilino: a fila em memória é do processo inteiro.
+  const doTenant = new Set(
+    (await db.query(
+      `select d.id from datasets d join tenants t on t.id = d.tenant_id where t.slug = $1`,
+      [req.user!.tenant],
+    )).rows.map((r) => String(r.id)),
+  )
+  const alvo = (ids.length ? ids : pendingSyncs()).filter((id) => doTenant.has(id))
+  const removidos = cancelPending(alvo)
+
+  await audit(req, 'datasets.sync-queue.cancel', { type: 'dataset', id: `${removidos.length} conjunto(s)` },
+    { requested: ids.length || 'todos', removed: removidos.length })
+  res.json({ removed: removidos.length })
 })

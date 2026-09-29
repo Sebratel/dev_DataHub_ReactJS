@@ -406,7 +406,20 @@ MySQL nunca foi afetada.
 de *Padronizar atualização*. Só **uma** sincronização roda por vez no hub
 inteiro — se aparecerem várias em "rodando", ou uma com duração em dias, são
 execuções presas de um processo que morreu no meio; elas se fecham sozinhas no
-próximo boot da API. Ele mostra o que está rodando agora (com linhas e
+próximo boot da API.
+
+**Para tirar algo da fila:** o **✕** ao lado de cada item que ainda espera, ou
+**"esvaziar a espera"** no cabeçalho do card. Nenhum dos dois interrompe o que
+já está rodando — para isso existe **Parar**, na tela do conjunto. O que sai da
+fila volta a ser enfileirado no próximo tick da cadência normal; nada se perde
+em definitivo.
+
+**Conjuntos calculados aparecem na fila**, marcados como *calculado*. Não é
+engano: eles rodam SQL sobre o lake e disputam a mesma fila sequencial das
+fontes. Escondê-los faria a fila mentir sobre por que as fontes estão
+esperando. O que é só de fontes é o **diagnóstico** — um conjunto calculado não
+tem chave incremental nem identidade, então nunca aparece na lista de
+padronização. Ele mostra o que está rodando agora (com linhas e
 tempo decorrido), quem está na espera e por qual ordem, e as últimas que
 terminaram. Atualiza sozinho e **some quando não há nada na fila** — então, se
 ele não aparece, é porque acabou.
