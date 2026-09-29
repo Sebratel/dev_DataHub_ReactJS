@@ -207,6 +207,9 @@ const baseOf = (over: Partial<PlanBase> = {}): PlanBase => ({
     lastSuccessAt: '2026-09-18T10:00:00.000Z', lastRunAt: '2026-09-18T10:00:00.000Z',
     lastError: null, failuresSinceSuccess: 0, failing: false,
   },
+  // A necessidade de recarga é decidida fora de decidePlan (depende do tipo da
+  // conexão e do histórico de execuções), então aqui entra um valor neutro.
+  reload: { needed: false, reason: '', lakeBytes: null, estimatedMinutes: null },
   current: {
     mode: 'snapshot', incrementalKey: null, incrementalKey2: null,
     dedupeKeys: [], cadence: 'daily', watermarkLagMinutes: 0,

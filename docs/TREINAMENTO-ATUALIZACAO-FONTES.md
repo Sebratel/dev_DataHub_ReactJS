@@ -368,6 +368,37 @@ intervalo, aumente o intervalo ou divida em dois agendamentos.
 
 ---
 
+## 6b. Recarga completa (consertar histórico)
+
+Uma execução normal **não reescreve o passado**: o incremental só traz o que
+passou do corte. Quando o que já está gravado no lake está errado — foi o caso
+do defeito de fuso de 28/09/2026 —, a única saída é reler a fonte inteira.
+
+O caminho é **Padronizar atualização › filtro "Precisam de recarga" ›** abrir o
+conjunto **› "Recarregar tudo"**. Ele zera o corte e relê tudo uma vez; o modo
+não muda e o conjunto volta a ser incremental logo depois.
+
+> ⚠️ **Não use o piso ("Publicar a partir de") para forçar recarga.** Ele zera o
+> corte, sim — mas a carga seguinte SUBSTITUI as partes antigas, então o
+> conjunto fica só com o período do piso e **o histórico anterior é perdido**.
+
+**O que a tela já responde antes de você clicar:** quantos conjuntos precisam,
+quanto ocupam no lake e a fila estimada. Quem **não** precisa também aparece
+explicado — conjunto em snapshot se refaz sozinho a cada execução, e fonte
+MySQL nunca foi afetada.
+
+**Como conduzir sem apertar a plataforma:**
+
+- as sincronizações rodam **uma de cada vez** no hub inteiro, então a recarga
+  não concorre com as outras — mas **ocupa a fila** enquanto durar, e os
+  agendamentos de minutos ficam esperando;
+- faça **do menor para o maior** (a lista já vem nessa ordem): correção cedo, e
+  os caros ficam para uma janela escolhida;
+- o pico é de **disco**: durante a carga convivem o Parquet atual, o arquivo
+  temporário e o Parquet novo. Um conjunto grande de cada vez, e olho no espaço
+  livre;
+- conjuntos realmente grandes: **fora do horário comercial**, um por noite.
+
 ## 7. Checklist de validação
 
 ### Por conjunto, logo após aplicar

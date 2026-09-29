@@ -25,7 +25,8 @@
 import { db } from '../../db/pool.js'
 import { discoverKeys, type TableKeys } from '../../connectors/introspect.js'
 import { discoverColumns } from '../../connectors/pools.js'
-import type { IncrementalPlan, PlanProposal, FieldDrift, SyncHealth } from '@datahub/shared'
+import { getConnector } from '../../connectors/registry.js'
+import type { IncrementalPlan, PlanProposal, FieldDrift, SyncHealth, ReloadNeed } from '@datahub/shared'
 
 export interface Field { key: string; sourceColumn: string; type: string }
 
@@ -416,6 +417,69 @@ async function syncHealth(datasetId: string): Promise<SyncHealth> {
   }
 }
 
+// Precisa de recarga completa por causa do defeito de fuso?
+//
+// A resposta mais valiosa aqui é o NÃO: recarregar um conjunto grande à toa
+// custa horas de fila e um pico de disco, e a maioria dos conjuntos não
+// precisa. Três motivos para não precisar, e todos são certeza, não palpite:
+//
+//   • fonte MySQL/MariaDB — nunca foi afetada (o driver já devolvia texto);
+//   • modo snapshot — relê a tabela inteira a cada execução, então a primeira
+//     execução depois do deploy já regravou tudo certo, sozinha;
+//   • conjunto sem nenhuma coluna de data — não há horário para estar errado.
+//
+// Sobra o que de fato precisa: fonte Postgres, em incremental, com coluna de
+// data. Nesses, o que está gravado continua 3h adiantado, e onde a 2ª chave é
+// temporal ainda faltam as linhas que o corte no futuro pulou.
+async function reloadNeed(
+  ds: { id: unknown; connection_id: unknown; sync_mode: unknown }, fields: Field[],
+): Promise<ReloadNeed> {
+  // Tamanho e ritmo saem do histórico de execuções — é o que permite dizer
+  // "este leva 40 minutos" em vez de "pode demorar".
+  const stat = (await db.query(
+    `select rows, bytes, started_at, finished_at from sync_runs
+      where dataset_id = $1 and status = 'done' and finished_at is not null and rows > 0
+      order by rows desc limit 1`,
+    [String(ds.id)],
+  )).rows[0]
+  const lakeBytes = (await db.query(
+    `select bytes from sync_runs where dataset_id = $1 and status = 'done'
+      order by started_at desc limit 1`,
+    [String(ds.id)],
+  )).rows[0]?.bytes ?? null
+
+  const kind = getConnector(String(ds.connection_id))?.kind
+  const temData = fields.some((f) => f.type === 'date')
+  const modo = String(ds.sync_mode)
+
+  let needed = false
+  let reason: string
+  if (kind !== 'postgres') {
+    reason = `Fonte ${kind ?? 'desconhecida'}: nunca foi afetada pelo defeito de fuso.`
+  } else if (!temData) {
+    reason = 'Nenhuma coluna de data neste conjunto — não há horário para corrigir.'
+  } else if (modo !== 'incremental') {
+    reason = 'Está em snapshot: relê a tabela inteira a cada execução, então já se corrigiu sozinho.'
+  } else {
+    needed = true
+    reason = 'Fonte Postgres em incremental: os horários já gravados seguem 3h adiantados, ' +
+      'e o corte no futuro pode ter pulado linhas. Só uma releitura completa conserta.'
+  }
+
+  // Ritmo da melhor execução conhecida, aplicado ao total de linhas.
+  let estimatedMinutes: number | null = null
+  if (needed && stat) {
+    const ms = new Date(stat.finished_at as string).getTime() - new Date(stat.started_at as string).getTime()
+    const linhas = Number(stat.rows)
+    if (ms > 0 && linhas > 0) {
+      const total = Number((await db.query(`select row_count from datasets where id = $1`, [String(ds.id)]))
+        .rows[0]?.row_count ?? linhas)
+      estimatedMinutes = Math.max(1, Math.round((total / linhas) * ms / 60_000))
+    }
+  }
+  return { needed, reason, lakeBytes: lakeBytes == null ? null : Number(lakeBytes), estimatedMinutes }
+}
+
 // Lê o que a decisão precisa (catálogo do hub + catálogo da origem) e decide.
 export async function planFor(datasetId: string): Promise<IncrementalPlan> {
   const ds = (await db.query(
@@ -435,12 +499,13 @@ export async function planFor(datasetId: string): Promise<IncrementalPlan> {
   const keys = await discoverKeys(String(ds.connection_id), String(ds.schema_name), String(ds.object_name))
   const drift = await fieldDrift(ds, fields)
   const health = await syncHealth(String(ds.id))
+  const reload = await reloadNeed(ds, fields)
 
   return decidePlan({
     datasetId: String(ds.id), slug: String(ds.slug), name: String(ds.name),
     connectionId: String(ds.connection_id), schema: String(ds.schema_name),
     table: String(ds.object_name), rowCount: ds.row_count == null ? null : Number(ds.row_count),
-    drift, health,
+    drift, health, reload,
     current: {
       mode: String(ds.sync_mode) as IncrementalPlan['current']['mode'],
       incrementalKey: (ds.incremental_key as string | null) ?? null,

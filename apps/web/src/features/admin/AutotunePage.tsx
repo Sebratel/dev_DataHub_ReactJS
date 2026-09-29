@@ -23,7 +23,7 @@ import { Page, PageHeader, ErrorBanner, EmptyState, FilterChips, PrimaryButton }
 import { Card, CardHead } from '@/components/ui/Card'
 import { Pill, type Tone } from '@/components/ui/Pill'
 
-type Filter = 'falhando' | 'todos' | 'alta' | 'revisar' | 'ok' | 'bloqueado'
+type Filter = 'falhando' | 'recarga' | 'todos' | 'alta' | 'revisar' | 'ok' | 'bloqueado'
 
 const CONFIDENCE: Record<string, { label: string; tone: Tone }> = {
   alta: { label: 'Confiança alta', tone: 'ok' },
@@ -40,6 +40,19 @@ const CADENCE_LABEL: Record<string, string> = {
 }
 
 const num = (n: number | null) => (n == null ? '—' : n.toLocaleString('pt-BR'))
+
+const bytes = (n: number | null) => {
+  if (n == null) return '—'
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']
+  let v = n, i = 0
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`
+}
+
+const duracao = (min: number | null) =>
+  min == null ? 'sem estimativa'
+    : min < 60 ? `~${min} min`
+      : `~${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`
 
 // Resposta do apply em lote. Chega com status 200 (tudo), 207 (parcial) ou
 // 422 (nada) — nos três casos com o mesmo corpo, item a item.
@@ -78,6 +91,7 @@ export default function AutotunePage() {
   const [loading, setLoading] = useState(false)
   const [applying, setApplying] = useState(false)
   const [reconciling, setReconciling] = useState<string | null>(null)
+  const [reloading, setReloading] = useState<string | null>(null)
   // Relatório da última aplicação. Estado SEPARADO de `error` de propósito:
   // `load()` zera `error` ao reanalisar, e era isso que apagava o resultado
   // antes de ele aparecer.
@@ -116,6 +130,12 @@ export default function AutotunePage() {
       // invisível em qualquer outra tela, porque o erro fica enterrado no
       // histórico de execuções dentro da página do conjunto.
       falhando: all.filter((p) => p.health.failing || p.drift.missing.length > 0),
+      // Conjuntos cujo HISTÓRICO ficou errado pelo defeito de fuso e que só uma
+      // releitura completa conserta. Ordenados do menor para o maior: numa
+      // recarga em série, começar pelos pequenos entrega correção cedo e deixa
+      // os caros para uma janela escolhida.
+      recarga: all.filter((p) => p.reload.needed)
+        .sort((a, b) => (a.reload.lakeBytes ?? 0) - (b.reload.lakeBytes ?? 0)),
       todos: all,
       // "Pronto para aplicar": tem proposta, ainda não está aplicada e o
       // diagnóstico não levantou nenhum risco.
@@ -193,6 +213,33 @@ export default function AutotunePage() {
       else setError(e instanceof Error ? e.message : 'Falha ao aplicar.')
     } finally {
       setApplying(false)
+    }
+  }
+
+  // Recarga completa: relê a fonte inteira UMA vez e substitui o que está no
+  // lake. É a única forma de consertar horário já gravado errado.
+  async function reload(p: IncrementalPlan) {
+    const ok = await confirm({
+      title: `Recarregar "${p.name}"`,
+      message:
+        `O conjunto será lido INTEIRO da fonte (${num(p.rowCount)} linhas, ${duracao(p.reload.estimatedMinutes)}) ` +
+        'e o conteúdo atual do lake será substituído.\n\n' +
+        'Roda na fila — uma sincronização por vez no hub inteiro —, então não concorre com as demais, ' +
+        'mas ocupa a fila enquanto durar. Durante a carga convivem em disco o Parquet atual, o arquivo ' +
+        'temporário e o Parquet novo.\n\n' +
+        'Prefira fora do horário de pico, e um de cada vez nos conjuntos grandes.',
+      confirmLabel: 'Recarregar',
+    })
+    if (!ok) return
+    setReloading(p.datasetId)
+    setError(null)
+    try {
+      await api(`/api/v1/datasets/${p.datasetId}/reload`, { method: 'POST' })
+      load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Falha ao enfileirar a recarga.')
+    } finally {
+      setReloading(null)
     }
   }
 
@@ -314,12 +361,32 @@ export default function AutotunePage() {
         <Card><p className="px-3 py-10 text-center text-[12px] text-zinc-500">Lendo o catálogo das fontes…</p></Card>
       ) : (
         <>
+          {filter === 'recarga' && (
+            <div className="mb-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                Estes conjuntos vêm de fonte <strong>Postgres</strong> e estão em <strong>incremental</strong>:
+                o que já está gravado no lake seguiu 3 horas adiantado, e o corte no futuro pode ter pulado
+                linhas. Só uma releitura completa conserta — nova execução normal não reescreve o passado.
+                {' '}Conjuntos em <strong>snapshot</strong> e fontes <strong>MySQL</strong> não aparecem aqui:
+                os primeiros já se refizeram sozinhos, os segundos nunca foram afetados.
+              </p>
+              <p className="mt-2 text-[11.5px] text-zinc-500">
+                Total: <strong>{groups.recarga.length} conjunto(s)</strong>
+                {' · '}{bytes(groups.recarga.reduce((a, p) => a + (p.reload.lakeBytes ?? 0), 0))} no lake
+                {' · '}fila estimada{' '}
+                {duracao(groups.recarga.reduce((a, p) => a + (p.reload.estimatedMinutes ?? 0), 0) || null)}.
+                {' '}Rodam <strong>uma de cada vez</strong>; comece pelos menores.
+              </p>
+            </div>
+          )}
+
           <div className="mb-2.5 flex flex-wrap items-center gap-2">
             <FilterChips<Filter>
               value={filter}
               onChange={(v) => setFilter(v)}
               options={[
                 { key: 'falhando', label: 'Não estão atualizando', count: groups.falhando.length },
+                { key: 'recarga', label: 'Precisam de recarga', count: groups.recarga.length },
                 { key: 'todos', label: 'Todos', count: groups.todos.length },
                 { key: 'alta', label: 'Prontos para aplicar', count: groups.alta.length },
                 { key: 'revisar', label: 'Conferir antes', count: groups.revisar.length },
@@ -478,6 +545,31 @@ export default function AutotunePage() {
                               com coluna inexistente não podia ser removido por
                               tela nenhuma — só apagando e republicando o
                               conjunto inteiro. */}
+                          {p.reload.needed && (
+                            <div className="rounded-lg border border-warn/40 bg-warn-soft p-2.5 dark:bg-warn/10">
+                              <p className="text-[11.5px] font-medium text-warn dark:text-warn-dark">
+                                Precisa de recarga completa
+                              </p>
+                              <p className="mt-0.5 text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                                {p.reload.reason}
+                              </p>
+                              <p className="mt-1 text-[11px] text-zinc-500">
+                                {num(p.rowCount)} linhas · {bytes(p.reload.lakeBytes)} no lake ·{' '}
+                                {duracao(p.reload.estimatedMinutes)}
+                              </p>
+                              <button
+                                onClick={() => void reload(p)}
+                                disabled={!isMaster || reloading === p.datasetId}
+                                title={isMaster ? undefined : 'Somente o administrador master recarrega uma fonte.'}
+                                className="mt-2 flex h-[28px] items-center gap-1.5 rounded-lg border border-warn/50 px-2.5 text-[11.5px] font-medium text-warn hover:bg-warn/10 disabled:opacity-50 dark:text-warn-dark"
+                              >
+                                {reloading === p.datasetId
+                                  ? <Loader2 size={12} className="animate-spin" />
+                                  : <RefreshCw size={12} />}
+                                Recarregar tudo
+                              </button>
+                            </div>
+                          )}
                           {p.drift.missing.length > 0 && (
                             <div className="rounded-lg border border-crit/30 bg-crit-soft p-2.5 dark:bg-crit/10">
                               <p className="text-[11.5px] font-medium text-crit dark:text-crit-dark">

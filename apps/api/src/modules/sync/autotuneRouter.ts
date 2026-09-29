@@ -6,6 +6,8 @@
 //   POST /datasets/auto-incremental/apply    aplica em lote      (admin MASTER)
 //   POST /datasets/:id/reconcile-fields      casa os campos com a fonte
 //                                            (admin MASTER em conjunto de fonte)
+//   POST /datasets/:id/reload                relê a fonte inteira, uma vez
+//                                            (admin MASTER em conjunto de fonte)
 //
 // O apply NUNCA inventa: ele recalcula o plano no servidor e grava o que o
 // plano disser. O front manda quais conjuntos aplicar, não o que gravar —
@@ -17,6 +19,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { planAll, planFor } from './autotune.js'
+import { enqueueSync } from './ingest.js'
 import { applySyncConfig } from './syncConfig.js'
 import { reconcileFields } from './reconcileFields.js'
 import { requireMasterOnSource } from './masterGuard.js'
@@ -181,4 +184,37 @@ autotuneRouter.post('/:id/reconcile-fields', ...masterOnSource, async (req, res)
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }
+})
+
+// Recarga completa: zera o watermark e enfileira. A próxima execução relê a
+// fonte inteira e SUBSTITUI o que está no lake (replaceParts).
+//
+// Existe porque não havia caminho seguro para isso. As alternativas pela tela
+// eram armadilhas:
+//   • definir um piso ("últimos N dias") zera o watermark, sim — mas a carga
+//     seguinte substitui as partes antigas, então o conjunto fica só com N dias
+//     e o resto do histórico É PERDIDO;
+//   • trocar para snapshot e voltar para incremental relê a tabela DUAS vezes
+//     (a volta zera o watermark de novo).
+//
+// Aqui é uma leitura só, o modo não muda, e o conjunto termina com o watermark
+// correto — continuando incremental a partir dali.
+autotuneRouter.post('/:id/reload', ...masterOnSource, async (req, res) => {
+  const ds = (await db.query(
+    `select d.slug, d.sync_mode from datasets d join tenants t on t.id = d.tenant_id
+      where d.id = $1 and t.slug = $2`,
+    [req.params.id, req.user!.tenant],
+  )).rows[0]
+  if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+  if (String(ds.sync_mode) === 'live') {
+    return res.status(400).json({ error: 'Conjunto em modo "ao vivo" não usa o lake — não há o que recarregar.' })
+  }
+
+  await db.query(
+    `update datasets set watermark = null, watermark_2 = null, updated_at = now() where id = $1`,
+    [req.params.id],
+  )
+  void enqueueSync(req.params.id) // fila sequencial: nunca roda em paralelo
+  await audit(req, 'datasets.reload', { type: 'dataset', id: String(ds.slug) })
+  res.status(202).json({ queued: true })
 })

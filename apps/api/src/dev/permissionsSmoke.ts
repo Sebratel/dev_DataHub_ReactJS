@@ -79,6 +79,8 @@ const EXPECTED: Record<string, Record<string, Level>> = {
     'POST /auto-incremental/apply': 'master',
     // Reconciliar apaga/cria campo e pode zerar a configuração de sync.
     'POST /:id/reconcile-fields': 'master-src',
+    // Recarga completa: zera o watermark e relê a fonte inteira.
+    'POST /:id/reload': 'master-src',
   },
   // Só as rotas de MASTER do accessRouter entram na tabela: as demais (times,
   // concessões, auditoria) são de admin e têm guard próprio por rota, fora do

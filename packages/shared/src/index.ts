@@ -688,6 +688,28 @@ export interface SyncHealth {
   failing: boolean
 }
 
+/** Precisa de uma recarga completa para consertar horários já gravados?
+ *
+ * O defeito de fuso (corrigido em 28/09/2026) gravou timestamps de fonte
+ * Postgres 3 horas adiantados, e fez o corte do incremental pular linhas. Novas
+ * execuções já vêm certas, mas o que está no lake continua errado — só uma
+ * releitura completa conserta. Nem todo conjunto precisa: os que estão em
+ * snapshot se refazem inteiros a cada execução, e as fontes MySQL nunca foram
+ * afetadas. */
+export interface ReloadNeed {
+  needed: boolean
+  /** Por que precisa — ou por que NÃO precisa, que é a informação que evita
+   *  recarregar conjunto à toa. */
+  reason: string
+  /** Tamanho do conjunto no lake, em bytes. Serve para ordenar e para dimensionar
+   *  o pico de disco: durante a recarga convivem o Parquet antigo, o staging e o
+   *  novo Parquet. */
+  lakeBytes: number | null
+  /** Estimativa em minutos, a partir do melhor desempenho já observado nas
+   *  execuções deste conjunto. null = nunca houve execução comparável. */
+  estimatedMinutes: number | null
+}
+
 export interface IncrementalPlan {
   datasetId: string
   slug: string
@@ -698,6 +720,7 @@ export interface IncrementalPlan {
   rowCount: number | null
   drift: FieldDrift
   health: SyncHealth
+  reload: ReloadNeed
   current: {
     mode: 'live' | 'snapshot' | 'incremental'
     incrementalKey: string | null
