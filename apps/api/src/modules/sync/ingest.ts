@@ -95,6 +95,33 @@ function jsonLine(row: Record<string, unknown>): string {
   })
 }
 
+// Fecha execuções que ficaram penduradas em 'running'.
+//
+// Um run só sai de 'running' quando o código chega ao fim — sucesso ou erro. Se
+// o PROCESSO morre no meio (deploy, restart do container, falta de memória),
+// ninguém atualiza a linha e ela fica 'running' para sempre. O estrago é maior
+// do que uma linha feia no histórico:
+//
+//   • a tela do conjunto passa a mostrar "Sincronizando…" eternamente, e o
+//     botão de sincronizar fica desabilitado — o conjunto parece travado;
+//   • a fila de sincronização conta essas linhas como "rodando agora", o que
+//     contradiz a regra de UMA por vez e mostra tempos absurdos (um run de
+//     agosto aparece com "1384h" de duração).
+//
+// No BOOT não há execução em andamento por definição: o processo acabou de
+// subir e a fila está vazia. Então toda linha em 'running' neste instante é
+// órfã, e pode ser fechada com segurança. Mesmo espírito do cleanStaging().
+export async function closeOrphanRuns(): Promise<number> {
+  const r = await db.query(
+    `update sync_runs set status = 'error', finished_at = now(),
+            error = coalesce(error, 'Interrompida: o servidor reiniciou durante a execução ' ||
+                                    '(deploy, restart do container ou falta de memória). ' ||
+                                    'Os dados anteriores do conjunto continuam intactos.')
+      where status = 'running'`,
+  )
+  return r.rowCount ?? 0
+}
+
 // Fila sequencial global — dois datasets jamais sincronizam ao mesmo tempo,
 // nem em fontes diferentes (prioridade absoluta: não pesar na produção).
 let queue: Promise<unknown> = Promise.resolve()

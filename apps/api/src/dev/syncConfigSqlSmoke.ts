@@ -161,6 +161,59 @@ console.log('\n── a constraint continua valendo ──')
   }
 }
 
+// ── Execuções órfãs em 'running' ────────────────────────────────────────
+// Um run só sai de 'running' se o código chegar ao fim. Processo morto no meio
+// (deploy, OOM) deixa a linha pendurada para sempre: a tela do conjunto mostra
+// "Sincronizando…" eternamente e a fila conta como "rodando agora" — foi o que
+// produziu execuções com "1384h" de duração no painel.
+console.log('\n── execuções órfãs fechadas no boot ──')
+await pg.exec(`
+  create table sync_runs (
+    id uuid primary key default gen_random_uuid(),
+    dataset_id uuid not null,
+    mode text not null,
+    status text not null default 'running',
+    rows bigint not null default 0,
+    error text,
+    started_at timestamptz not null default now(),
+    finished_at timestamptz
+  );
+  insert into sync_runs (dataset_id, mode, status, started_at) values
+    (gen_random_uuid(), 'incremental', 'running', now() - interval '57 days'),
+    (gen_random_uuid(), 'incremental', 'running', now() - interval '2 minutes');
+  insert into sync_runs (dataset_id, mode, status, finished_at, rows) values
+    (gen_random_uuid(), 'incremental', 'done', now(), 10);
+  insert into sync_runs (dataset_id, mode, status, finished_at, error) values
+    (gen_random_uuid(), 'snapshot', 'error', now(), 'erro original que nao pode ser sobrescrito');
+`)
+
+// A MESMA instrução de closeOrphanRuns.
+const FECHAR = `update sync_runs set status = 'error', finished_at = now(),
+        error = coalesce(error, 'Interrompida: o servidor reiniciou durante a execução ' ||
+                                '(deploy, restart do container ou falta de memória). ' ||
+                                'Os dados anteriores do conjunto continuam intactos.')
+  where status = 'running'`
+
+const fechadas = (await pg.query(FECHAR)).affectedRows ?? 0
+check('fecha TODA execução pendurada, recente ou antiga', fechadas === 2, `fechou ${fechadas}`)
+
+const aindaRodando = (await pg.query<{ n: number }>(
+  `select count(*)::int as n from sync_runs where status = 'running'`)).rows[0].n
+check('nenhuma sobra em running', aindaRodando === 0, `sobraram ${aindaRodando}`)
+
+const concluida = (await pg.query<{ n: number }>(
+  `select count(*)::int as n from sync_runs where status = 'done'`)).rows[0].n
+check('execução concluída não é tocada', concluida === 1, `restaram ${concluida}`)
+
+const original = (await pg.query<{ error: string }>(
+  `select error from sync_runs where mode = 'snapshot'`)).rows[0].error
+check('erro original de uma falha anterior é preservado',
+  original === 'erro original que nao pode ser sobrescrito', original)
+
+const explicada = (await pg.query<{ n: number }>(
+  `select count(*)::int as n from sync_runs where error like 'Interrompida:%'`)).rows[0].n
+check('as órfãs ganham um motivo legível', explicada === 2, `${explicada} explicada(s)`)
+
 await pg.close()
 console.log(`\n${failures ? `${failures} verificação(ões) falharam.` : 'Tudo certo.'}`)
 process.exit(failures ? 1 : 0)

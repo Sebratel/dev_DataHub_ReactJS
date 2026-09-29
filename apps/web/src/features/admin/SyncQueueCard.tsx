@@ -25,11 +25,16 @@ interface Fila {
 const hora = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'
 
+// Acima de dois dias a unidade vira DIAS. "1384h45" é tecnicamente correto e
+// praticamente ilegível — some no meio dos outros números em vez de gritar que
+// há algo errado. Uma execução de "57 dias" se denuncia sozinha.
 function decorrido(desde: string): string {
   const s = Math.max(0, Math.round((Date.now() - new Date(desde).getTime()) / 1000))
   if (s < 60) return `${s}s`
   const m = Math.floor(s / 60)
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  return h < 48 ? `${h}h${String(m % 60).padStart(2, '0')}` : `${Math.floor(h / 24)} dias`
 }
 
 export default function SyncQueueCard() {

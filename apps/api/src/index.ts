@@ -33,6 +33,7 @@ import { monitorRouter } from './modules/admin/monitorRouter.js'
 import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging } from './core/lake.js'
+import { closeOrphanRuns } from './modules/sync/ingest.js'
 import { reloadConnections } from './connectors/store.js'
 import { reloadMasterAdmins } from './modules/auth/masterAdmins.js'
 import { ensureApiMetricsDataset, ensureApiSummaryDerived, ensureApiMetricsDashboard, ensureApiRuntimeWidget } from './modules/catalog/apiMetricsDataset.js'
@@ -140,6 +141,12 @@ try {
 }
 // Carrega as conexões GERENCIADAS (cadastradas na tela) para o registry.
 if (isDbAvailable()) {
+  // Execuções penduradas em 'running' de um processo que morreu no meio. Sem
+  // isto o conjunto fica "sincronizando" para sempre na tela e o botão de
+  // sincronizar nunca reabilita.
+  await closeOrphanRuns()
+    .then((n) => { if (n) console.log(`[sync] ${n} execução(ões) órfã(s) fechada(s) no boot.`) })
+    .catch((e) => console.warn(`[sync] falha ao fechar execuções órfãs: ${(e as Error).message}`))
   // Masters concedidos pela tela — a checagem é contra um Set em memória.
   await reloadMasterAdmins().catch((e) =>
     console.warn(`[auth] carga inicial de masters falhou: ${(e as Error).message}`))
