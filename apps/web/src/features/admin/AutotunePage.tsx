@@ -92,6 +92,7 @@ export default function AutotunePage() {
   const [applying, setApplying] = useState(false)
   const [reconciling, setReconciling] = useState<string | null>(null)
   const [reloading, setReloading] = useState<string | null>(null)
+  const [reloadingLote, setReloadingLote] = useState(false)
   // Relatório da última aplicação. Estado SEPARADO de `error` de propósito:
   // `load()` zera `error` ao reanalisar, e era isso que apagava o resultado
   // antes de ele aparecer.
@@ -145,6 +146,14 @@ export default function AutotunePage() {
       bloqueado: all.filter((p) => !p.proposed),
     }
   }, [plans])
+
+  // Trocar de aba limpa a seleção: entre "aplicar a regra" e "recarregar" o
+  // checkbox quer dizer coisas diferentes, e carregar a marcação de uma aba
+  // para a outra faria alguém recarregar o que pretendia só padronizar.
+  function trocaFiltro(f: Filter) {
+    if (f !== filter) setSelected(new Set())
+    setFilter(f)
+  }
 
   const visible = groups[filter]
   const selectable = visible.filter((p) => p.proposed && !p.alreadyApplied)
@@ -240,6 +249,52 @@ export default function AutotunePage() {
       setError(e instanceof Error ? e.message : 'Falha ao enfileirar a recarga.')
     } finally {
       setReloading(null)
+    }
+  }
+
+  // Recarga em LOTE: enfileira vários de uma vez, na ordem em que a lista está
+  // (menores primeiro). A fila do hub é sequencial, então elas acontecem uma
+  // após a outra — o que se compromete aqui é a fila, não a produção.
+  async function reloadBatch() {
+    const ids = [...selected]
+    if (!ids.length) return
+    const escolhidos = groups.recarga.filter((p) => selected.has(p.datasetId))
+    const minutos = escolhidos.reduce((a, p) => a + (p.reload.estimatedMinutes ?? 0), 0)
+    const semEstimativa = escolhidos.filter((p) => p.reload.estimatedMinutes == null).length
+
+    const ok = await confirm({
+      title: `Recarregar ${ids.length} conjunto(s)`,
+      message: [
+        `Cada um será lido INTEIRO da fonte e substituirá o conteúdo atual no lake.`,
+        minutos
+          ? `Fila estimada: ${duracao(minutos)}${semEstimativa ? ` (${semEstimativa} sem estimativa)` : ''}. ` +
+            'Rodam uma de cada vez — os agendamentos de minutos esperam enquanto isso.'
+          : 'Rodam uma de cada vez — os agendamentos de minutos esperam enquanto isso.',
+        'Durante cada carga convivem em disco o Parquet atual, o arquivo temporário e o novo. ' +
+        'Se a fila for longa, prefira fora do horário de pico.',
+      ].join('\n\n'),
+      confirmLabel: 'Recarregar',
+    })
+    if (!ok) return
+
+    setReloadingLote(true)
+    setError(null)
+    setReport(null)
+    try {
+      const r = await api<{ queued: number; requested: number; results: ApplyResponse['results'] }>(
+        '/api/v1/datasets/reload',
+        { method: 'POST', body: JSON.stringify({ datasetIds: ids }) },
+      )
+      setReport({ applied: r.queued, requested: r.requested, results: r.results })
+      load()
+    } catch (e) {
+      const corpo = e instanceof ApiError ? (e.body as { queued?: number; requested?: number; results?: ApplyResponse['results'] } | undefined) : undefined
+      if (corpo?.results) {
+        setReport({ applied: corpo.queued ?? 0, requested: corpo.requested ?? ids.length, results: corpo.results })
+        load()
+      } else setError(e instanceof Error ? e.message : 'Falha ao enfileirar as recargas.')
+    } finally {
+      setReloadingLote(false)
     }
   }
 
@@ -383,7 +438,7 @@ export default function AutotunePage() {
           <div className="mb-2.5 flex flex-wrap items-center gap-2">
             <FilterChips<Filter>
               value={filter}
-              onChange={(v) => setFilter(v)}
+              onChange={trocaFiltro}
               options={[
                 { key: 'falhando', label: 'Não estão atualizando', count: groups.falhando.length },
                 { key: 'recarga', label: 'Precisam de recarga', count: groups.recarga.length },
@@ -399,7 +454,54 @@ export default function AutotunePage() {
           {/* Barra de ação: escolher a cadência de minutos e aplicar o que está
               marcado. Fica acima da tabela porque a decisão de agendamento vale
               para o lote inteiro, não linha a linha. */}
+          {/* A barra é CONTEXTUAL: no filtro de recarga a seleção significa
+              "recarregar estes", não "aplicar a regra nestes". Um mesmo
+              checkbox com dois significados seria pior que duas barras. */}
           <Card className="mb-2.5">
+            {filter === 'recarga' ? (
+              <div className="flex flex-wrap items-center gap-3 p-3">
+                <button
+                  onClick={() => setSelected(new Set(groups.recarga.map((p) => p.datasetId)))}
+                  disabled={!isMaster || !groups.recarga.length}
+                  className="h-[30px] rounded-lg border border-zinc-200 px-2.5 text-[12px] font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  Marcar os {groups.recarga.length} que precisam
+                </button>
+                {/* Os menores primeiro: numa fila sequencial isso entrega
+                    correção cedo e deixa os caros para uma janela escolhida. */}
+                <button
+                  onClick={() => setSelected(new Set(groups.recarga.slice(0, 5).map((p) => p.datasetId)))}
+                  disabled={!isMaster || groups.recarga.length < 2}
+                  className="h-[30px] rounded-lg border border-zinc-200 px-2.5 text-[12px] font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  Marcar os 5 menores
+                </button>
+                {selected.size > 0 && (
+                  <button onClick={() => setSelected(new Set())}
+                    className="h-[30px] rounded-lg px-2 text-[12px] text-zinc-500 hover:underline">
+                    limpar seleção
+                  </button>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="text-[11.5px] tabular-nums text-zinc-500">
+                    {selected.size} marcado(s)
+                    {selected.size > 0 && ` · ${duracao(
+                      (plans ?? []).filter((p) => selected.has(p.datasetId))
+                        .reduce((a, p) => a + (p.reload.estimatedMinutes ?? 0), 0) || null,
+                    )} de fila`}
+                  </span>
+                  <PrimaryButton
+                    icon={reloadingLote ? undefined : RefreshCw}
+                    onClick={reloadBatch}
+                    disabled={!isMaster || !selected.size || reloadingLote}
+                    title={isMaster ? undefined : 'Somente o administrador master recarrega uma fonte.'}
+                  >
+                    {reloadingLote ? <Loader2 size={14} className="animate-spin" /> : null}
+                    Recarregar selecionados
+                  </PrimaryButton>
+                </div>
+              </div>
+            ) : (
             <div className="flex flex-wrap items-center gap-3 p-3">
               <label className="flex items-center gap-2 text-[12px]">
                 <CalendarClock size={14} className="text-zinc-400" />
@@ -447,7 +549,8 @@ export default function AutotunePage() {
                 </PrimaryButton>
               </div>
             </div>
-            {!schedules.length && (
+            )}
+            {filter !== 'recarga' && !schedules.length && (
               <p className="border-t border-zinc-200 px-3 py-2 text-[11.5px] leading-relaxed text-zinc-500 dark:border-zinc-800">
                 Nenhum agendamento cadastrado ainda. Sem um agendamento, os conjuntos que caberiam em cadência de
                 minutos ficam de hora em hora — crie um em <strong>Agendamentos</strong> e reanalise.
@@ -463,7 +566,9 @@ export default function AutotunePage() {
               <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
                 {visible.map((p) => {
                   const isOpen = expanded === p.datasetId
-                  const canSelect = !!p.proposed && !p.alreadyApplied
+                  const canSelect = filter === 'recarga'
+                    ? p.reload.needed
+                    : !!p.proposed && !p.alreadyApplied
                   const conf = CONFIDENCE[p.confidence]
                   return (
                     <div key={p.datasetId}>

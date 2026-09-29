@@ -8,6 +8,8 @@
 //                                            (admin MASTER em conjunto de fonte)
 //   POST /datasets/:id/reload                relê a fonte inteira, uma vez
 //                                            (admin MASTER em conjunto de fonte)
+//   POST /datasets/reload                    o mesmo, para vários de uma vez
+//                                            (admin MASTER)
 //
 // O apply NUNCA inventa: ele recalcula o plano no servidor e grava o que o
 // plano disser. O front manda quais conjuntos aplicar, não o que gravar —
@@ -217,4 +219,57 @@ autotuneRouter.post('/:id/reload', ...masterOnSource, async (req, res) => {
   void enqueueSync(req.params.id) // fila sequencial: nunca roda em paralelo
   await audit(req, 'datasets.reload', { type: 'dataset', id: String(ds.slug) })
   res.status(202).json({ queued: true })
+})
+
+// Recarga em LOTE. Consertar o histórico de dezenas de conjuntos um clique por
+// vez é o tipo de tarefa que se abandona no meio — e abandonada pela metade é
+// pior que não começada, porque ninguém lembra onde parou.
+//
+// Enfileira na ordem recebida (a tela manda do menor para o maior) e devolve na
+// hora: a fila é sequencial, então as cargas acontecem uma após a outra sem
+// segurar a requisição. O que volta é o que foi ACEITO na fila, não o que já
+// terminou — acompanhar é pelo histórico de cada conjunto.
+autotuneRouter.post('/reload', ...masterOnly, async (req, res) => {
+  const ids = Array.isArray(req.body?.datasetIds) ? (req.body.datasetIds as unknown[]).map(String) : []
+  if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um conjunto.' })
+
+  const elegiveis = new Map<string, string>(
+    (await db.query(
+      `select d.id, d.name from datasets d join tenants t on t.id = d.tenant_id
+        where d.id = any($1::uuid[]) and t.slug = $2
+          and d.kind <> 'derived' and d.sync_mode <> 'live'`,
+      [ids, req.user!.tenant],
+    )).rows.map((r) => [String(r.id), String(r.name)]),
+  )
+
+  const results: { datasetId: string; name: string; ok: boolean; error?: string }[] = []
+  for (const id of ids) {
+    const nome = elegiveis.get(id)
+    if (!nome) {
+      results.push({
+        datasetId: id, name: id, ok: false,
+        error: 'Conjunto não encontrado, calculado, ou em modo "ao vivo" (não usa o lake).',
+      })
+      continue
+    }
+    try {
+      // Zerar o watermark é o que faz a próxima carga ser COMPLETA e substituir
+      // o que está no lake (replaceParts). O modo não muda: segue incremental
+      // a partir da carga seguinte.
+      await db.query(
+        `update datasets set watermark = null, watermark_2 = null, updated_at = now() where id = $1`,
+        [id],
+      )
+      void enqueueSync(id)
+      results.push({ datasetId: id, name: nome, ok: true })
+    } catch (e) {
+      results.push({ datasetId: id, name: nome, ok: false, error: (e as Error).message })
+    }
+  }
+
+  const queued = results.filter((r) => r.ok).length
+  await audit(req, 'datasets.reload-batch', { type: 'dataset', id: `${queued} conjunto(s)` },
+    { requested: ids.length, queued })
+  const status = queued === ids.length ? 202 : queued > 0 ? 207 : 422
+  res.status(status).json({ queued, requested: ids.length, results })
 })

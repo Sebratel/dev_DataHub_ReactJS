@@ -230,16 +230,26 @@ A configuração individual. Os campos:
 | **Publicar a partir de** | piso da 1ª carga: data fixa ou "últimos N dias" |
 | **Identidade da linha** | o que identifica a linha (abre um diálogo de seleção) |
 | **2ª chave** | a data de edição — **só habilita depois da identidade** |
-| **Folga de reconferência** | rebobina o watermark N minutos a cada execução |
+| **Folga de reconferência** | quanto o corte **volta no tempo** a cada execução. **Não é frequência** — quem define a frequência é a cadência |
 | **Cadência** | de quanto em quanto tempo sincroniza sozinho |
 
 Abaixo, **Sincronizar agora**, **Parar** e o histórico de execuções.
+
+> **Salvar** só habilita quando há algo diferente do que está gravado, e vira
+> *"Configuração salva"* em verde ao concluir. Botão apagado significa que não
+> há nada pendente — não que a gravação falhou.
+
+> Quando o conjunto segue um agendamento, o lugar da cadência mostra **qual
+> agendamento, com que intervalo e em que janela**. Mudar a frequência é lá, em
+> Administração › Agendamentos, porque ela vale para todos os conjuntos que
+> seguem aquele agendamento.
 
 > **A 2ª chave fica desabilitada até existir identidade.** Não é capricho da
 > tela: o banco recusa a combinação, porque sem identidade as duas passadas
 > duplicariam a linha com certeza.
 
-**Folga de reconferência:** relê os últimos N minutos a cada execução. Serve
+**Folga de reconferência (não confundir com frequência):** relê os últimos N
+minutos a cada execução — não muda de quanto em quanto tempo ela roda. Serve
 para edição que chega com carimbo atrasado (transação longa, relógio da fonte
 fora de hora) e ficaria atrás do corte. A repetição é absorvida pela
 identidade. O diagnóstico propõe **10 minutos** quando há identidade e chave de
@@ -374,8 +384,13 @@ Uma execução normal **não reescreve o passado**: o incremental só traz o que
 passou do corte. Quando o que já está gravado no lake está errado — foi o caso
 do defeito de fuso de 28/09/2026 —, a única saída é reler a fonte inteira.
 
-O caminho é **Padronizar atualização › filtro "Precisam de recarga" ›** abrir o
-conjunto **› "Recarregar tudo"**. Ele zera o corte e relê tudo uma vez; o modo
+O caminho é **Padronizar atualização › filtro "Precisam de recarga"**. Ali a
+barra de ações muda: marque os conjuntos (há atalhos para *todos os que
+precisam* e para *os 5 menores*) e use **"Recarregar selecionados"** — a
+estimativa de fila aparece ao lado da contagem, antes do clique. Para um só,
+abra o conjunto e use **"Recarregar tudo"**.
+
+Em qualquer dos dois, o corte é zerado e a fonte é lida uma vez inteira; o modo
 não muda e o conjunto volta a ser incremental logo depois.
 
 > ⚠️ **Não use o piso ("Publicar a partir de") para forçar recarga.** Ele zera o

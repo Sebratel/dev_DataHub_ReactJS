@@ -81,6 +81,8 @@ const EXPECTED: Record<string, Record<string, Level>> = {
     'POST /:id/reconcile-fields': 'master-src',
     // Recarga completa: zera o watermark e relê a fonte inteira.
     'POST /:id/reload': 'master-src',
+    // Em lote: só toca conjunto de fonte, então exige master sem condição.
+    'POST /reload': 'master',
   },
   // Só as rotas de MASTER do accessRouter entram na tabela: as demais (times,
   // concessões, auditoria) são de admin e têm guard próprio por rota, fora do

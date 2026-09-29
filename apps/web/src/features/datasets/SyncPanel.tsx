@@ -8,9 +8,9 @@
 // 'modified' descartava em silêncio toda linha nunca editada (NULL nunca é > que
 // nada, em SQL); escolher 'created' nunca trazia edição. Agora são duas chaves,
 // uma passada para cada, e a identidade da linha junta as duas pontas.
-import { useState } from 'react'
-import { Play, Loader2, Square, Fingerprint, Lock } from 'lucide-react'
-import type { DatasetDetail } from '@datahub/shared'
+import { useEffect, useState } from 'react'
+import { Play, Loader2, Square, Fingerprint, Lock, Check } from 'lucide-react'
+import type { DatasetDetail, SyncSchedule } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import RunsHistory, { useSyncRuns } from './RunsHistory'
@@ -44,11 +44,43 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
   const [dialogAberto, setDialogAberto] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Confirmação de que salvou. Sem isto o clique em "Salvar configuração" não
+  // devolvia sinal nenhum — a tela ficava idêntica antes e depois, e a única
+  // forma de saber era recarregar a página e conferir.
+  const [salvo, setSalvo] = useState(false)
+  // O agendamento que rege este conjunto, quando há. Buscado para a tela poder
+  // DIZER a frequência em vez de só avisar que ela existe em outro lugar —
+  // "controlado por um agendamento" obriga a sair daqui para saber qual.
+  const [agendamento, setAgendamento] = useState<SyncSchedule | null>(null)
+  useEffect(() => {
+    const id = dataset.sync?.scheduleId
+    if (!id) { setAgendamento(null); return }
+    api<{ schedules: SyncSchedule[] }>('/api/v1/schedules')
+      .then((r) => setAgendamento(r.schedules.find((x) => x.id === id) ?? null))
+      .catch(() => { /* sem a lista, o aviso genérico ainda serve */ })
+  }, [dataset.sync?.scheduleId])
   const { runs, isRunning: runningNow } = useSyncRuns(dataset.id, onSynced)
+
+  // O que está gravado hoje, na mesma forma do formulário. Comparar os dois é
+  // o que responde "tem algo para salvar?" — e um botão que só habilita quando
+  // há mudança já é, sozinho, metade da confirmação que faltava.
+  const gravado = JSON.stringify({
+    mode: dataset.sync?.mode ?? 'live',
+    incKey: dataset.sync?.incrementalKey ?? '',
+    incKey2: dataset.sync?.incrementalKey2 ?? '',
+    cadence: dataset.sync?.cadence ?? 'daily',
+    since: dataset.sync?.since ?? '',
+    sinceDays: dataset.sync?.sinceDays?.toString() ?? '',
+    dedupe: dataset.sync?.dedupeKeys ?? [],
+    lag: (dataset.sync?.watermarkLagMinutes ?? 0).toString(),
+  })
+  const atual = JSON.stringify({ mode, incKey, incKey2, cadence, since, sinceDays, dedupe, lag })
+  const alterado = gravado !== atual
 
   async function saveConfig() {
     setBusy(true)
     setError(null)
+    setSalvo(false)
     try {
       await api(`/api/v1/datasets/${dataset.id}/sync-config`, {
         method: 'PATCH',
@@ -68,6 +100,11 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
           watermarkLagMinutes: Number(lag) || 0,
         }),
       })
+      // `onSynced` recarrega o conjunto, então `alterado` volta a ser falso e o
+      // botão desabilita sozinho — o "Salvo" é o sinal explícito por cima disso,
+      // porque "botão apagou" pode ser lido como "não funcionou".
+      setSalvo(true)
+      setTimeout(() => setSalvo(false), 4000)
       onSynced()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao salvar configuração.')
@@ -222,8 +259,17 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
           // renderizasse mesmo assim, o <select> ficaria com um valor que
           // nao bate com nenhuma <option>, e salvar sem mexer em nada
           // sobrescreveria silenciosamente o agendamento em lote por engano.
-          <p className="max-w-[220px] rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-            Controlado por um agendamento em lote. Gerencie em Administração › Agendamentos.
+          <p className="max-w-[260px] rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+            {agendamento ? (
+              <>
+                Sincroniza <strong>a cada {agendamento.intervalMinutes} min</strong>, das{' '}
+                {agendamento.startTime} às {agendamento.endTime}, pelo agendamento{' '}
+                <strong>{agendamento.name}</strong> — que rege vários conjuntos de uma vez.
+                Mudar a frequência é em Administração › Agendamentos.
+              </>
+            ) : (
+              <>Controlado por um agendamento em lote. Gerencie em Administração › Agendamentos.</>
+            )}
           </p>
         )}
         {mode !== 'live' && dataset.sync?.cadence !== 'schedule' && (
@@ -270,7 +316,9 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
               </select>
             </label>
             <label className="text-sm">
-              <span className="mb-1 block text-xs text-zinc-500">Folga de reconferência</span>
+              <span className="mb-1 block text-xs text-zinc-500">
+                Folga de reconferência <span className="text-zinc-400">(não é frequência)</span>
+              </span>
               <div className="flex items-center gap-1.5">
                 <input
                   type="number"
@@ -278,7 +326,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
                   max={10080}
                   value={lag}
                   onChange={(e) => setLag(e.target.value)}
-                  title="Rebobina o watermark em N minutos a cada sync, para não perder edição que chegue com carimbo retroativo."
+                  title="Quanto o corte volta no tempo a cada sincronização. Não muda de quanto em quanto tempo ela roda — isso é a cadência."
                   className={`${ctrl} w-24`}
                 />
                 <span className="text-xs text-zinc-500">min</span>
@@ -297,6 +345,13 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
                 conviver com a versão antiga dela no lake, e a contagem sobe sozinha.
               </>
             )}
+            {' '}
+            {/* A folga foi confundida com frequência mais de uma vez, e o nome
+                não ajuda. Dizer o que ela faz em uma frase, aqui do lado, custa
+                menos que uma pergunta. */}
+            A <strong>folga</strong> não muda de quanto em quanto tempo a sincronização roda (isso é a
+            cadência): ela faz cada execução reler os últimos minutos, para que uma edição que chegue com
+            carimbo atrasado não fique atrás do corte. <strong>0 min</strong> desliga.
           </p>
         </div>
       )}
@@ -308,11 +363,17 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
           onClick={saveConfig}
           // Fora do fieldset porque "Sincronizar agora" e "Parar" são vizinhos
           // dele e continuam valendo para admin — operar não é reconfigurar.
-          disabled={!isMaster || busy || (mode === 'incremental' && !incKey)}
-          title={isMaster ? undefined : 'Somente o administrador master altera a atualização de uma fonte.'}
-          className="rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          disabled={!isMaster || busy || !alterado || (mode === 'incremental' && !incKey)}
+          title={!isMaster
+            ? 'Somente o administrador master altera a atualização de uma fonte.'
+            : !alterado ? 'Nada mudou desde a última gravação.' : undefined}
+          className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm disabled:opacity-50 ${salvo
+            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400'
+            : 'border-zinc-200 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800'}`}
         >
-          Salvar configuração
+          {busy ? <Loader2 size={14} className="animate-spin" />
+            : salvo ? <Check size={14} /> : null}
+          {salvo ? 'Configuração salva' : 'Salvar configuração'}
         </button>
         {mode !== 'live' && (
           <button
