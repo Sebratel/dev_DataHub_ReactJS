@@ -22,6 +22,7 @@ import { useConfirm } from '@/components/Dialogs'
 import { Page, PageHeader, ErrorBanner, EmptyState, FilterChips, PrimaryButton } from '@/components/ui/Page'
 import { Card, CardHead } from '@/components/ui/Card'
 import SyncQueueCard from './SyncQueueCard'
+import DiskUsageCard from './DiskUsageCard'
 import { Pill, type Tone } from '@/components/ui/Pill'
 
 type Filter = 'falhando' | 'recarga' | 'todos' | 'alta' | 'revisar' | 'ok' | 'bloqueado'
@@ -352,6 +353,10 @@ export default function AutotunePage() {
       </PageHeader>
 
       {error && <ErrorBanner message={error} onRetry={load} />}
+
+      {/* O disco vem ANTES da fila: é a informação que muda a decisão de
+          enfileirar mais carga, e o pico é justamente do que roda aqui. */}
+      <DiskUsageCard />
 
       {/* Some sozinho quando não há nada rodando nem esperando — é justamente
           depois de um lote que a pergunta "e agora?" aparece. */}

@@ -78,6 +78,11 @@ export const config = {
     // pequenas, e evita a falha quando uma delas não for.
     maxJsonObjectBytes: Math.max(
       16 * 1024 * 1024, Number(process.env.SYNC_MAX_JSON_OBJECT_BYTES) || 64 * 1024 * 1024),
+    // Percentual de uso do volume do lake a partir do qual a tela avisa. O
+    // gráfico do servidor já mostrava picos de 93% e ninguém era avisado —
+    // descobria-se olhando depois, à mão. 85 deixa margem para uma carga grande
+    // terminar antes de apertar de verdade.
+    diskWarnPercent: Math.min(99, Math.max(50, Number(process.env.SYNC_DISK_WARN_PERCENT) || 85)),
   },
 
   // Motor de consulta (DuckDB). Limites protegem o servidor de uma consulta

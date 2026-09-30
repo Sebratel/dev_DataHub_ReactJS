@@ -20,7 +20,8 @@
 // o tamanho de uma linha, e o problema é disco.
 //
 // Uso: npm run staging:smoke --workspace apps/api
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, rmSync, createWriteStream, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { createGzip } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { duckQuery } from '../modules/query/duck.js'
@@ -89,10 +90,66 @@ try {
       'mesma mensagem, causa diferente — daí a conferência no ingest')
   }
 
-  // A conferência do ingest: último byte do arquivo tem de ser quebra de linha.
-  const terminaBem = (s: string) => s.charCodeAt(s.length - 1) === 10
-  check('a conferência distingue arquivo completo de truncado',
-    terminaBem(pequena(1) + NL + folgada + NL) && !terminaBem(pequena(1) + NL + folgada))
+  // ── Staging COMPRIMIDO ────────────────────────────────────────────────
+  // O arquivo de staging vive do começo ao fim da carga e é ele, não o Parquet,
+  // que faz o disco subir por horas. Comprimido, o pico cai por um fator grande.
+  console.log('\n── staging comprimido ──')
+
+  // Mesma sequência do ingest: escreve pelo gzip e espera o ARQUIVO fechar
+  // (não o gzip — quem sabe que tudo chegou ao disco é o destino final).
+  const escreverGz = async (arq: string, linhas: string[]) => {
+    const arquivo = createWriteStream(join(dir, arq))
+    const gz = createGzip({ level: 1 })
+    gz.pipe(arquivo)
+    let crus = 0
+    for (const l of linhas) {
+      const chunk = l + NL
+      crus += Buffer.byteLength(chunk)
+      await new Promise<void>((res, rej) => gz.write(chunk, (e) => (e ? rej(e) : res())))
+    }
+    await new Promise<void>((res, rej) => {
+      arquivo.on('finish', () => res()); arquivo.on('error', rej); gz.end()
+    })
+    return crus
+  }
+
+  const linhas = Array.from({ length: 20_000 }, (_, i) => pequena(i))
+  writeFileSync(join(dir, 'cru.jsonl'), linhas.map((l) => l + NL).join(''))
+  const crusEsperados = await escreverGz('comp.jsonl.gz', linhas)
+
+  const tamCru = statSync(join(dir, 'cru.jsonl')).size
+  const tamGz = statSync(join(dir, 'comp.jsonl.gz')).size
+  check('comprimir reduz o staging de forma relevante', tamGz * 4 < tamCru,
+    `${(tamCru / 1024 / 1024).toFixed(1)} MB → ${(tamGz / 1024 / 1024).toFixed(1)} MB (${(tamCru / tamGz).toFixed(1)}x)`)
+
+  // O DuckDB lê o .gz com a MESMA chamada — é o que torna a troca barata.
+  const nGz = await ler('comp.jsonl.gz', config.sync.maxJsonObjectBytes)
+  check('o DuckDB lê o staging comprimido sem mudar a chamada', nGz === linhas.length, `leu ${nGz}`)
+
+  // A conferência de arquivo completo: o rodapé do gzip guarda o tamanho
+  // DESCOMPRIMIDO, e é ele que denuncia uma escrita interrompida.
+  const isize = (arq: string) => {
+    const bytes = statSync(join(dir, arq)).size
+    const fd = openSync(join(dir, arq), 'r')
+    try {
+      const b = Buffer.alloc(4)
+      readSync(fd, b, 0, 4, bytes - 4)
+      return b.readUInt32LE(0)
+    } finally { closeSync(fd) }
+  }
+  check('o rodapé do gzip bate com o que foi escrito',
+    isize('comp.jsonl.gz') === (crusEsperados >>> 0),
+    `${isize('comp.jsonl.gz')} vs ${crusEsperados}`)
+
+  // Arquivo cortado: o rodapé lido não bate mais — é assim que o ingest pega.
+  const inteiro = statSync(join(dir, 'comp.jsonl.gz')).size
+  const fd = openSync(join(dir, 'comp.jsonl.gz'), 'r')
+  const buf = Buffer.alloc(inteiro)
+  readSync(fd, buf, 0, inteiro, 0)
+  closeSync(fd)
+  writeFileSync(join(dir, 'cortado.jsonl.gz'), buf.subarray(0, inteiro - 200))
+  check('arquivo cortado não bate com o que foi escrito',
+    isize('cortado.jsonl.gz') !== (crusEsperados >>> 0))
 } finally {
   rmSync(dir, { recursive: true, force: true })
 }

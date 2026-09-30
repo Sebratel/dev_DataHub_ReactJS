@@ -30,6 +30,7 @@ import { mlRouter } from './modules/ml/mlRouter.js'
 import { notebooksRouter } from './modules/notebooks/notebooksRouter.js'
 import { accessRouter } from './modules/admin/accessRouter.js'
 import { monitorRouter } from './modules/admin/monitorRouter.js'
+import { diskRouter } from './modules/admin/diskRouter.js'
 import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging } from './core/lake.js'
@@ -83,6 +84,7 @@ app.get('/api/v1/auth/me', requireAuth(), (req, res) => {
 app.use('/api/v1/connections', connectionsRouter)
 app.use('/api/v1/admin', accessRouter)
 app.use('/api/v1/health-checks', monitorRouter)
+app.use('/api/v1/disk', diskRouter)
 
 // Catálogo de conjuntos de dados. ORDEM IMPORTA: query e sync têm rotas mais
 // específicas (/:slug/query, /:id/sync) e vêm antes do router genérico.

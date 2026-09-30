@@ -16,6 +16,7 @@ import { querySource, discoverColumns } from '../../connectors/pools.js'
 import { sampleHttp, inferFields, type HttpEndpoint } from '../../connectors/httpSource.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
+import { removeDatasetDir } from '../../core/lake.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
 
 export const datasetsRouter = Router()
@@ -350,8 +351,17 @@ datasetsRouter.patch('/:id/fields/:fieldId', requireAuth({ role: 'admin' }), asy
 datasetsRouter.delete('/:id', requireAuth({ role: 'admin' }), async (req, res) => {
   const row = (await db.query('delete from datasets where id = $1 returning slug', [req.params.id])).rows[0]
   if (!row) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
-  await audit(req, 'datasets.unpublish', { type: 'dataset', id: row.slug })
-  res.json({ ok: true })
+  // Os Parquet do conjunto saem JUNTO. Sem isto o disco só crescia — e, pior,
+  // recriar um conjunto com o MESMO nome caía no mesmo diretório e nascia
+  // enxergando os dados do antigo. Ver removeDatasetDir.
+  let lakeRemovido = false
+  try {
+    lakeRemovido = removeDatasetDir(req.user!.tenant, String(row.slug))
+  } catch (e) {
+    console.warn(`[lake] não foi possível apagar o diretório de "${row.slug}": ${(e as Error).message}`)
+  }
+  await audit(req, 'datasets.unpublish', { type: 'dataset', id: row.slug }, { lakeRemovido })
+  res.json({ ok: true, lakeRemovido })
 })
 
 // Amostra AO VIVO da fonte (admin, LIMIT 50) — validação na publicação.

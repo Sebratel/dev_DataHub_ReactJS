@@ -15,7 +15,14 @@ código; aqui é o **o que fazer quando**.
 
 ## 1. Como a sincronização funciona (resumo)
 
-- Fonte (Postgres/MySQL/MariaDB) → lê em **lotes** → grava **Parquet** no lake.
+- Fonte (Postgres/MySQL/MariaDB) → lê em **lotes** → grava um **staging
+  comprimido** (`.jsonl.gz`) → converte para **Parquet** no lake. O staging vive
+  do começo ao fim da carga e é ele, não o Parquet, que faz o disco subir
+  durante uma sincronização longa.
+- **Uso de disco**: a tela *Padronizar atualização* mostra no topo o percentual
+  do volume, quanto o lake ocupa e os maiores conjuntos. Acima de
+  `SYNC_DISK_WARN_PERCENT` (85 por padrão) o card fica em alerta e diz se há
+  carga na fila — porque com fila o pico ainda vai subir.
 - **Uma sincronização por vez** no hub inteiro (fila sequencial em memória).
 - **Modos**: `snapshot` (recarrega tudo), `incremental` (só o que mudou, por
   watermark/keyset) e `live` (não vai pro lake).

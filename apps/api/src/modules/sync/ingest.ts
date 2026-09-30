@@ -7,6 +7,7 @@
 // O lote vai para JSONL temporário; no fim, o DuckDB converte para Parquet.
 // ─────────────────────────────────────────────────────────────────────────
 import { createWriteStream, unlinkSync, existsSync, renameSync, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { createGzip } from 'node:zlib'
 import { join } from 'node:path'
 import { config } from '../../core/config.js'
 import { db } from '../../db/pool.js'
@@ -385,10 +386,29 @@ async function runSync(datasetId: string): Promise<string> {
 
   const dir = datasetDir(String(ds.tenant_slug), String(ds.slug))
   // Staging no volume do lake (disco real), não no /tmp do container.
-  const jsonl = join(stagingDir(), `datahub-sync-${run.id}.jsonl`)
-  const stream = createWriteStream(jsonl, { encoding: 'utf8' })
-  const write = (line: string) => new Promise<void>((res, rej) =>
-    stream.write(line + '\n', (e) => (e ? rej(e) : res())))
+  // Staging COMPRIMIDO. Medido numa amostra com cara de tabela de ERP: o JSONL
+  // cru fica ~91x o tamanho do Parquet final e ~25x o do mesmo JSONL em gzip.
+  // Como o arquivo vive do começo ao fim da carga, ele — e não o Parquet — é o
+  // que faz o disco subir por horas e desabar quando a carga termina; era o
+  // "dente de serra" no gráfico do servidor.
+  //
+  // O DuckDB lê `.jsonl.gz` com a MESMA chamada read_json (descompressão é
+  // transparente), então só o caminho de escrita muda.
+  //
+  // Nível 1 de propósito: a ingestão já é o gargalo, e a diferença de tamanho
+  // entre o nível 1 e o máximo não paga o custo de CPU em milhões de linhas.
+  const jsonl = join(stagingDir(), `datahub-sync-${run.id}.jsonl.gz`)
+  const arquivo = createWriteStream(jsonl)
+  const gzip = createGzip({ level: 1 })
+  gzip.pipe(arquivo)
+  // Bytes ANTES de comprimir — conferidos contra o rodapé do gzip no fim para
+  // detectar arquivo cortado (ver abaixo).
+  let bytesCrus = 0
+  const write = (line: string) => new Promise<void>((res, rej) => {
+    const chunk = line + '\n'
+    bytesCrus += Buffer.byteLength(chunk)
+    gzip.write(chunk, (e) => (e ? rej(e) : res()))
+  })
 
   let total = 0
   // Custo da compactação desta execução — gravado no run para que "o que está
@@ -553,25 +573,44 @@ async function runSync(datasetId: string): Promise<string> {
         await sleep(batchPauseMs)
       }
     }
-    await new Promise<void>((res, rej) => stream.end((e: unknown) => (e ? rej(e) : res())))
+    // Espera o ARQUIVO terminar, não o gzip: `gzip.end()` só empurra o que
+    // falta pelo transform; quem sabe que tudo chegou ao disco é o 'finish' do
+    // destino final.
+    await new Promise<void>((res, rej) => {
+      arquivo.on('finish', () => res())
+      arquivo.on('error', rej)
+      gzip.on('error', rej)
+      gzip.end()
+    })
 
-    // O staging TEM de terminar em quebra de linha: cada linha é uma linha da
-    // tabela, e o escritor sempre fecha com '\n'. Não terminando, o arquivo foi
-    // cortado no meio da escrita — disco cheio, processo morto, volume que
-    // sumiu. Sem esta conferência, quem aparece depois é um erro do DuckDB
-    // ("maximum_object_size exceeded") que manda procurar no lugar errado: a
-    // suspeita recai sobre o tamanho de uma linha, não sobre o arquivo truncado.
+    // O staging está completo? O gzip termina com um rodapé de 8 bytes cujos
+    // últimos 4 são o TAMANHO DESCOMPRIMIDO (mod 2^32). Comparando com o que
+    // escrevemos, um arquivo cortado no meio — disco cheio, processo morto,
+    // volume que sumiu — é pego aqui, com o nome certo.
+    //
+    // Sem esta conferência, quem aparece depois é um erro de descompressão ou
+    // do DuckDB ("maximum_object_size exceeded"), que mandam procurar no lugar
+    // errado: a suspeita recai sobre o tamanho de uma linha, e o problema é
+    // disco. Já aconteceu.
     if (total > 0) {
       const bytes = statSync(jsonl).size
+      if (bytes < 18) { // cabeçalho (10) + rodapé (8) de um gzip vazio
+        throw new Error(
+          `Arquivo de staging incompleto: ${bytes} bytes, sem nem o rodapé do gzip. ` +
+          'A escrita foi interrompida logo no começo — quase sempre falta de espaço em disco.',
+        )
+      }
       const fd = openSync(jsonl, 'r')
       try {
-        const ultimo = Buffer.alloc(1)
-        readSync(fd, ultimo, 0, 1, bytes - 1)
-        if (ultimo[0] !== 0x0a) {
+        const rodape = Buffer.alloc(4)
+        readSync(fd, rodape, 0, 4, bytes - 4)
+        const declarado = rodape.readUInt32LE(0)
+        if (declarado !== (bytesCrus >>> 0)) {
           throw new Error(
-            `Arquivo de staging incompleto: ${bytes.toLocaleString('pt-BR')} bytes sem a quebra de linha final. ` +
-            'A escrita foi interrompida no meio — quase sempre falta de espaço em disco no volume do lake. ' +
-            'Libere espaço e sincronize de novo; o conteúdo antigo do conjunto continua intacto.',
+            `Arquivo de staging incompleto: escrevemos ${bytesCrus.toLocaleString('pt-BR')} bytes, ` +
+            `mas o arquivo fechou com ${declarado.toLocaleString('pt-BR')}. A escrita foi interrompida no ` +
+            'meio — quase sempre falta de espaço em disco no volume do lake. Libere espaço e sincronize ' +
+            'de novo; o conteúdo antigo do conjunto continua intacto.',
           )
         }
       } finally { closeSync(fd) }
@@ -682,7 +721,8 @@ async function runSync(datasetId: string): Promise<string> {
     }
     throw e
   } finally {
-    stream.destroy()
+    gzip.destroy()
+    arquivo.destroy()
     if (existsSync(jsonl)) unlinkSync(jsonl)
     cancelRequested.delete(datasetId)
     runningDatasetId = null

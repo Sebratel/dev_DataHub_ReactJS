@@ -93,6 +93,8 @@ services:
       # O padrao dele e 16 MB e derruba a conversao quando alguma linha passa
       # disso. 64 MB por padrao: e buffer de leitura, nao memoria reservada.
       SYNC_MAX_JSON_OBJECT_BYTES: ${SYNC_MAX_JSON_OBJECT_BYTES:-67108864}
+      # A partir de quantos % de uso do volume do lake a tela avisa.
+      SYNC_DISK_WARN_PERCENT: ${SYNC_DISK_WARN_PERCENT:-85}
       # Motor de consulta (DuckDB) — teto GLOBAL do DuckDB (não é por consulta).
       # 6GB dentro dos 12g da API deixa ~6g pro Node + embeddings + SO. Consultas
       # e cargas grandes derramam pra disco (spill) em vez de estourar (OOM).
