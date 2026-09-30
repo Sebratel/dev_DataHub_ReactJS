@@ -9,7 +9,10 @@ import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { enqueueSync } from '../sync/ingest.js'
-import { validateTransformSql, previewDerived, assertNoDerivedCycle, assertReferencesAllowed } from './derive.js'
+import {
+  validateTransformSql, previewDerived, assertNoDerivedCycle, assertReferencesAllowed,
+  auditDerivedCadence, referencedSlugs, type CadenceRow,
+} from './derive.js'
 import type { AccessUser } from '../../core/access.js'
 
 export const transformRouter = Router()
@@ -53,6 +56,65 @@ transformRouter.post('/derived/preview', ...editorOnly, async (req, res) => {
   }
 })
 
+// ── Auditoria de cadência dos calculados ─────────────────────────────────
+// Lê o catálogo inteiro do tenant (fontes E derivados: as fontes entram como
+// candidatas a serem citadas) e devolve o parecer por derivado.
+//
+// Fica ANTES de '/derived/:id' de propósito — 'cadence-audit' casaria com o
+// parâmetro se viesse depois.
+async function cadenceRows(tenantSlug: string) {
+  return (await db.query(
+    `select d.id, d.slug, d.name, d.kind, d.sync_cadence, d.transform_sql, d.owner_email
+       from datasets d join tenants t on t.id = d.tenant_id
+      where t.slug = $1 order by d.name`,
+    [tenantSlug],
+  )).rows
+}
+
+const toCadenceRow = (r: Record<string, unknown>): CadenceRow => ({
+  id: String(r.id), slug: String(r.slug), name: String(r.name),
+  kind: String(r.kind), cadence: String(r.sync_cadence ?? 'daily'),
+  transformSql: (r.transform_sql as string | null) ?? null,
+})
+
+transformRouter.get('/derived/cadence-audit', ...editorOnly, async (req, res) => {
+  const items = auditDerivedCadence((await cadenceRows(req.user!.tenant)).map(toCadenceRow))
+  res.json({ items, eligible: items.filter((i) => i.eligible).length })
+})
+
+// Troca para 'cascade' os calculados marcados. A lista do cliente é só um
+// FILTRO: a elegibilidade é recalculada aqui, sobre o catálogo atual. Quem
+// não é admin só alcança os próprios derivados, mesma regra do PATCH.
+transformRouter.post('/derived/cadence-audit', ...editorOnly, async (req, res) => {
+  const { ids } = req.body ?? {}
+  const pedido = Array.isArray(ids) ? new Set(ids.map(String)) : null
+
+  const rows = await cadenceRows(req.user!.tenant)
+  const dono = new Map(rows.map((r) => [String(r.id), (r.owner_email as string | null) ?? null]))
+  const admin = req.user!.roles.includes('admin')
+
+  const alvo = auditDerivedCadence(rows.map(toCadenceRow))
+    .filter((i) => i.eligible)
+    .filter((i) => !pedido || pedido.has(i.id))
+    .filter((i) => admin || dono.get(i.id) === req.user!.email)
+
+  for (const i of alvo) {
+    // schedule_id cai junto: a constraint datasets_schedule_pairing_check
+    // exige que 'schedule' e schedule_id andem sempre emparelhados, e sair
+    // para 'cascade' desfaz esse par. Aqui os elegíveis são todos de relógio
+    // fixo (já com schedule_id nulo), mas deixar implícito é como a mesma
+    // falha derrubou 100% de um lote na padronização das fontes.
+    await db.query(
+      `update datasets set sync_cadence = 'cascade', schedule_id = null, updated_at = now()
+        where id = $1`,
+      [i.id],
+    )
+  }
+  await audit(req, 'datasets.derived.cadence.cascade', { type: 'dataset', id: 'lote' },
+    { switched: alvo.map((i) => i.slug) })
+  res.json({ switched: alvo.length, names: alvo.map((i) => i.name) })
+})
+
 transformRouter.post('/derived', ...editorOnly, async (req, res) => {
   const { name, description, sql, syncCadence } = req.body ?? {}
   if (!name || !sql) return res.status(400).json({ error: 'name e sql são obrigatórios.' })
@@ -73,13 +135,23 @@ transformRouter.post('/derived', ...editorOnly, async (req, res) => {
   let slug = base
   for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
 
+  // Cadência padrão: CASCATA, não diária. Um derivado não lê fonte nenhuma —
+  // ele recalcula um SQL sobre o lake —, então relógio próprio nele só duplica
+  // (mal) a frequência de quem ele cita: roda antes da fonte e refaz o
+  // resultado anterior, ou roda depois e serve dado velho até a hora cheia.
+  //
+  // A exceção: SQL que não cita conjunto nenhum. Em cascata, nada o
+  // dispararia, e ele pararia no tempo em silêncio — esse cai para diária.
+  const citaAlguem = referencedSlugs(String(sql), [...taken] as string[]).length > 0
+  const cadence = syncCadence ? String(syncCadence) : (citaAlguem ? 'cascade' : 'daily')
+
   const ds = (await db.query(
     `insert into datasets (tenant_id, kind, transform_sql, connection_id, schema_name, object_name,
                            slug, name, description, sync_mode, sync_cadence, owner_email)
      values ($1, 'derived', $2, 'lake', 'derived', $3, $3, $4, $5, 'snapshot', $6, $7)
      returning id`,
     [tenant.id, String(sql), slug, String(name).trim(), String(description || ''),
-     syncCadence ? String(syncCadence) : 'daily', req.user!.email],
+     cadence, req.user!.email],
   )).rows[0]
 
   void enqueueSync(String(ds.id)) // primeira materialização em background
@@ -117,10 +189,18 @@ transformRouter.patch('/derived/:id', ...editorOnly, async (req, res) => {
     return res.status(400).json({ error: 'Cadência inválida.' })
   }
   await db.query(
+    // schedule_id CAI JUNTO quando a cadência muda: a constraint
+    // datasets_schedule_pairing_check exige 'schedule' e schedule_id sempre
+    // emparelhados, e esta rota só grava relógio fixo ou cascata. Sem isto,
+    // tirar um derivado do agendamento em lote produz o par proibido e o
+    // Postgres recusa a linha inteira — foi exatamente assim que a
+    // padronização das fontes teve 100% de um lote rejeitado.
     `update datasets set
        name = coalesce($2, name), description = coalesce($3, description),
        transform_sql = coalesce($4, transform_sql),
-       sync_cadence = coalesce($5, sync_cadence), updated_at = now()
+       sync_cadence = coalesce($5, sync_cadence),
+       schedule_id = case when $5 is null then schedule_id else null end,
+       updated_at = now()
      where id = $1`,
     [ds.id, name ?? null, description ?? null, sql ?? null, syncCadence ? String(syncCadence) : null],
   )

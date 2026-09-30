@@ -14,7 +14,7 @@ import { datasetDir, parquetGlob, listParquet, clearParquet, dirBytes, uploadToG
 import { duckQuery } from '../query/duck.js'
 import { assertReadOnly, stripNoise } from '../../core/guard.js'
 import { accessibleDatasetIds, type AccessUser } from '../../core/access.js'
-import type { FieldType } from '@datahub/shared'
+import type { FieldType, DerivedCadenceItem } from '@datahub/shared'
 
 // Além do guard read-only: bloqueia funções do DuckDB que alcançam o sistema
 // de arquivos ou a configuração — o SQL derivado só enxerga os CTEs do lake.
@@ -104,21 +104,98 @@ export async function assertReferencesAllowed(
 // ── Cadeias de derivados: dependências, ordenação e ciclos ─────
 // Slugs (dentre `candidates`) referenciados no SQL. Detecta o APELIDO com
 // underscore (sem aspas) e o SLUG entre aspas. Ignora comentários e literais.
+// As duas expressões de um slug não mudam nunca, e esta função é chamada uma
+// vez POR DERIVADO com o catálogo inteiro como candidato — sem cache, auditar
+// 60 calculados contra 250 conjuntos compila 30 mil expressões à toa. O cache
+// é por slug, e o catálogo de um tenant é pequeno e estável.
+const reCache = new Map<string, { alias: RegExp; quoted: RegExp }>()
+function slugRegexes(slug: string) {
+  let r = reCache.get(slug)
+  if (!r) {
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    r = {
+      alias: new RegExp(`(?<![a-z0-9_])${esc(slug.replace(/-/g, '_'))}(?![a-z0-9_])`),
+      quoted: new RegExp(`"${esc(slug)}"`),
+    }
+    reCache.set(slug, r)
+  }
+  return r
+}
+
 export function referencedSlugs(sql: string, candidates: string[]): string[] {
   const clean = sql
     .replace(/--[^\n]*/g, ' ')
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/'(?:''|[^'])*'/g, "''")
     .toLowerCase()
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const hits: string[] = []
   for (const slug of candidates) {
-    const alias = slug.replace(/-/g, '_')
-    const aliasRe = new RegExp(`(?<![a-z0-9_])${esc(alias)}(?![a-z0-9_])`)
-    const quotedRe = new RegExp(`"${esc(slug)}"`)
-    if (aliasRe.test(clean) || quotedRe.test(clean)) hits.push(slug)
+    const { alias, quoted } = slugRegexes(slug)
+    if (alias.test(clean) || quoted.test(clean)) hits.push(slug)
   }
   return hits
+}
+
+// ── Auditoria de cadência dos calculados ──────────────────────
+// Responde uma pergunta só: este derivado precisa de relógio próprio?
+//
+// Quase nunca. Um derivado não lê fonte nenhuma — ele recalcula um SQL sobre o
+// lake. Pôr "de hora em hora" nele não faz o dado chegar mais cedo; faz o
+// cálculo rodar em um horário que não tem relação com o momento em que a fonte
+// renovou. Os dois relógios não batem nunca: ou o derivado roda antes da fonte
+// (gasta o lake para reproduzir o resultado anterior) ou depois (serve dado
+// velho até a próxima hora cheia). 'cascade' tira o relógio da conta — o
+// derivado recalcula quando quem ele cita termina de sincronizar.
+//
+// Decisão PURA: recebe as linhas do catálogo e devolve o parecer item a item.
+// A rota só lê o banco e grava o que este parecer marcou como elegível — nunca
+// a lista que o cliente mandou.
+export interface CadenceRow {
+  id: string; slug: string; name: string
+  kind: string; cadence: string; transformSql: string | null
+}
+
+export function auditDerivedCadence(rows: CadenceRow[]): DerivedCadenceItem[] {
+  const slugs = rows.map((r) => r.slug)
+  const nameBySlug = new Map(rows.map((r) => [r.slug, r.name]))
+
+  return rows.filter((r) => r.kind === 'derived').map((r) => {
+    // O próprio slug sai da lista: um derivado que se cita (CTE com o mesmo
+    // nome, por exemplo) não é dependência de ninguém.
+    const deps = referencedSlugs(r.transformSql ?? '', slugs).filter((s) => s !== r.slug)
+    const cadence = r.cadence as DerivedCadenceItem['cadence']
+    const base = {
+      id: r.id, slug: r.slug, name: r.name, cadence,
+      dependsOn: deps.map((s) => nameBySlug.get(s) ?? s),
+    }
+
+    // Sem dependência não há cascata possível — e este é o caso que MAIS
+    // importa detectar: um derivado já em 'cascade' que não cita ninguém não
+    // é recalculado por nada. Ele não dá erro, não aparece como atrasado em
+    // lugar nenhum, e simplesmente para no tempo.
+    if (!deps.length) {
+      return {
+        ...base, eligible: false,
+        reason: cadence === 'cascade'
+          ? 'Está em cascata mas o SQL não cita nenhum conjunto — nada dispara este cálculo. '
+            + 'Ele não vai atualizar sozinho; use diária ou manual.'
+          : 'O SQL não cita nenhum outro conjunto: em cascata, nada o dispararia.',
+      }
+    }
+    if (cadence === 'cascade') {
+      return { ...base, eligible: false, reason: 'Já recalcula em cascata.' }
+    }
+    if (cadence === 'manual') {
+      return { ...base, eligible: false, reason: 'Manual é escolha deliberada — só roda sob demanda.' }
+    }
+    if (cadence === 'schedule') {
+      return {
+        ...base, eligible: false,
+        reason: 'Segue um agendamento em lote. Troque em Administração › Agendamentos.',
+      }
+    }
+    return { ...base, eligible: true, reason: null }
+  })
 }
 
 export interface DerivedNode { slug: string; transformSql: string | null }

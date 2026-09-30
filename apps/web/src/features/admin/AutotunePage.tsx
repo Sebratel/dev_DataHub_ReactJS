@@ -13,19 +13,24 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Wand2, Loader2, ChevronDown, ChevronRight, AlertTriangle, Check, Ban, RefreshCw, CalendarClock, Lock, Wrench,
+  Wand2, Loader2, ChevronDown, ChevronRight, AlertTriangle, Check, Ban, RefreshCw, CalendarClock, Lock, Wrench, Server,
 } from 'lucide-react'
 import type { IncrementalPlan, SyncSchedule } from '@datahub/shared'
 import { api, ApiError } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { useConfirm } from '@/components/Dialogs'
-import { Page, PageHeader, ErrorBanner, EmptyState, FilterChips, PrimaryButton } from '@/components/ui/Page'
+import { Page, PageHeader, ErrorBanner, EmptyState, FilterChips, FilterSelect, PrimaryButton } from '@/components/ui/Page'
 import { Card, CardHead } from '@/components/ui/Card'
 import SyncQueueCard from './SyncQueueCard'
 import DiskUsageCard from './DiskUsageCard'
 import { Pill, type Tone } from '@/components/ui/Pill'
 
 type Filter = 'falhando' | 'recarga' | 'todos' | 'alta' | 'revisar' | 'ok' | 'bloqueado'
+
+// Esta tela já só lista FONTES (planAll filtra kind <> 'derived'): um conjunto
+// calculado não ingere de origem nenhuma e não tem regra incremental para
+// padronizar. O filtro abaixo recorta por QUAL banco de origem.
+const ORIGEM_TODAS = '__todas__'
 
 const CONFIDENCE: Record<string, { label: string; tone: Tone }> = {
   alta: { label: 'Confiança alta', tone: 'ok' },
@@ -89,6 +94,7 @@ export default function AutotunePage() {
   // Abre em "não estão atualizando": a pergunta que traz alguém a esta tela
   // quase nunca é "qual a regra ideal?", é "por que esta fonte está parada?".
   const [filter, setFilter] = useState<Filter>('todos')
+  const [origem, setOrigem] = useState<string>(ORIGEM_TODAS)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [applying, setApplying] = useState(false)
@@ -125,8 +131,25 @@ export default function AutotunePage() {
       .catch(() => { /* sem agendamento, a cadência proposta cai para hora em hora */ })
   }, [])
 
+  // Origens presentes no diagnóstico, com quantas fontes vêm de cada uma.
+  const origens = useMemo(() => {
+    const m = new Map<string, { name: string; count: number }>()
+    for (const p of plans ?? []) {
+      const cur = m.get(p.connectionId)
+      if (cur) cur.count++
+      else m.set(p.connectionId, { name: p.connectionName, count: 1 })
+    }
+    return [...m.entries()]
+      .map(([key, v]) => ({ key, label: v.name, count: v.count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+  }, [plans])
+
   const groups = useMemo(() => {
-    const all = plans ?? []
+    // O recorte por origem vem ANTES do agrupamento de propósito: as contagens
+    // das abas passam a ser do banco escolhido. "3 precisam de recarga" com o
+    // filtro no ELLEVEN precisa querer dizer três do ELLEVEN — senão a barra
+    // de ação promete um lote e aplica outro.
+    const all = (plans ?? []).filter((p) => origem === ORIGEM_TODAS || p.connectionId === origem)
     return {
       // Primeiro de todos: quem NÃO está atualizando. Um conjunto que erra em
       // toda execução é mais urgente que um com a regra subótima — e é
@@ -148,7 +171,7 @@ export default function AutotunePage() {
       ok: all.filter((p) => p.alreadyApplied),
       bloqueado: all.filter((p) => !p.proposed),
     }
-  }, [plans])
+  }, [plans, origem])
 
   // Trocar de aba limpa a seleção: entre "aplicar a regra" e "recarregar" o
   // checkbox quer dizer coisas diferentes, e carregar a marcação de uma aba
@@ -156,6 +179,14 @@ export default function AutotunePage() {
   function trocaFiltro(f: Filter) {
     if (f !== filter) setSelected(new Set())
     setFilter(f)
+  }
+
+  // Trocar de origem também limpa a seleção, e pelo mesmo motivo: o que ficou
+  // marcado some da lista mas continuaria no lote, e "Aplicar" agiria sobre
+  // conjuntos de um banco que não está mais na tela.
+  function trocaOrigem(o: string) {
+    if (o !== origem) setSelected(new Set())
+    setOrigem(o)
   }
 
   const visible = groups[filter]
@@ -460,6 +491,15 @@ export default function AutotunePage() {
                 { key: 'bloqueado', label: 'Sem regra possível', count: groups.bloqueado.length },
               ]}
             />
+            {origens.length > 1 && (
+              <FilterSelect
+                icon={Server}
+                label="Origem"
+                value={origem}
+                onChange={trocaOrigem}
+                options={[{ key: ORIGEM_TODAS, label: 'todas', count: plans?.length ?? 0 }, ...origens]}
+              />
+            )}
           </div>
 
           {/* Barra de ação: escolher a cadência de minutos e aplicar o que está
@@ -622,7 +662,7 @@ export default function AutotunePage() {
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-[13px] font-medium">{p.name}</p>
                             <p className="truncate text-[11px] text-zinc-500">
-                              {p.connectionId} · {p.schema}.{p.table} · {num(p.rowCount)} linhas
+                              {p.connectionName} · {p.schema}.{p.table} · {num(p.rowCount)} linhas
                             </p>
                             {/* Quando foi a última vez que isto atualizou de
                                 verdade. É a resposta direta a "por que esta

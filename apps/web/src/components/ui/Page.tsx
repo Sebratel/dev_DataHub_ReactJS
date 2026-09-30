@@ -101,6 +101,35 @@ export function FilterChips<T extends string>({ value, onChange, options }: {
   )
 }
 
+// Filtro em lista, para dimensões que não cabem em chips — o número de
+// conexões de origem cresce com o tempo e sete chips já quebram a linha.
+// Mesma altura e moldura dos chips, para ler como parte da mesma barra.
+export function FilterSelect<T extends string>({ icon: Icon, label, value, onChange, options }: {
+  icon?: LucideIcon
+  label: string
+  value: T
+  onChange: (v: T) => void
+  options: { key: T; label: string; count?: number }[]
+}) {
+  return (
+    <label className="flex h-[30px] items-center gap-1.5 rounded-lg border border-zinc-200 bg-white pl-2.5 text-[11.5px] dark:border-zinc-800 dark:bg-zinc-900">
+      {Icon && <Icon size={12} strokeWidth={1.6} className="text-zinc-400" />}
+      <span className="text-zinc-500">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="h-[28px] max-w-[210px] cursor-pointer rounded-lg border-0 bg-transparent pr-1.5 text-[11.5px] font-medium outline-none"
+      >
+        {options.map((o) => (
+          <option key={o.key} value={o.key}>
+            {o.label}{o.count !== undefined ? ` (${o.count})` : ''}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 export function PrimaryButton({ icon: Icon, children, ...rest }: React.ComponentProps<'button'> & { icon?: LucideIcon }) {
   return (
     <button

@@ -220,7 +220,7 @@ function keysOf(opts: {
 
 const baseOf = (over: Partial<PlanBase> = {}): PlanBase => ({
   datasetId: 'd1', slug: 'conj', name: 'Conjunto', connectionId: 'elleven',
-  schema: 'public', table: 't', rowCount: 1000,
+  connectionName: 'ELLEVEN (ERP)', schema: 'public', table: 't', rowCount: 1000,
   // Por padrão: campos batendo com a fonte e sincronização saudável — o
   // cenário normal, para que cada caso abaixo mude só o que quer testar.
   drift: { missing: [], extra: [], checked: true },

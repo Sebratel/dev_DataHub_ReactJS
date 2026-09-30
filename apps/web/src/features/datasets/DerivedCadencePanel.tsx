@@ -23,13 +23,16 @@ import RunsHistory, { useSyncRuns } from './RunsHistory'
 
 const CADENCE_LABEL: Record<string, string> = {
   cascade: 'Automática — recalcula quando as fontes atualizam',
-  hourly: 'De hora em hora',
-  daily: 'Diária (janela da madrugada)',
+  hourly: 'De hora em hora (relógio próprio)',
+  daily: 'Diária (relógio próprio, janela da madrugada)',
   manual: 'Manual (só sob demanda)',
 }
 
 export default function DerivedCadencePanel({ dataset, onSaved }: { dataset: DatasetDetail; onSaved: () => void }) {
-  const [cadence, setCadence] = useState(dataset.sync?.cadence ?? 'daily')
+  // Padrão CASCATA, não diária: um calculado sem cadência gravada é um que
+  // ninguém decidiu, e a decisão certa para quem não lê fonte nenhuma é
+  // recalcular junto com quem ele cita.
+  const [cadence, setCadence] = useState(dataset.sync?.cadence ?? 'cascade')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -129,6 +132,15 @@ export default function DerivedCadencePanel({ dataset, onSaved }: { dataset: Dat
         <p className="mt-2 text-xs text-zinc-500">
           Recalcula assim que qualquer conjunto referenciado no SQL deste derivado terminar de sincronizar —
           não precisa esperar a janela diária nem a hora cheia.
+        </p>
+      )}
+      {(cadence === 'hourly' || cadence === 'daily') && (
+        <p className="mt-2 max-w-[62ch] text-xs leading-relaxed text-warn dark:text-warn-dark">
+          Relógio próprio num calculado duplica a frequência das fontes que ele cita — e fora de compasso com
+          elas. Os dois relógios não batem: ou este cálculo roda antes da fonte renovar (e refaz o resultado
+          anterior, gastando o lake à toa), ou roda depois e serve dado velho até o próximo tique.
+          {' '}<strong>Automática</strong> resolve os dois casos. Relógio só faz sentido quando o SQL não cita
+          conjunto nenhum — aí não há o que cascatear.
         </p>
       )}
       {error && <p className="mt-2 text-sm text-red-500">{error}</p>}

@@ -516,7 +516,9 @@ export async function planFor(datasetId: string): Promise<IncrementalPlan> {
 
   return decidePlan({
     datasetId: String(ds.id), slug: String(ds.slug), name: String(ds.name),
-    connectionId: String(ds.connection_id), schema: String(ds.schema_name),
+    connectionId: String(ds.connection_id),
+    connectionName: getConnector(String(ds.connection_id))?.name ?? String(ds.connection_id),
+    schema: String(ds.schema_name),
     table: String(ds.object_name), rowCount: ds.row_count == null ? null : Number(ds.row_count),
     drift, health, reload,
     current: {

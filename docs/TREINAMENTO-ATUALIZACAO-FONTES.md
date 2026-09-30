@@ -192,18 +192,32 @@ proposta por conjunto.
 
 | Filtro | O que junta | Prioridade |
 |---|---|---|
-| **Não estão atualizando** | conjuntos falhando ou com campo apontando para coluna inexistente | 🔴 resolva primeiro |
+| **Não estão atualizando** | conjuntos falhando, pausados, ou com campo apontando para coluna inexistente | 🔴 resolva primeiro |
+| **Precisam de recarga** | histórico ficou errado pelo fuso e só releitura completa conserta | 🟠 ver §6b |
 | **Todos** | tudo | — |
 | **Prontos para aplicar** | proposta de confiança alta, sem nenhum aviso | ✅ aplique em lote |
 | **Conferir antes** | tem proposta, mas com aviso ou confiança menor | 👀 caso a caso |
 | **Já padronizados** | já estão exatamente como o plano propõe | nada a fazer |
 | **Sem regra possível** | não há chave utilizável | leia o motivo |
 
+Ao lado dos filtros há a lista **Origem**: recorta tudo por banco de origem
+(ELLEVEN, RADIUS, AutoISP, Massivas…). **As contagens das abas passam a ser
+daquele banco** — escolher ELLEVEN e ler "3 precisam de recarga" quer dizer
+três do ELLEVEN, e o botão de aplicar age só sobre esses. É assim que se
+trabalha um banco por vez em vez de misturar lotes.
+
+> Trocar de aba **ou** de origem limpa a seleção. É de propósito: o que ficou
+> marcado sairia da tela mas continuaria no lote.
+
+Esta tela lista **só fontes**. Conjunto calculado não ingere de origem nenhuma
+e não tem regra incremental para padronizar — a cadência dele é outro assunto,
+em §3.5.
+
 **Cada linha mostra:**
 
 ```
 Nome do conjunto
-elleven · public.contratos · 1.482.330 linhas
+ELLEVEN (ERP) · public.contratos · 1.482.330 linhas
 último sucesso: 20/09/2026, 03:14:02
 hoje: snapshot (recarrega tudo)  →  created_at + updated_at · identidade id · de minuto em minuto
                                      ↑ o que a proposta muda
@@ -271,6 +285,38 @@ Só aparece para quem já é master. Lista as duas origens:
 - **Ambiente do servidor** — fixo na stack, não removível pela tela. É o caminho
   de recuperação.
 - **Concedido na tela** — delegação, removível ali mesmo.
+
+### 3.5 Conjuntos › Calculados — cadência é outro assunto
+
+Na tela **Conjuntos** há duas maneiras de recortar o catálogo, e elas são
+diferentes de propósito:
+
+- **Todos / Fontes / Calculados / Oficiais** — o que o conjunto *é*.
+- **Origem** — de qual banco a fonte vem. Some quando a aba é *Calculados*,
+  porque ali nenhum conjunto tem origem: calculado não lê fonte, lê o lake.
+
+A coluna **Origem** da tabela mostra o banco de cada fonte (passe o mouse para
+ver `schema.tabela`) e a palavra *calculado* para os derivados.
+
+**Calculado não deve ter relógio próprio.** Ele refaz um SQL sobre o lake; a
+frequência dele já está definida pela frequência de quem ele cita. Pôr "de hora
+em hora" nele duplica essa frequência — e duplica fora de compasso, porque os
+dois relógios nunca batem:
+
+- o cálculo roda **antes** de a fonte renovar → refaz o resultado anterior e
+  gasta lake à toa;
+- roda **depois** → serve dado velho até o próximo tique.
+
+A cadência certa é **Automática (cascata)**: o calculado recalcula assim que
+qualquer conjunto citado no SQL dele termina de sincronizar. É o padrão de
+calculado novo, e a aba *Calculados* mostra quantos ainda estão no relógio, com
+um botão que troca todos de uma vez.
+
+> **A exceção, e o aviso que a tela dá.** Cascata precisa de gatilho. Um
+> calculado cujo SQL não cita conjunto nenhum (só constantes, só `current_date`)
+> em cascata **nunca roda** — e não dá erro, não aparece como atrasado, apenas
+> para no tempo. Esses a tela recusa trocar, e lista num aviso separado para
+> você pôr em diária ou manual.
 
 ---
 
@@ -562,6 +608,8 @@ treinada conduz e o master só aprova o clique de aplicar.
 | **Identidade da linha** | campo(s) que dizem "esta linha é a mesma"; habilita substituir em vez de acrescentar |
 | **Compactação** | reescrever o conjunto mantendo só a versão mais recente de cada identidade |
 | **Cadência** | de quanto em quanto tempo o conjunto sincroniza sozinho |
+| **Cascata** | cadência sem relógio: o calculado recalcula quando um conjunto que ele cita termina de sincronizar |
+| **Origem** | o banco de onde a fonte ingere (ELLEVEN, RADIUS, AutoISP, Massivas…) |
 | **Agendamento** | política nomeada (janela + dias + intervalo) aplicável a vários conjuntos |
 | **Folga de reconferência** | minutos que o watermark rebobina, para pegar carimbo atrasado |
 | **Piso / cutoff** | a partir de que ponto a primeira carga começa |

@@ -88,6 +88,11 @@ function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary
     ...(admin ? {
       source: {
         connectionId: String(row.connection_id),
+        // Rótulo legível da origem. Derivados gravam o placeholder 'lake' em
+        // connection_id (migration 007) e não têm conexão nenhuma para nomear.
+        connectionName: row.kind === 'derived'
+          ? 'Calculado sobre o lake'
+          : getConnector(String(row.connection_id))?.name ?? String(row.connection_id),
         schema: String(row.schema_name),
         table: String(row.object_name),
       },

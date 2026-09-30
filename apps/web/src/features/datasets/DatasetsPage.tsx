@@ -7,12 +7,12 @@
 // de ser estética: comparar frescor entre linhas só funciona em coluna.
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock, CalendarClock } from 'lucide-react'
-import type { DatasetSummary } from '@datahub/shared'
+import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock, CalendarClock, Server, Zap, Loader2 } from 'lucide-react'
+import type { DatasetSummary, DerivedCadenceItem } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import OfficialBadge from '@/components/OfficialBadge'
-import { Page, PageHeader, Toolbar, SearchInput, FilterChips, EmptyState, ErrorBanner, TableSkeleton } from '@/components/ui/Page'
+import { Page, PageHeader, Toolbar, SearchInput, FilterChips, FilterSelect, EmptyState, ErrorBanner, TableSkeleton } from '@/components/ui/Page'
 import KpiBar, { type Kpi } from '@/components/ui/KpiBar'
 import { Card, CardHead } from '@/components/ui/Card'
 import { Pill } from '@/components/ui/Pill'
@@ -45,6 +45,10 @@ function compact(n: number): string {
 
 type Filter = 'all' | 'source' | 'derived' | 'official'
 
+// A origem de um conjunto CALCULADO é o próprio lake, não um banco — por isso
+// ele fica de fora do filtro de origem e continua em "Calculados".
+const ORIGEM_TODAS = '__todas__'
+
 export default function DatasetsPage() {
   const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
   // Agendamento em lote e' admin (mesma regra do backend em schedulesRouter).
@@ -59,13 +63,54 @@ export default function DatasetsPage() {
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
+  const [origem, setOrigem] = useState<string>(ORIGEM_TODAS)
+  // Calculados ainda presos a um relógio próprio. Carregado à parte porque a
+  // auditoria lê o SQL de cada derivado — não cabe no payload do catálogo.
+  const [cadencia, setCadencia] = useState<DerivedCadenceItem[] | null>(null)
+  const [trocando, setTrocando] = useState(false)
 
   function load() {
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
       .then((r) => setDatasets(r.datasets))
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar o catálogo.'))
   }
-  useEffect(load, [])
+  function loadCadencia() {
+    if (!canEdit) return
+    api<{ items: DerivedCadenceItem[] }>('/api/v1/datasets/derived/cadence-audit')
+      .then((r) => setCadencia(r.items))
+      .catch(() => { /* auditoria é acessória: sem ela a tela segue inteira */ })
+  }
+  useEffect(() => { load(); loadCadencia() }, [])
+
+  // Mudar de aba e mudar de origem são a MESMA pergunta vista de dois lados:
+  // origem só existe para fonte. Deixar os dois soltos produz combinações que
+  // não retornam nada ("Calculados" + "origem ELLEVEN") e parecem defeito.
+  function trocaFiltro(f: Filter) {
+    setFilter(f)
+    if (f === 'derived' || f === 'all') setOrigem(ORIGEM_TODAS)
+  }
+  function trocaOrigem(o: string) {
+    setOrigem(o)
+    if (o !== ORIGEM_TODAS && filter !== 'official') setFilter('source')
+  }
+
+  const trocaveis = (cadencia ?? []).filter((i) => i.eligible)
+  async function trocarParaCascata() {
+    setTrocando(true)
+    setError(null)
+    try {
+      await api<{ switched: number }>('/api/v1/datasets/derived/cadence-audit', {
+        method: 'POST',
+        body: JSON.stringify({ ids: trocaveis.map((i) => i.id) }),
+      })
+      loadCadencia()
+      load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Falha ao trocar a cadência dos calculados.')
+    } finally {
+      setTrocando(false)
+    }
+  }
 
   function toggleSelect(id: string) {
     setSelected((cur) => {
@@ -89,24 +134,45 @@ export default function DatasetsPage() {
     }
   }, [datasets])
 
+  // Origens presentes no catálogo, com quantos conjuntos vêm de cada uma. Sai
+  // do próprio payload: o id identifica, o nome é o que se lê. Só aparece
+  // origem que tem conjunto — um filtro com opção que não retorna nada mente
+  // sobre o que existe no lake.
+  const origens = useMemo(() => {
+    const m = new Map<string, { name: string; count: number }>()
+    for (const d of datasets ?? []) {
+      if (d.kind === 'derived' || !d.source) continue
+      const cur = m.get(d.source.connectionId)
+      if (cur) cur.count++
+      else m.set(d.source.connectionId, { name: d.source.connectionName, count: 1 })
+    }
+    return [...m.entries()]
+      .map(([key, v]) => ({ key, label: v.name, count: v.count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+  }, [datasets])
+
   const filtered = useMemo(() => (datasets ?? [])
     .filter((d) => {
       if (filter === 'source' && d.kind !== 'source') return false
       if (filter === 'derived' && d.kind !== 'derived') return false
       if (filter === 'official' && !d.official) return false
+      if (origem !== ORIGEM_TODAS && d.source?.connectionId !== origem) return false
       const q = query.toLowerCase().trim()
       return !q || d.name.toLowerCase().includes(q) || d.slug.toLowerCase().includes(q)
         || d.description.toLowerCase().includes(q) || d.tags.some((t) => t.toLowerCase().includes(q))
     })
     // Oficiais primeiro (fonte de verdade da diretoria), depois por nome.
     .sort((a, b) => Number(b.official) - Number(a.official) || a.name.localeCompare(b.name)),
-  [datasets, filter, query])
+  [datasets, filter, origem, query])
 
   // Estado vazio ciente do papel: viewer sem NENHUM acesso recebe orientação
   // clara (o acesso é fechado por padrão), não "nada publicado".
+  const nomeOrigem = origens.find((o) => o.key === origem)?.label ?? origem
   const emptyMessage = query
     ? 'Nada encontrado para essa busca.'
-    : !canEdit && stats.all === 0
+    : origem !== ORIGEM_TODAS
+      ? `Nenhum conjunto de ${nomeOrigem} nesta aba.`
+      : !canEdit && stats.all === 0
       ? 'Você ainda não tem acesso a nenhum conjunto. Peça a um administrador para incluir você (ou o seu time) nos conjuntos de que precisa.'
       : filter === 'derived'
         ? (canEdit ? 'Nenhum conjunto calculado ainda.' : 'Nenhum conjunto calculado disponível para você.')
@@ -153,7 +219,7 @@ export default function DatasetsPage() {
           <Toolbar>
             <FilterChips
               value={filter}
-              onChange={setFilter}
+              onChange={trocaFiltro}
               options={[
                 { key: 'all', label: 'Todos', count: stats.all },
                 { key: 'source', label: 'Fontes', count: stats.source, icon: Database },
@@ -161,6 +227,17 @@ export default function DatasetsPage() {
                 { key: 'official', label: 'Oficiais', count: stats.official, icon: BadgeCheck },
               ]}
             />
+            {/* De qual banco vem cada fonte. Fica escondido quando a aba é
+                "Calculados": ali nenhum conjunto tem origem para filtrar. */}
+            {origens.length > 1 && filter !== 'derived' && (
+              <FilterSelect
+                icon={Server}
+                label="Origem"
+                value={origem}
+                onChange={trocaOrigem}
+                options={[{ key: ORIGEM_TODAS, label: 'todas', count: stats.source }, ...origens]}
+              />
+            )}
             <SearchInput value={query} onChange={setQuery} placeholder="Buscar por nome, slug ou etiqueta…" />
             {isAdmin && selected.size > 0 && (() => {
               const fontes = (datasets ?? []).filter((d) => selected.has(d.id) && d.kind !== 'derived').length
@@ -179,6 +256,48 @@ export default function DatasetsPage() {
               )
             })()}
           </Toolbar>
+
+          {/* Cadência dos calculados. Só na aba "Calculados": é ali que a
+              pergunta aparece, e um aviso permanente no catálogo inteiro vira
+              ruído que ninguém lê depois da segunda vez. */}
+          {filter === 'derived' && canEdit && cadencia && trocaveis.length > 0 && (
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                <strong>{trocaveis.length} calculado(s) ainda têm relógio próprio</strong> (diária ou de hora
+                em hora). Um calculado não lê fonte nenhuma — ele refaz um SQL sobre o lake —, então o relógio
+                dele só duplica, e fora de compasso, a frequência de quem ele cita: roda antes da fonte e
+                refaz o resultado anterior, ou roda depois e serve dado velho até a hora cheia.
+              </p>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-zinc-500">
+                Em <strong>cascata</strong> não há relógio: cada um recalcula quando um conjunto que ele cita
+                termina de sincronizar. {trocaveis.slice(0, 4).map((i) => i.name).join(', ')}
+                {trocaveis.length > 4 && ` e mais ${trocaveis.length - 4}`}.
+              </p>
+              <button
+                onClick={() => void trocarParaCascata()}
+                disabled={trocando}
+                className="mt-2.5 flex h-[30px] items-center gap-1.5 rounded-lg bg-accent px-3 text-[12px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover disabled:opacity-60"
+              >
+                {trocando ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+                Trocar os {trocaveis.length} para cascata
+              </button>
+            </div>
+          )}
+
+          {/* Cascata sem nenhum conjunto citado: não dá erro, não aparece como
+              atrasado, e simplesmente para no tempo. É o oposto do aviso acima
+              e por isso não some junto com ele. */}
+          {filter === 'derived' && canEdit && (cadencia ?? []).some((i) => i.cadence === 'cascade' && !i.dependsOn.length) && (
+            <div className="rounded-2xl border border-warn/40 bg-warn-soft p-3 dark:bg-warn/10">
+              <p className="text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                <strong className="text-warn dark:text-warn-dark">Em cascata, mas sem gatilho.</strong>{' '}
+                {(cadencia ?? []).filter((i) => i.cadence === 'cascade' && !i.dependsOn.length)
+                  .map((i) => i.name).join(', ')}
+                {' '}está(ão) em cascata e o SQL não cita nenhum conjunto do lake — nada dispara esse cálculo,
+                e ele não vai atualizar sozinho. Abra cada um e troque para diária ou manual.
+              </p>
+            </div>
+          )}
 
           <Card>
             <CardHead icon={Boxes} title="Catálogo" sub={`${filtered.length} de ${stats.all}`} />
@@ -207,12 +326,15 @@ export default function DatasetsPage() {
                     )}
                     <Th>Conjunto</Th>
                     <Th className="w-[92px]">Camada</Th>
-                    <Th className="w-[104px]">Tipo</Th>
+                    {/* Era "Tipo" (fonte/calculado) — o mesmo que o selo de
+                        Camada já diz ao lado. Trocado pelo banco de origem,
+                        que é a informação que faltava na tabela. */}
+                    <Th className="w-[140px]">Origem</Th>
                     <Th right className="w-[104px]">Registros</Th>
                     <Th right className="w-[76px]">Campos</Th>
                     <Th className="w-[84px]">Frescor</Th>
                     <Th className="w-[96px]">Estado</Th>
-                    <Th className="w-[150px]">Dono</Th>
+                    <Th className="w-[126px]">Dono</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -238,8 +360,15 @@ export default function DatasetsPage() {
                         <Td><TierBadge tier={tierOf(d.kind, d.official)} /></Td>
                         <Td>
                           <span className="flex items-center gap-1.5">
-                            <span className="text-[11.5px] text-zinc-500">
-                              {d.kind === 'derived' ? 'calculado' : 'fonte'}
+                            {/* `source` só vem para admin; para leitor sobra o
+                                tipo, que é o que ele podia ver antes. */}
+                            <span
+                              className="truncate text-[11.5px] text-zinc-500"
+                              title={d.source ? `${d.source.schema}.${d.source.table}` : undefined}
+                            >
+                              {d.kind === 'derived'
+                                ? 'calculado'
+                                : d.source?.connectionName ?? 'fonte'}
                             </span>
                             {d.official && <OfficialBadge />}
                           </span>

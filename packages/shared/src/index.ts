@@ -60,7 +60,12 @@ export interface DatasetSummary {
   lastSyncAt: string | null
   updatedAt: string
   // Origem física — presente APENAS para admins.
-  source?: { connectionId: string; schema: string; table: string }
+  //
+  // `connectionName` é o rótulo legível da conexão ("ELLEVEN (ERP)"), e vem
+  // junto de propósito: o id sozinho ("elleven") serve para filtrar mas não
+  // para ler, e buscá-lo em /connections custaria um health check por conexão
+  // só para desenhar um filtro.
+  source?: { connectionId: string; connectionName: string; schema: string; table: string }
   // Configuração de sincronização — presente APENAS para admins.
   sync?: {
     mode: 'live' | 'snapshot' | 'incremental'
@@ -719,6 +724,8 @@ export interface IncrementalPlan {
   slug: string
   name: string
   connectionId: string
+  /** Rótulo legível da conexão — o que a tela mostra e filtra. */
+  connectionName: string
   schema: string
   table: string
   rowCount: number | null
@@ -745,4 +752,28 @@ export interface IncrementalPlan {
   warnings: string[]
   /** Motivo de não haver proposta nenhuma. */
   blocker: string | null
+}
+
+// ── Cadência dos conjuntos calculados ────────────────────────────────────
+// Um derivado não lê fonte nenhuma: ele recalcula um SQL sobre o lake. Dar a
+// ele um relógio próprio ("de hora em hora") é duplicar a frequência de quem
+// ele referencia — e duplicar errado, porque os dois relógios não batem: a
+// fonte renova às 10h05 e o derivado só vai reler às 11h00, servindo 55
+// minutos de dado velho; ou o derivado roda às 10h00 sobre o que a fonte
+// ainda não trouxe, e gasta o lake para chegar ao mesmo resultado de antes.
+//
+// 'cascade' remove o relógio: o derivado recalcula quando QUALQUER conjunto
+// que ele cita termina de sincronizar. Esta auditoria lista quem ainda está
+// no relógio e diz, um a um, se dá para trocar.
+export interface DerivedCadenceItem {
+  id: string
+  slug: string
+  name: string
+  cadence: 'daily' | 'hourly' | 'manual' | 'cascade' | 'schedule'
+  /** Nomes dos conjuntos citados no SQL — o que dispararia a cascata. */
+  dependsOn: string[]
+  /** true = está no relógio, cita alguém, e trocar para cascata é seguro. */
+  eligible: boolean
+  /** Por que NÃO é elegível. null quando é. */
+  reason: string | null
 }

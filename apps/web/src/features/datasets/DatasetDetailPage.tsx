@@ -191,7 +191,10 @@ export default function DatasetDetailPage() {
                 <span key={t} className="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-500 dark:bg-zinc-800">{t}</span>
               ))}
               {isAdmin && !derived && dataset.source && (
-                <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] dark:bg-zinc-800">
+                <span
+                  title={dataset.source.connectionName}
+                  className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] dark:bg-zinc-800"
+                >
                   {dataset.source.connectionId}: {dataset.source.schema}.{dataset.source.table}
                 </span>
               )}
