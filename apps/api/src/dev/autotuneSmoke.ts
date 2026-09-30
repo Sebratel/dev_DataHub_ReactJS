@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { checkReadOnly } from '../core/guard.js'
 import { duckQuery } from '../modules/query/duck.js'
-import { recencyExpression } from '../modules/sync/ingest.js'
+import { recencyExpression, excedeTeto } from '../modules/sync/ingest.js'
 import { decidePlan, type Field, type PlanBase } from '../modules/sync/autotune.js'
 import type { TableKeys, IndexInfo } from '../connectors/introspect.js'
 
@@ -113,6 +113,27 @@ try {
   rmSync(dir, { recursive: true, force: true })
 }
 
+// ── 3a. O disjuntor conta POR PASSADA ───────────────────────────────────
+// Um conjunto real de 15,9 milhões de linhas entrou em laço: toda carga
+// completa lia a tabela duas vezes (uma por chave), somava ~31,7 milhões e
+// estourava o teto de 30 milhões — dimensionado para "a maior tabela + folga",
+// sem contar com a duplicação. Abortava depois de ~3h de leitura na produção,
+// e o agendador tentava de novo no ciclo seguinte. Sete vezes por dia.
+console.log('\n── disjuntor de carga em fuga ──')
+{
+  const TETO = 30_000_000
+  const TABELA = 15_882_876 // linhas reais do conjunto que travou
+
+  check('o TOTAL das duas passadas estouraria o teto',
+    excedeTeto(TABELA * 2, TETO), `${(TABELA * 2).toLocaleString('pt-BR')} > ${TETO.toLocaleString('pt-BR')}`)
+  check('cada passada, sozinha, cabe',
+    !excedeTeto(TABELA, TETO), `${TABELA.toLocaleString('pt-BR')} por chave`)
+  // E o que o disjuntor existe para pegar continua sendo pego: uma leitura em
+  // fuga não tem limite, então estoura em qualquer contagem.
+  check('carga em fuga continua sendo abortada', excedeTeto(TETO + 1, TETO))
+  check('teto zero desliga o disjuntor', !excedeTeto(999_999_999, 0))
+}
+
 // ── 3b. Recência da compactação: tipos não podem se misturar ────────────
 // Quando a tabela de origem não tem coluna de criação, a 1ª chave vira o `id`
 // numérico. Juntá-lo à 2ª chave num greatest(id, updated_at) faz o DuckDB
@@ -205,7 +226,7 @@ const baseOf = (over: Partial<PlanBase> = {}): PlanBase => ({
   drift: { missing: [], extra: [], checked: true },
   health: {
     lastSuccessAt: '2026-09-18T10:00:00.000Z', lastRunAt: '2026-09-18T10:00:00.000Z',
-    lastError: null, failuresSinceSuccess: 0, failing: false,
+    lastError: null, failuresSinceSuccess: 0, failing: false, pausedReason: null,
   },
   // A necessidade de recarga é decidida fora de decidePlan (depende do tipo da
   // conexão e do histórico de execuções), então aqui entra um valor neutro.
@@ -378,6 +399,7 @@ cenario(() => {
       health: {
         lastSuccessAt: null, lastRunAt: '2026-09-18T13:21:56.000Z',
         lastError: 'column "regular_price" does not exist', failuresSinceSuccess: 13, failing: true,
+        pausedReason: null,
       },
     }),
     [f('id', 'number'), f('regular_price', 'number'), f('created_at', 'date'), f('updated_at', 'date')],
@@ -394,6 +416,7 @@ cenario(() => {
       health: {
         lastSuccessAt: '2026-09-15T03:00:00.000Z', lastRunAt: '2026-09-18T13:00:00.000Z',
         lastError: 'timeout ao consultar a fonte', failuresSinceSuccess: 7, failing: true,
+        pausedReason: null,
       },
     }),
     [f('id', 'number'), f('created_at', 'date'), f('updated_at', 'date')],

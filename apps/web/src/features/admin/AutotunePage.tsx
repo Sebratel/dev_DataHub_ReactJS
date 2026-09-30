@@ -132,7 +132,8 @@ export default function AutotunePage() {
       // toda execução é mais urgente que um com a regra subótima — e é
       // invisível em qualquer outra tela, porque o erro fica enterrado no
       // histórico de execuções dentro da página do conjunto.
-      falhando: all.filter((p) => p.health.failing || p.drift.missing.length > 0),
+      falhando: all.filter((p) =>
+        p.health.failing || p.drift.missing.length > 0 || !!p.health.pausedReason),
       // Conjuntos cujo HISTÓRICO ficou errado pelo defeito de fuso e que só uma
       // releitura completa conserta. Ordenados do menor para o maior: numa
       // recarga em série, começar pelos pequenos entrega correção cedo e deixa
@@ -631,6 +632,9 @@ export default function AutotunePage() {
                               {p.health.lastSuccessAt
                                 ? <>último sucesso: {new Date(p.health.lastSuccessAt).toLocaleString('pt-BR')}</>
                                 : <span className="text-crit dark:text-crit-dark">nunca sincronizou com sucesso</span>}
+                              {p.health.pausedReason && (
+                                <span className="text-crit dark:text-crit-dark"> · agendamento pausado</span>
+                              )}
                               {p.health.failing && p.health.failuresSinceSuccess > 0 && (
                                 <span className="text-crit dark:text-crit-dark">
                                   {' '}· {p.health.failuresSinceSuccess} falha(s) desde então
@@ -652,6 +656,7 @@ export default function AutotunePage() {
                           </div>
                         </button>
                         <div className="flex shrink-0 flex-col items-end gap-1">
+                          {p.health.pausedReason && <Pill tone="crit" dot>Pausado</Pill>}
                           {p.health.failing && <Pill tone="crit" dot>Falhando</Pill>}
                           {p.alreadyApplied
                             ? <Pill tone="ok" dot>Já padronizado</Pill>
@@ -680,6 +685,20 @@ export default function AutotunePage() {
                               com coluna inexistente não podia ser removido por
                               tela nenhuma — só apagando e republicando o
                               conjunto inteiro. */}
+                          {p.health.pausedReason && (
+                            <div className="rounded-lg border border-crit/30 bg-crit-soft p-2.5 dark:bg-crit/10">
+                              <p className="text-[11.5px] font-medium text-crit dark:text-crit-dark">
+                                O agendador parou de tentar este conjunto
+                              </p>
+                              <p className="mt-0.5 text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                                {p.health.pausedReason}
+                              </p>
+                              <p className="mt-1.5 text-[11px] text-zinc-500">
+                                Resolva a causa e use <strong>Sincronizar agora</strong> na tela do conjunto —
+                                qualquer ação manual reativa o agendamento.
+                              </p>
+                            </div>
+                          )}
                           {p.reload.needed && (
                             <div className="rounded-lg border border-warn/40 bg-warn-soft p-2.5 dark:bg-warn/10">
                               <p className="text-[11.5px] font-medium text-warn dark:text-warn-dark">

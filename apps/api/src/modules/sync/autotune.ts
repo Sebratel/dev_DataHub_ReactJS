@@ -155,6 +155,11 @@ export function decidePlan(base: PlanBase, fields: Field[], keys: TableKeys): In
   // Falhando por OUTRO motivo (rede, permissão, tipo): a regra até pode ser
   // melhorada, mas trocar a cadência de um conjunto que erra toda vez só faz
   // ele errar mais vezes por dia. O aviso sobe junto com a proposta.
+  if (base.health.pausedReason) {
+    warnings.push(
+      `AGENDAMENTO PAUSADO. ${base.health.pausedReason}`,
+    )
+  }
   if (base.health.failing) {
     warnings.push(
       `Este conjunto está FALHANDO: ${base.health.failuresSinceSuccess} execução(ões) com erro desde o último ` +
@@ -392,7 +397,7 @@ async function fieldDrift(
 // Como foram as últimas execuções. É o que responde, na tela, "por que esta
 // fonte não atualiza?" — muitas vezes a resposta não é a cadência, é que ela
 // vem falhando há dias e ninguém viu.
-async function syncHealth(datasetId: string): Promise<SyncHealth> {
+async function syncHealth(datasetId: string, pausedReason: string | null): Promise<SyncHealth> {
   const runs = (await db.query(
     `select status, error, started_at from sync_runs
       where dataset_id = $1 and status <> 'running'
@@ -414,6 +419,7 @@ async function syncHealth(datasetId: string): Promise<SyncHealth> {
     lastError: (runs.find((r) => r.error)?.error as string | null) ?? null,
     failuresSinceSuccess: falhas,
     failing: !!ultimo && String(ultimo.status) === 'error',
+    pausedReason,
   }
 }
 
@@ -491,7 +497,8 @@ export async function planFor(datasetId: string): Promise<IncrementalPlan> {
   const ds = (await db.query(
     `select id, slug, name, connection_id, schema_name, object_name, row_count,
             sync_mode, incremental_key, incremental_key_2, dedupe_keys,
-            sync_cadence, schedule_id, watermark_lag_minutes, last_full_reload_at
+            sync_cadence, schedule_id, watermark_lag_minutes, last_full_reload_at,
+            sync_paused_reason
        from datasets where id = $1 and kind <> 'derived'`,
     [datasetId],
   )).rows[0]
@@ -504,7 +511,7 @@ export async function planFor(datasetId: string): Promise<IncrementalPlan> {
 
   const keys = await discoverKeys(String(ds.connection_id), String(ds.schema_name), String(ds.object_name))
   const drift = await fieldDrift(ds, fields)
-  const health = await syncHealth(String(ds.id))
+  const health = await syncHealth(String(ds.id), (ds.sync_paused_reason as string | null) ?? null)
   const reload = await reloadNeed(ds, fields)
 
   return decidePlan({

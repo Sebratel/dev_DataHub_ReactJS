@@ -20,6 +20,17 @@ import { materializeDerived, referencedSlugs } from '../transform/derive.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+// O disjuntor olha UMA passada, não o total da execução.
+//
+// Numa carga completa com duas chaves o motor lê a tabela DUAS vezes (uma por
+// `created`, outra por `modified`) e as duas somam. Uma tabela de 15,9 milhões
+// fecha ~31,7 milhões de leituras legítimas, e estourava um teto de 30 milhões
+// dimensionado para "a maior tabela + folga". Por passada, uma carga em fuga
+// (ilimitada) continua sendo pega e uma carga legítima passa.
+export function excedeTeto(lidasNaPassada: number, maxRows: number): boolean {
+  return maxRows > 0 && lidasNaPassada > maxRows
+}
+
 // Data no formato que as FONTES entendem: 'AAAA-MM-DD HH:MM:SS.mmm' em hora
 // LOCAL, sem sufixo de fuso.
 //
@@ -121,6 +132,50 @@ export async function closeOrphanRuns(): Promise<number> {
       where status = 'running'`,
   )
   return r.rowCount ?? 0
+}
+
+// Quantas falhas seguidas até o agendador parar de tentar sozinho.
+//
+// Três, e não uma: erro transitório (rede oscilando, fonte reiniciando, tempo
+// esgotado num pico) se resolve na tentativa seguinte, e pausar no primeiro
+// tropeço criaria trabalho manual onde não havia problema. Três seguidas já não
+// é azar — é um erro que vai se repetir igual, e insistir só custa leitura na
+// produção.
+const FALHAS_ATE_PAUSAR = 3
+
+async function registraFalha(datasetId: string, slug: string, erro: string): Promise<void> {
+  try {
+    const r = (await db.query(
+      `update datasets set sync_failures = sync_failures + 1, updated_at = now()
+        where id = $1 returning sync_failures`,
+      [datasetId],
+    )).rows[0]
+    const falhas = Number(r?.sync_failures ?? 0)
+    if (falhas < FALHAS_ATE_PAUSAR) return
+
+    const motivo =
+      `Pausado automaticamente após ${falhas} falhas seguidas. Último erro: ${erro.slice(0, 300)} — ` +
+      'insistir num erro que se repete só custa leitura na fonte de produção. Resolva a causa e use ' +
+      '"Sincronizar agora" para retomar (qualquer ação manual reativa o agendamento).'
+    await db.query(
+      `update datasets set sync_paused_reason = $2 where id = $1 and sync_paused_reason is null`,
+      [datasetId, motivo],
+    )
+    console.warn(`[sync] ${slug}: PAUSADO após ${falhas} falhas seguidas.`)
+  } catch (e) {
+    // Best-effort: não pode transformar uma falha de carga em duas.
+    console.warn(`[sync] falha ao registrar erro de ${slug}: ${(e as Error).message}`)
+  }
+}
+
+// Retoma um conjunto pausado. Chamado por toda ação HUMANA explícita — quem foi
+// lá e mandou rodar acredita que o motivo mudou, e a máquina não deve discordar.
+export async function resumeDataset(datasetId: string): Promise<void> {
+  await db.query(
+    `update datasets set sync_failures = 0, sync_paused_reason = null, updated_at = now()
+      where id = $1 and sync_paused_reason is not null`,
+    [datasetId],
+  )
 }
 
 // Fila sequencial global — dois datasets jamais sincronizam ao mesmo tempo,
@@ -422,11 +477,31 @@ async function runSync(datasetId: string): Promise<string> {
   let newWatermark2: string | null = ds.watermark_2 ?? null
   const { batchSize, batchPauseMs, maxRows } = config.sync
   // Disjuntor: aborta antes de a carga em fuga derrubar o servidor.
-  const guardRunaway = () => {
-    if (maxRows && total > maxRows) {
+  //
+  // O teto vale POR PASSADA, não pelo total da execução — e a diferença não é
+  // detalhe. Numa carga completa com duas chaves, o motor lê a tabela DUAS
+  // vezes (uma por `created`, outra por `modified`) e as duas somam. Uma tabela
+  // de 15,9 milhões de linhas fecha ~31,7 milhões de LEITURAS, todas
+  // legítimas — e estourava um teto de 30 milhões dimensionado para "a maior
+  // tabela + folga", porque ninguém contou com a duplicação.
+  //
+  // O resultado era pior que uma carga recusada: o conjunto entrava em laço.
+  // Toda tentativa lia a fonte por horas, abortava no mesmo ponto e recomeçava
+  // no ciclo seguinte — 7 varreduras por dia contra o ERP de produção, para
+  // nunca concluir.
+  //
+  // Por passada o disjuntor continua fazendo o que foi feito para fazer: uma
+  // carga EM FUGA (OFFSET relendo, keyset que não avança) é ilimitada e estoura
+  // igual. Uma carga legítima é limitada a N por passada, e passa. O pior caso
+  // fica em 2×SYNC_MAX_ROWS no total, que continua sendo um teto.
+  const guardRunaway = (lidasNaPassada: number, passada: string) => {
+    if (excedeTeto(lidasNaPassada, maxRows)) {
       throw new Error(
-        `Sincronização abortada: excedeu ${maxRows.toLocaleString('pt-BR')} linhas (SYNC_MAX_ROWS). ` +
-        `Provável carga em fuga — use modo incremental com "Publicar a partir de".`,
+        `Sincronização abortada: a passada por "${passada}" leu mais de ` +
+        `${maxRows.toLocaleString('pt-BR')} linhas (SYNC_MAX_ROWS). ` +
+        'Numa carga completa cada chave lê a tabela inteira, então o teto precisa caber na MAIOR ' +
+        'tabela, não na soma das passadas. Se a tabela realmente tem mais linhas que isso, aumente ' +
+        'SYNC_MAX_ROWS; se não tem, a chave não está avançando e a leitura está em fuga.',
       )
     }
   }
@@ -450,7 +525,7 @@ async function runSync(datasetId: string): Promise<string> {
       for await (const batch of fetchHttpPages(ep, { pauseMs: batchPauseMs, timeoutMs: config.sources.statementTimeoutMs }, (m) => apiMetrics.push(m))) {
         for (const row of batch) await write(jsonLine(coerce(row)))
         total += batch.length
-        guardRunaway()
+        guardRunaway(total, 'paginação da API')
         checkCancel()
         await reportProgress(run.id, total)
       }
@@ -493,6 +568,10 @@ async function runSync(datasetId: string): Promise<string> {
             ? { op: '>=', val: floor }
             : null
         let last: string | null = null // maior valor visto NESTA passada
+        // Contador desta passada, separado do `total` da execução: é ele que o
+        // disjuntor olha. O `total` continua somando as duas, porque é quantas
+        // linhas foram de fato escritas no staging.
+        let lidasNestaPassada = 0
         for (;;) {
           // "is not null" explícito: uma passada keyset só consegue avançar
           // sobre valores não nulos. Sem isto, uma carga sem piso nem watermark
@@ -507,6 +586,7 @@ async function runSync(datasetId: string): Promise<string> {
           const { rows } = await querySource(String(ds.connection_id), sql, cursor ? [cursor.val] : [])
           for (const row of rows) await write(jsonLine(coerce(row)))
           total += rows.length
+          lidasNestaPassada += rows.length
           if (rows.length) {
             const v = rows[rows.length - 1][exposedKey]
             // Os drivers entregam data como TEXTO (MySQL por `dateStrings`,
@@ -530,7 +610,7 @@ async function runSync(datasetId: string): Promise<string> {
             last = s
             cursor = { op: '>', val: s }
           }
-          guardRunaway()
+          guardRunaway(lidasNestaPassada, exposedKey)
           checkCancel()
           await reportProgress(run.id, total) // progresso ao vivo na tela
           if (rows.length < batchSize) break
@@ -566,7 +646,7 @@ async function runSync(datasetId: string): Promise<string> {
         const { rows } = await querySource(String(ds.connection_id), sql)
         for (const row of rows) await write(jsonLine(coerce(row)))
         total += rows.length
-        guardRunaway()
+        guardRunaway(total, 'snapshot')
         checkCancel()
         await reportProgress(run.id, total)
         if (rows.length < batchSize) break
@@ -698,6 +778,8 @@ async function runSync(datasetId: string): Promise<string> {
       // pendentes nunca baixava por mais que se recarregasse.
       `update datasets set row_count = $2, last_sync_at = now(), watermark = $3, watermark_2 = $4,
                           last_full_reload_at = case when $5 then now() else last_full_reload_at end,
+                          -- Deu certo: a sequência de falhas acabou.
+                          sync_failures = 0, sync_paused_reason = null,
                           updated_at = now() where id = $1`,
       [datasetId, count, newWatermark, newWatermark2, replaceParts],
     )
@@ -710,6 +792,8 @@ async function runSync(datasetId: string): Promise<string> {
     return `ok: ${total} linha(s)`
   } catch (e) {
     const cancelled = e instanceof SyncCancelled
+    // Cancelamento não conta como falha: foi alguém pedindo para parar.
+    if (!cancelled) await registraFalha(datasetId, String(ds.slug), (e as Error).message)
     await db.query(
       `update sync_runs set status = $2, rows = $3, error = $4, finished_at = now() where id = $1`,
       [run.id, cancelled ? 'cancelled' : 'error', total, cancelled ? null : (e as Error).message],

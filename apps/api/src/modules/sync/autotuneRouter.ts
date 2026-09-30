@@ -23,7 +23,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { planAll, planFor } from './autotune.js'
-import { enqueueSync, pendingSyncs, cancelPending } from './ingest.js'
+import { enqueueSync, pendingSyncs, cancelPending, resumeDataset } from './ingest.js'
 import { applySyncConfig } from './syncConfig.js'
 import { reconcileFields } from './reconcileFields.js'
 import { requireMasterOnSource } from './masterGuard.js'
@@ -218,6 +218,7 @@ autotuneRouter.post('/:id/reload', ...masterOnSource, async (req, res) => {
     `update datasets set watermark = null, watermark_2 = null, updated_at = now() where id = $1`,
     [req.params.id],
   )
+  await resumeDataset(req.params.id) // ação humana explícita retoma o agendamento
   void enqueueSync(req.params.id) // fila sequencial: nunca roda em paralelo
   await audit(req, 'datasets.reload', { type: 'dataset', id: String(ds.slug) })
   res.status(202).json({ queued: true })
@@ -262,6 +263,7 @@ autotuneRouter.post('/reload', ...masterOnly, async (req, res) => {
         `update datasets set watermark = null, watermark_2 = null, updated_at = now() where id = $1`,
         [id],
       )
+      await resumeDataset(id) // ação humana explícita retoma o agendamento
       void enqueueSync(id)
       results.push({ datasetId: id, name: nome, ok: true })
     } catch (e) {

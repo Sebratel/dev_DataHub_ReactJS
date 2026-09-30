@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
-import { enqueueSync, requestCancel } from './ingest.js'
+import { enqueueSync, requestCancel, resumeDataset } from './ingest.js'
 import { applySyncConfig, type SyncConfigInput } from './syncConfig.js'
 import { requireMasterOnSource } from './masterGuard.js'
 
@@ -42,6 +42,9 @@ syncRouter.post('/:id/sync', ...adminOnly, async (req, res) => {
   if (row.sync_mode === 'live') {
     return res.status(400).json({ error: 'Dataset em modo live não sincroniza — mude para snapshot ou incremental.' })
   }
+  // Sincronizar À MÃO retoma um conjunto pausado por falhas seguidas: quem
+  // clicou acredita que a causa mudou, e a máquina não deve discordar.
+  await resumeDataset(req.params.id)
   void enqueueSync(req.params.id) // roda em background; acompanhe pelos runs
   await audit(req, 'datasets.sync', { type: 'dataset', id: row.slug })
   res.status(202).json({ queued: true })

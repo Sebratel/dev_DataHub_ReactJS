@@ -245,6 +245,62 @@ const r3 = (await pg.query<{ last_full_reload_at: string | null }>(MARCAR, [inc,
 check('incremental posterior preserva a marca',
   String(r3.last_full_reload_at) === String(r2.last_full_reload_at))
 
+// ── Pausa automática após falhas seguidas ───────────────────────────────
+// O agendador reenfileira um conjunto vencido a cada ciclo, sem olhar se a
+// anterior deu certo. Com erro DETERMINÍSTICO isso vira laço: um conjunto real
+// abortava sempre no mesmo ponto e era tentado 7 vezes por dia, cada tentativa
+// lendo a produção por ~3h para nunca concluir.
+console.log('\n── pausa automática após falhas seguidas ──')
+await pg.exec(`
+  alter table datasets add column sync_failures int not null default 0;
+  alter table datasets add column sync_paused_reason text;
+`)
+
+const FALHAR = `update datasets set sync_failures = sync_failures + 1 where id = $1 returning sync_failures`
+const PAUSAR = `update datasets set sync_paused_reason = $2 where id = $1 and sync_paused_reason is null`
+const SUCESSO = `update datasets set sync_failures = 0, sync_paused_reason = null where id = $1`
+const pausa = (id: string) => pg.query<{ sync_paused_reason: string | null }>(
+  `select sync_paused_reason from datasets where id = $1`, [id],
+).then((r) => r.rows[0].sync_paused_reason)
+
+const alvo = await novoConjunto('daily', null)
+
+// Duas falhas ainda não pausam: erro transitório se resolve sozinho, e pausar
+// no primeiro tropeço criaria trabalho manual onde não havia problema.
+for (let i = 1; i <= 2; i++) {
+  const n = Number((await pg.query<{ sync_failures: number }>(FALHAR, [alvo])).rows[0].sync_failures)
+  if (n >= 3) await pg.query(PAUSAR, [alvo, 'pausado'])
+}
+check('duas falhas seguidas ainda não pausam', (await pausa(alvo)) === null)
+
+// A terceira pausa.
+const n3 = Number((await pg.query<{ sync_failures: number }>(FALHAR, [alvo])).rows[0].sync_failures)
+if (n3 >= 3) await pg.query(PAUSAR, [alvo, 'Pausado automaticamente após 3 falhas seguidas.'])
+check('a terceira falha pausa o agendamento', (await pausa(alvo))?.startsWith('Pausado') === true)
+
+// Falhar de novo NÃO reescreve o motivo original — o primeiro erro é o que
+// explica a pausa; os seguintes são consequência dela não ter sido tratada.
+await pg.query(FALHAR, [alvo])
+await pg.query(PAUSAR, [alvo, 'motivo diferente que nao pode sobrescrever'])
+check('o motivo da pausa não é sobrescrito por falhas posteriores',
+  (await pausa(alvo))?.startsWith('Pausado') === true)
+
+// Ação humana (sincronizar agora, recarregar, salvar config) retoma.
+await pg.query(SUCESSO, [alvo])
+check('ação humana limpa a pausa e zera o contador', (await pausa(alvo)) === null)
+const zerado = Number((await pg.query<{ sync_failures: number }>(
+  `select sync_failures from datasets where id = $1`, [alvo])).rows[0].sync_failures)
+check('o contador de falhas volta a zero', zerado === 0, `ficou ${zerado}`)
+
+// O agendador só enxerga quem NÃO está pausado.
+const pausado = await novoConjunto('daily', null)
+await pg.query(PAUSAR, [pausado, 'pausado'])
+const visiveis = (await pg.query<{ id: string }>(
+  `select id from datasets where sync_cadence = 'daily' and sync_paused_reason is null`,
+)).rows.map((r) => r.id)
+check('o agendador ignora conjunto pausado',
+  !visiveis.includes(pausado) && visiveis.includes(alvo))
+
 await pg.close()
 console.log(`\n${failures ? `${failures} verificação(ões) falharam.` : 'Tudo certo.'}`)
 process.exit(failures ? 1 : 0)

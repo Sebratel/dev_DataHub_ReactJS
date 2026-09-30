@@ -128,6 +128,9 @@ export async function applySyncConfig(datasetId: string, input: SyncConfigInput)
        schedule_id = case when $5 is null then schedule_id else null end,
        sync_since = $6, sync_since_days = $7,
        dedupe_keys = $8, watermark_lag_minutes = $9,
+       -- Salvar a configuração é ação humana: retoma um conjunto pausado por
+       -- falhas seguidas, porque quem mexeu na regra espera que ela seja tentada.
+       sync_failures = 0, sync_paused_reason = null,
        watermark   = case when $10 then null else watermark end,
        watermark_2 = case when $11 then null else watermark_2 end,
        updated_at = now()

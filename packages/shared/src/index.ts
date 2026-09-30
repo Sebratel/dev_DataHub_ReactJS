@@ -686,6 +686,10 @@ export interface SyncHealth {
   failuresSinceSuccess: number
   /** true = a última execução falhou. */
   failing: boolean
+  /** Preenchido = o agendador parou de tentar sozinho, após falhas seguidas.
+   *  O texto diz por quê — "não atualiza e não dá erro" é o pior estado para
+   *  depurar, então a pausa precisa se anunciar. */
+  pausedReason: string | null
 }
 
 /** Precisa de uma recarga completa para consertar horários já gravados?

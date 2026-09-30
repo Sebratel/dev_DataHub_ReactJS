@@ -8,6 +8,9 @@
 //   'schedule' segue a janela de horário/dia + intervalo em minutos de um
 //              sync_schedules — é o único que precisa do tick por MINUTO;
 //              os demais continuam bastando checar na hora cheia
+// Conjunto PAUSADO (sync_paused_reason preenchido) fica de fora de todas as
+// cadências: ele falhou seguidas vezes e tentar de novo sozinho só repete o
+// erro, gastando leitura na produção. Volta com qualquer ação manual.
 // Fontes primeiro; derivados em ordem topológica (cadeias). A fila sequencial
 // do ingest garante zero concorrência entre tudo isto.
 import { config } from '../../core/config.js'
@@ -29,8 +32,12 @@ function msUntilNextMinute(): number {
 // A lógica de sempre (hourly/daily) — só precisa rodar quando o minuto vira 0.
 async function tickHourlyAndDaily(hour: number): Promise<void> {
   const rows = (await db.query(
+    // `sync_paused_reason is null`: conjunto pausado por falhas seguidas não é
+    // tentado de novo sozinho. Sem isto, um erro determinístico vira laço —
+    // horas de leitura na produção por dia, para abortar sempre no mesmo ponto.
     `select id, slug, kind, transform_sql, sync_cadence from datasets
-      where sync_mode in ('snapshot', 'incremental') and sync_cadence in ('hourly', 'daily')`,
+      where sync_mode in ('snapshot', 'incremental') and sync_cadence in ('hourly', 'daily')
+        and sync_paused_reason is null`,
   )).rows
 
   const due = rows.filter((r) =>
@@ -56,7 +63,8 @@ async function tickSchedules(now: Date): Promise<void> {
     `select d.id, d.slug, d.last_sync_at,
             s.interval_minutes, s.start_time, s.end_time, s.weekdays
        from datasets d join sync_schedules s on s.id = d.schedule_id
-      where d.sync_cadence = 'schedule' and d.sync_mode in ('snapshot', 'incremental')`,
+      where d.sync_cadence = 'schedule' and d.sync_mode in ('snapshot', 'incremental')
+        and d.sync_paused_reason is null`,
   )).rows
 
   for (const r of rows) {
