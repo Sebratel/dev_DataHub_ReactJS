@@ -298,6 +298,20 @@ diferentes de propósito:
 A coluna **Origem** da tabela mostra o banco de cada fonte (passe o mouse para
 ver `schema.tabela`) e a palavra *calculado* para os derivados.
 
+**Todas as colunas ordenam**, clicando no cabeçalho. O primeiro clique já vem
+no sentido da pergunta — *Registros* começa pelo maior, **Atualizado** começa
+pelo **mais antigo**, que é o que se procura ali. Clicar de novo inverte; o
+botão **Ordem padrão**, na barra de filtros, devolve a lista original (oficiais
+primeiro).
+
+> Conjunto que **nunca sincronizou** fica sempre no fim, nos dois sentidos. Ele
+> não é "o mais atualizado" nem "o mais atrasado" — é outra coisa, e a coluna
+> *Estado* o marca como **sem sync**.
+
+A coluna **Atualizado** (antiga *Frescor*) diz há quanto tempo foi a última
+sincronização — `há 3 h`, `há 2 d`. Passe o mouse para a data e hora exatas. No
+topo, **Defasagem mediana** é a mesma medida para o catálogo inteiro.
+
 **Calculado não deve ter relógio próprio.** Ele refaz um SQL sobre o lake; a
 frequência dele já está definida pela frequência de quem ele cita. Pôr "de hora
 em hora" nele duplica essa frequência — e duplica fora de compasso, porque os
@@ -403,8 +417,9 @@ há quantas execuções ele se repete.
 
 > ⚠️ **Dias da semana valem para TUDO que segue o agendamento.** Um agendamento
 > marcado só de seg–sex não sincroniza nada no sábado e no domingo — na segunda
-> de manhã o dado tem mais de dois dias. Foi o que produziu um "frescor mediano
-> de 47 h" observado num domingo. Se o conjunto precisa estar fresco todo dia,
+> de manhã o dado tem mais de dois dias. Foi o que produziu uma "defasagem
+> mediana de 47 h" observada num domingo. Se o conjunto precisa estar atual
+> todo dia,
 > marque os sete dias, ainda que com intervalo maior no fim de semana (para
 > isso, use dois agendamentos).
 3. Na tela de padronização, escolha esse agendamento no seletor **Cadência de
@@ -610,6 +625,7 @@ treinada conduz e o master só aprova o clique de aplicar.
 | **Cadência** | de quanto em quanto tempo o conjunto sincroniza sozinho |
 | **Cascata** | cadência sem relógio: o calculado recalcula quando um conjunto que ele cita termina de sincronizar |
 | **Origem** | o banco de onde a fonte ingere (ELLEVEN, RADIUS, AutoISP, Massivas…) |
+| **Defasagem** | quanto tempo faz desde a última sincronização; a coluna **Atualizado** mostra isso por conjunto |
 | **Agendamento** | política nomeada (janela + dias + intervalo) aplicável a vários conjuntos |
 | **Folga de reconferência** | minutos que o watermark rebobina, para pegar carimbo atrasado |
 | **Piso / cutoff** | a partir de que ponto a primeira carga começa |

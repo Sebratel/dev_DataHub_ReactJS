@@ -3,6 +3,7 @@
 // `tabular-nums` e alinhados à direita. Rola dentro do próprio contêiner para
 // a página nunca rolar na horizontal.
 import clsx from 'clsx'
+import { ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 
 export function DataGrid({ children, className, fixed }: {
   children: React.ReactNode
@@ -27,19 +28,48 @@ export function DataGrid({ children, className, fixed }: {
   )
 }
 
-export function Th({ right, children, className, ...rest }: React.ComponentProps<'th'> & { right?: boolean }) {
+export type SortDir = 'asc' | 'desc'
+
+export function Th({ right, sort, children, className, ...rest }: React.ComponentProps<'th'> & {
+  right?: boolean
+  /**
+   * Torna a coluna ordenável. `active` é esta coluna ser a que ordena agora —
+   * só então a seta aponta um sentido; nas outras fica o par cinza, que é o
+   * que avisa "dá para clicar aqui" sem fingir uma ordenação que não existe.
+   */
+  sort?: { active: boolean; dir: SortDir; onClick: () => void }
+}) {
+  const base = clsx(
+    'whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-2.5 py-1.5',
+    'text-[9.5px] font-semibold uppercase tracking-[0.09em] text-zinc-500',
+    'dark:border-zinc-800 dark:bg-zinc-800/40',
+    right ? 'text-right' : 'text-left',
+    className,
+  )
+  if (!sort) return <th {...rest} className={base}>{children}</th>
+
+  const Seta = !sort.active ? ChevronsUpDown : sort.dir === 'asc' ? ChevronUp : ChevronDown
   return (
-    <th
-      {...rest}
-      className={clsx(
-        'whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-2.5 py-1.5',
-        'text-[9.5px] font-semibold uppercase tracking-[0.09em] text-zinc-500',
-        'dark:border-zinc-800 dark:bg-zinc-800/40',
-        right ? 'text-right' : 'text-left',
-        className,
-      )}
-    >
-      {children}
+    <th {...rest} aria-sort={sort.active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'} className={base}>
+      <button
+        onClick={sort.onClick}
+        className={clsx(
+          'group inline-flex max-w-full items-center gap-1 uppercase tracking-[0.09em] transition-colors',
+          'hover:text-zinc-900 dark:hover:text-zinc-100',
+          right && 'flex-row-reverse',
+          sort.active && 'text-zinc-900 dark:text-zinc-100',
+        )}
+      >
+        <span className="truncate">{children}</span>
+        <Seta
+          size={11}
+          strokeWidth={2}
+          className={clsx(
+            'shrink-0 transition-opacity',
+            sort.active ? 'opacity-100' : 'opacity-0 group-hover:opacity-60',
+          )}
+        />
+      </button>
     </th>
   )
 }

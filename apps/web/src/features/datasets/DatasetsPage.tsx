@@ -4,10 +4,11 @@
 // Era uma grade de cards; virou tabela densa. Numa grade cabem ~12 conjuntos na
 // tela e cada card repete rótulo ("campos", "registros"); numa tabela cabem 25+
 // e o rótulo aparece uma vez, no cabeçalho. Com 248 conjuntos a diferença deixa
-// de ser estética: comparar frescor entre linhas só funciona em coluna.
+// de ser estética: comparar defasagem entre linhas só funciona em coluna — e
+// é também o que torna a ordenação por cabeçalho possível.
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock, CalendarClock, Server, Zap, Loader2 } from 'lucide-react'
+import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock, CalendarClock, Server, Zap, Loader2, ArrowDownUp } from 'lucide-react'
 import type { DatasetSummary, DerivedCadenceItem } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -16,27 +17,11 @@ import { Page, PageHeader, Toolbar, SearchInput, FilterChips, FilterSelect, Empt
 import KpiBar, { type Kpi } from '@/components/ui/KpiBar'
 import { Card, CardHead } from '@/components/ui/Card'
 import { Pill } from '@/components/ui/Pill'
-import TierBadge, { tierOf } from '@/components/ui/TierBadge'
-import { DataGrid, Th, Tr, Td, EntityCell } from '@/components/ui/DataGrid'
+import TierBadge, { tierOf, type Tier } from '@/components/ui/TierBadge'
+import { DataGrid, Th, Tr, Td, EntityCell, type SortDir } from '@/components/ui/DataGrid'
+import { hoursSince, lagSince, lagTone, lagLabel, type LagTone } from '@/lib/freshness'
 import ScheduleAssignDialog from './ScheduleAssignDialog'
 
-function hoursSince(iso: string | null): number | null {
-  if (!iso) return null
-  const h = (Date.now() - new Date(iso).getTime()) / 3_600_000
-  return Number.isFinite(h) ? h : null
-}
-function freshnessLabel(h: number | null): string {
-  if (h === null) return '—'
-  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`
-  if (h < 48) return `${Math.round(h)} h`
-  return `${Math.round(h / 24)} d`
-}
-function freshnessTone(h: number | null): 'ok' | 'warn' | 'crit' | 'neutral' {
-  if (h === null) return 'neutral'
-  if (h <= 26) return 'ok'
-  if (h <= 72) return 'warn'
-  return 'crit'
-}
 function compact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} M`
   if (n >= 1_000) return `${(n / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} k`
@@ -48,6 +33,54 @@ type Filter = 'all' | 'source' | 'derived' | 'official'
 // A origem de um conjunto CALCULADO é o próprio lake, não um banco — por isso
 // ele fica de fora do filtro de origem e continua em "Calculados".
 const ORIGEM_TODAS = '__todas__'
+
+// ── Ordenação ────────────────────────────────────────────────────────────
+type SortKey = 'name' | 'tier' | 'origem' | 'rows' | 'fields' | 'lag' | 'estado' | 'owner'
+
+// Sentido do PRIMEIRO clique de cada coluna. Não é "sempre crescente": a
+// pergunta que leva alguém a clicar já vem com um sentido embutido, e começar
+// pelo contrário obriga a clicar duas vezes toda vez. Em "Registros" se
+// procura o maior; em "Última atualização", o mais atrasado.
+const DIR_PADRAO: Record<SortKey, SortDir> = {
+  name: 'asc', tier: 'desc', origem: 'asc', rows: 'desc',
+  fields: 'desc', lag: 'asc', estado: 'desc', owner: 'asc',
+}
+
+const TIER_RANK: Record<Tier, number> = { bronze: 0, prata: 1, ouro: 2 }
+const ESTADO_RANK: Record<Exclude<LagTone, 'neutral'>, number> = { ok: 0, warn: 1, crit: 2 }
+
+// Valor comparável de uma coluna. `null` quer dizer "não há valor" — e vai
+// para o FIM nos dois sentidos (ver `compara`), nunca ao topo: um conjunto que
+// nunca sincronizou não é o mais recente nem o mais atrasado, é outra coisa, e
+// a coluna Estado já o marca como "sem sync".
+function valorDe(d: DatasetSummary, key: SortKey): string | number | null {
+  switch (key) {
+    case 'name': return d.name.toLowerCase()
+    case 'tier': return TIER_RANK[tierOf(d.kind, d.official)]
+    case 'origem': return (d.kind === 'derived' ? 'calculado' : d.source?.connectionName ?? 'fonte').toLowerCase()
+    case 'rows': return d.rowCount
+    case 'fields': return d.fieldCount
+    // Ordena pelo INSTANTE, não pela duração: assim 'asc' é "mais antigo
+    // primeiro" e 'desc' é "mais recente primeiro", que é como se lê qualquer
+    // coluna de data. A duração é só como o valor aparece na célula.
+    case 'lag': return d.lastSyncAt ? new Date(d.lastSyncAt).getTime() : null
+    case 'estado': {
+      const t = lagTone(hoursSince(d.lastSyncAt))
+      return t === 'neutral' ? null : ESTADO_RANK[t]
+    }
+    case 'owner': return d.ownerEmail?.toLowerCase() ?? null
+  }
+}
+
+function compara(a: DatasetSummary, b: DatasetSummary, key: SortKey, dir: SortDir): number {
+  const va = valorDe(a, key)
+  const vb = valorDe(b, key)
+  if (va === null || vb === null) return va === vb ? 0 : va === null ? 1 : -1
+  const r = typeof va === 'string'
+    ? va.localeCompare(String(vb), 'pt-BR')
+    : Number(va) - Number(vb)
+  return dir === 'asc' ? r : -r
+}
 
 export default function DatasetsPage() {
   const canEdit = useAuthStore((s) => !!s.user?.roles.some((r) => r === 'admin' || r === 'editor'))
@@ -64,6 +97,8 @@ export default function DatasetsPage() {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [origem, setOrigem] = useState<string>(ORIGEM_TODAS)
+  // null = ordem padrão (oficiais primeiro, depois por nome).
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null)
   // Calculados ainda presos a um relógio próprio. Carregado à parte porque a
   // auditoria lê o SQL de cada derivado — não cabe no payload do catálogo.
   const [cadencia, setCadencia] = useState<DerivedCadenceItem[] | null>(null)
@@ -93,6 +128,20 @@ export default function DatasetsPage() {
     setOrigem(o)
     if (o !== ORIGEM_TODAS && filter !== 'official') setFilter('source')
   }
+
+  // Clicar numa coluna nova a ordena no sentido natural dela; clicar na que já
+  // ordena inverte. Voltar ao padrão é explícito, pelo botão da barra — um
+  // terceiro clique que "desordena" faz a tabela saltar sem ninguém pedir.
+  function ordenarPor(key: SortKey) {
+    setSort((cur) => (cur?.key === key
+      ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: DIR_PADRAO[key] }))
+  }
+  const th = (key: SortKey) => ({
+    active: sort?.key === key,
+    dir: sort?.key === key ? sort.dir : DIR_PADRAO[key],
+    onClick: () => ordenarPor(key),
+  })
 
   const trocaveis = (cadencia ?? []).filter((i) => i.eligible)
   async function trocarParaCascata() {
@@ -161,9 +210,13 @@ export default function DatasetsPage() {
       return !q || d.name.toLowerCase().includes(q) || d.slug.toLowerCase().includes(q)
         || d.description.toLowerCase().includes(q) || d.tags.some((t) => t.toLowerCase().includes(q))
     })
-    // Oficiais primeiro (fonte de verdade da diretoria), depois por nome.
-    .sort((a, b) => Number(b.official) - Number(a.official) || a.name.localeCompare(b.name)),
-  [datasets, filter, origem, query])
+    // Sem ordenação escolhida: oficiais primeiro (fonte de verdade da
+    // diretoria), depois por nome. Com ordenação, o nome fica de desempate —
+    // sem ele, linhas de mesmo valor trocariam de lugar a cada render.
+    .sort((a, b) => (sort
+      ? compara(a, b, sort.key, sort.dir) || a.name.localeCompare(b.name, 'pt-BR')
+      : Number(b.official) - Number(a.official) || a.name.localeCompare(b.name, 'pt-BR'))),
+  [datasets, filter, origem, query, sort])
 
   // Estado vazio ciente do papel: viewer sem NENHUM acesso recebe orientação
   // clara (o acesso é fechado por padrão), não "nada publicado".
@@ -186,8 +239,8 @@ export default function DatasetsPage() {
     { label: 'Conjuntos', icon: Boxes, value: String(stats.all), foot: `${stats.source} fontes · ${stats.derived} calculados` },
     { label: 'Linhas no lake', icon: Layers, value: compact(stats.rows), foot: 'materializadas em Parquet' },
     {
-      label: 'Frescor mediano', icon: Clock,
-      value: stats.median !== null ? freshnessLabel(stats.median) : '—',
+      label: 'Defasagem mediana', icon: Clock,
+      value: stats.median !== null ? lagLabel(stats.median) : '—',
       foot: stats.stale ? `${stats.stale} atrasado(s)` : 'todos em dia',
     },
     { label: 'Camada ouro', icon: BadgeCheck, value: String(stats.official), foot: 'certificados pela diretoria' },
@@ -237,6 +290,16 @@ export default function DatasetsPage() {
                 onChange={trocaOrigem}
                 options={[{ key: ORIGEM_TODAS, label: 'todas', count: stats.source }, ...origens]}
               />
+            )}
+            {/* A ordem padrão (oficiais primeiro) não é alcançável clicando
+                nas colunas, então precisa de saída própria. */}
+            {sort && (
+              <button
+                onClick={() => setSort(null)}
+                className="flex h-[30px] items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 text-[11.5px] font-medium text-zinc-500 transition-colors hover:text-zinc-900 dark:border-zinc-800 dark:hover:text-zinc-100"
+              >
+                <ArrowDownUp size={12} strokeWidth={1.6} /> Ordem padrão
+              </button>
             )}
             <SearchInput value={query} onChange={setQuery} placeholder="Buscar por nome, slug ou etiqueta…" />
             {isAdmin && selected.size > 0 && (() => {
@@ -324,23 +387,28 @@ export default function DatasetsPage() {
                         />
                       </Th>
                     )}
-                    <Th>Conjunto</Th>
-                    <Th className="w-[92px]">Camada</Th>
+                    <Th sort={th('name')}>Conjunto</Th>
+                    <Th sort={th('tier')} className="w-[88px]">Camada</Th>
                     {/* Era "Tipo" (fonte/calculado) — o mesmo que o selo de
                         Camada já diz ao lado. Trocado pelo banco de origem,
                         que é a informação que faltava na tabela. */}
-                    <Th className="w-[140px]">Origem</Th>
-                    <Th right className="w-[104px]">Registros</Th>
-                    <Th right className="w-[76px]">Campos</Th>
-                    <Th className="w-[84px]">Frescor</Th>
-                    <Th className="w-[96px]">Estado</Th>
-                    <Th className="w-[126px]">Dono</Th>
+                    <Th sort={th('origem')} className="w-[140px]">Origem</Th>
+                    <Th right sort={th('rows')} className="w-[96px]">Registros</Th>
+                    <Th right sort={th('fields')} className="w-[68px]">Campos</Th>
+                    {/* Era "Frescor" — jargão de engenharia de dados. O número
+                        é o mesmo; o rótulo passou a se ler sem tradução.
+                        "Atualizado" + "há 3 h" forma a frase inteira na
+                        célula, e cabe no versalete de 9,5px (o cabeçalho por
+                        extenso pediria 165px e truncaria). */}
+                    <Th sort={th('lag')} className="w-[110px]">Atualizado</Th>
+                    <Th sort={th('estado')} className="w-[92px]">Estado</Th>
+                    <Th sort={th('owner')} className="w-[112px]">Dono</Th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((d) => {
                     const h = hoursSince(d.lastSyncAt)
-                    const tone = freshnessTone(h)
+                    const tone = lagTone(h)
                     return (
                       <Tr key={d.id}>
                         {isAdmin && (
@@ -375,7 +443,12 @@ export default function DatasetsPage() {
                         </Td>
                         <Td right muted>{d.rowCount !== null ? d.rowCount.toLocaleString('pt-BR') : '—'}</Td>
                         <Td right muted>{d.fieldCount}</Td>
-                        <Td muted>{freshnessLabel(h)}</Td>
+                        <Td
+                          muted
+                          title={d.lastSyncAt ? new Date(d.lastSyncAt).toLocaleString('pt-BR') : 'Nunca sincronizou'}
+                        >
+                          {lagSince(h)}
+                        </Td>
                         <Td>
                           {tone === 'ok' && <Pill tone="ok">em dia</Pill>}
                           {tone === 'warn' && <Pill tone="warn">atrasado</Pill>}

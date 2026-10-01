@@ -1,6 +1,6 @@
 // Início: onboarding guiado quando vazio (ciente do papel) e, com conteúdo, a
 // visão geral operável do lake — barra de métricas, pipeline por camada
-// (Bronze/Prata/Ouro), conjuntos com frescor e atalhos.
+// (Bronze/Prata/Ouro), conjuntos com a defasagem de cada um e atalhos.
 //
 // Densidade: uma barra de métricas no lugar de quatro cards soltos, tabela de
 // 33px por linha e nenhum título acima de 20px. A camada de cada conjunto
@@ -21,30 +21,10 @@ import { Card, CardHead } from '@/components/ui/Card'
 import { Pill } from '@/components/ui/Pill'
 import TierBadge, { tierOf, TIER_HINT, type Tier } from '@/components/ui/TierBadge'
 import { DataGrid, Th, Tr, Td, EntityCell } from '@/components/ui/DataGrid'
-
-// ── Frescor ────────────────────────────────────────────────────────────────
-// Horas desde a última sincronização. Um conjunto atrasado é um número errado
-// esperando para ser usado — por isso o frescor vem antes da contagem de linhas.
-function hoursSince(iso: string | null): number | null {
-  if (!iso) return null
-  const h = (Date.now() - new Date(iso).getTime()) / 3_600_000
-  return Number.isFinite(h) ? h : null
-}
-
-function freshnessLabel(h: number | null): string {
-  if (h === null) return '—'
-  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`
-  if (h < 48) return `${Math.round(h)} h`
-  return `${Math.round(h / 24)} d`
-}
-
-// Janela diária: até 26h é a cadência normal; acima disso a janela pulou.
-function freshnessTone(h: number | null): 'ok' | 'warn' | 'crit' | 'neutral' {
-  if (h === null) return 'neutral'
-  if (h <= 26) return 'ok'
-  if (h <= 72) return 'warn'
-  return 'crit'
-}
+// Um conjunto atrasado é um número errado esperando para ser usado — por isso
+// a defasagem vem antes da contagem de linhas. Os limiares são os MESMOS da
+// tela de Conjuntos, e por isso moram num módulo só.
+import { hoursSince, lagLabel, lagSince, lagTone } from '@/lib/freshness'
 
 function compact(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} B`
@@ -142,7 +122,7 @@ function Lane({ tier, datasets }: { tier: Tier; datasets: DatasetSummary[] }) {
       <div className="space-y-px">
         {datasets.slice(0, 5).map((d) => {
           const h = hoursSince(d.lastSyncAt)
-          const tone = freshnessTone(h)
+          const tone = lagTone(h)
           return (
             <Link key={d.id} to={`/datasets/${d.slug}`}
               className="flex items-center gap-2 rounded px-1.5 py-1 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
@@ -156,7 +136,7 @@ function Lane({ tier, datasets }: { tier: Tier; datasets: DatasetSummary[] }) {
                 {d.rowCount !== null ? compact(d.rowCount) : `${d.fieldCount} campos`}
               </span>
               <span
-                title={`Sincronizado há ${freshnessLabel(h)}`}
+                title={`Sincronizado ${lagSince(h)}`}
                 className={`h-[5px] w-[5px] shrink-0 rounded-full ${
                   tone === 'ok' ? 'bg-ok' : tone === 'warn' ? 'bg-warn' : tone === 'crit' ? 'bg-crit' : 'bg-zinc-300 dark:bg-zinc-700'
                 }`}
@@ -226,8 +206,8 @@ export default function HomePage() {
       foot: 'materializadas em Parquet',
     },
     {
-      label: 'Frescor mediano', icon: Clock,
-      value: view.median !== null ? freshnessLabel(view.median) : '—',
+      label: 'Defasagem mediana', icon: Clock,
+      value: view.median !== null ? lagLabel(view.median) : '—',
       foot: view.stale
         ? `${view.stale} conjunto(s) atrasado(s)`
         : `${datasets.length} em dia`,
@@ -300,14 +280,14 @@ export default function HomePage() {
                       <Th className="w-[92px]">Camada</Th>
                       <Th right className="w-[96px]">Linhas</Th>
                       <Th right className="w-[72px]">Campos</Th>
-                      <Th className="w-[88px]">Frescor</Th>
+                      <Th className="w-[110px]">Atualizado</Th>
                       <Th className="w-[92px]">Estado</Th>
                     </tr>
                   </thead>
                   <tbody>
                     {view.recent.slice(0, 8).map((d) => {
                       const h = hoursSince(d.lastSyncAt)
-                      const tone = freshnessTone(h)
+                      const tone = lagTone(h)
                       return (
                         <Tr key={d.id}>
                           <Td>
@@ -322,7 +302,7 @@ export default function HomePage() {
                           <Td><TierBadge tier={tierOf(d.kind, d.official)} /></Td>
                           <Td right muted>{d.rowCount !== null ? d.rowCount.toLocaleString('pt-BR') : '—'}</Td>
                           <Td right muted>{d.fieldCount}</Td>
-                          <Td muted>{freshnessLabel(h)}</Td>
+                          <Td muted>{lagSince(h)}</Td>
                           <Td>
                             {tone === 'ok' && <Pill tone="ok">em dia</Pill>}
                             {tone === 'warn' && <Pill tone="warn">atrasado</Pill>}
