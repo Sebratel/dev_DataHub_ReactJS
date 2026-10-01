@@ -14,20 +14,28 @@
 --     mais usados de verdade.
 --
 -- Não salve como conjunto: cole, pré-visualize, leia, apague.
+--
+-- ┌─ O QUE ISTO ACHOU, em 01/10/2026 ───────────────────────────────────────┐
+-- │ Linha 7: assignments.id, ai.assignment_id, it.id e ai.incident_type_id  │
+-- │ são todos DOUBLE. Logo CAST(id AS VARCHAR) = "12.0", que nunca casa com │
+-- │ '12' — as linhas 1, 3, 4 e 5 vinham zeradas por isso, embora o tipo 12  │
+-- │ tenha 249.107 incidentes (linha 8).                                     │
+-- │ Este arquivo já foi corrigido para comparar id como NÚMERO.             │
+-- └─────────────────────────────────────────────────────────────────────────┘
 -- =============================================================================
 WITH
 src_assignment_incidents AS (SELECT * FROM assignment_incidents),
 src_assignments          AS (SELECT * FROM assignments),
 src_incident_types       AS (SELECT * FROM incident_types),
 
-doze AS (SELECT unnest(['12','1014','1254','1255','1256','1136','249','268','1160','1015','279','15']) AS id_txt)
+doze AS (SELECT unnest([12, 1014, 1254, 1255, 1256, 1136, 249, 268, 1160, 1015, 279, 15]) AS id_num)
 
 SELECT medida, valor FROM (
     -- 1. Existe protocolo desses tipos, sem depender de junção nenhuma?
     SELECT 1 AS ordem, '1. incidentes com tipo entre os 12 (sem juncao)' AS medida,
            CAST(count(*) AS VARCHAR) AS valor
       FROM src_assignment_incidents ai
-     WHERE CAST(ai.incident_type_id AS VARCHAR) IN (SELECT id_txt FROM doze)
+     WHERE TRY_CAST(ai.incident_type_id AS BIGINT) IN (SELECT id_num FROM doze)
 
     -- 2. A junção mais básica de todas.
     UNION ALL SELECT 2, '2. A: incidentes x assignments', CAST(count(*) AS VARCHAR)
@@ -37,25 +45,25 @@ SELECT medida, valor FROM (
       FROM src_assignment_incidents ai
       JOIN src_assignments    a  ON a.id  = ai.assignment_id
       JOIN src_incident_types it ON it.id = ai.incident_type_id
-       AND CAST(it.id AS VARCHAR) IN (SELECT id_txt FROM doze)
+       AND TRY_CAST(it.id AS BIGINT) IN (SELECT id_num FROM doze)
 
     UNION ALL SELECT 4, '4. C: B + created >= 2026-01-01  (= a base)', CAST(count(*) AS VARCHAR)
       FROM src_assignment_incidents ai
       JOIN src_assignments    a  ON a.id  = ai.assignment_id
       JOIN src_incident_types it ON it.id = ai.incident_type_id
-       AND CAST(it.id AS VARCHAR) IN (SELECT id_txt FROM doze)
+       AND TRY_CAST(it.id AS BIGINT) IN (SELECT id_num FROM doze)
      WHERE a.created >= TIMESTAMP '2026-01-01'
 
     -- 5. Dos 12 ids pedidos, quais existem mesmo no catálogo de tipos?
     UNION ALL SELECT 5, '5. quais dos 12 ids existem em incident_types',
-           coalesce(string_agg(CAST(it.id AS VARCHAR), ', '), 'NENHUM')
+           coalesce(string_agg(CAST(TRY_CAST(it.id AS BIGINT) AS VARCHAR), ', '), 'NENHUM')
       FROM src_incident_types it
-     WHERE CAST(it.id AS VARCHAR) IN (SELECT id_txt FROM doze)
+     WHERE TRY_CAST(it.id AS BIGINT) IN (SELECT id_num FROM doze)
 
     -- 6. O CASE do técnico compara a string inteira — precisa bater letra a letra.
     UNION ALL SELECT 6, '6. titulo exato do id 15',
            coalesce(string_agg(it.title, ' | '), 'ID 15 NAO EXISTE')
-      FROM src_incident_types it WHERE CAST(it.id AS VARCHAR) = '15'
+      FROM src_incident_types it WHERE TRY_CAST(it.id AS BIGINT) = 15
 
     -- 7. Chave de texto de um lado e número do outro não casa, e não dá erro.
     UNION ALL SELECT 7, '7. tipos de dado das chaves',
@@ -68,7 +76,7 @@ SELECT medida, valor FROM (
     --    relatório é de outra codificação.
     UNION ALL SELECT 8, '8. tipos mais usados em assignment_incidents',
            (SELECT string_agg(x.rotulo, ' | ') FROM (
-                SELECT CAST(ai.incident_type_id AS VARCHAR) || ' (' || CAST(count(*) AS VARCHAR) || ')' AS rotulo
+                SELECT CAST(TRY_CAST(ai.incident_type_id AS BIGINT) AS VARCHAR) || ' (' || CAST(count(*) AS VARCHAR) || ')' AS rotulo
                   FROM src_assignment_incidents ai
                  GROUP BY ai.incident_type_id
                  ORDER BY count(*) DESC

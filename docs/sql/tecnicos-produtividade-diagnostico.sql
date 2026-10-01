@@ -55,13 +55,13 @@ tipos AS (
     SELECT 31 AS ordem, 'incident_types: total' AS medida, CAST(count(*) AS VARCHAR) AS valor FROM src_incident_types
     UNION ALL SELECT 32, 'incident_types: quantos dos 12 ids existem',
         CAST(count(*) AS VARCHAR) FROM src_incident_types
-        WHERE CAST(id AS VARCHAR) IN ('12','1014','1254','1255','1256','1136','249','268','1160','1015','279','15')
+        WHERE TRY_CAST(id AS BIGINT) IN (12, 1014, 1254, 1255, 1256, 1136, 249, 268, 1160, 1015, 279, 15)
     UNION ALL SELECT 33, 'incident_types: quais ids casaram',
-        string_agg(CAST(id AS VARCHAR), ', ' ORDER BY CAST(id AS VARCHAR)) FROM src_incident_types
-        WHERE CAST(id AS VARCHAR) IN ('12','1014','1254','1255','1256','1136','249','268','1160','1015','279','15')
+        string_agg(CAST(TRY_CAST(id AS BIGINT) AS VARCHAR), ', ' ORDER BY TRY_CAST(id AS BIGINT)) FROM src_incident_types
+        WHERE TRY_CAST(id AS BIGINT) IN (12, 1014, 1254, 1255, 1256, 1136, 249, 268, 1160, 1015, 279, 15)
     -- O título exato importa: o CASE do técnico compara com a string inteira.
     UNION ALL SELECT 34, 'incident_types: titulo do id 15 (troca de endereco)',
-        string_agg(title, ' | ') FROM src_incident_types WHERE CAST(id AS VARCHAR) = '15'
+        string_agg(title, ' | ') FROM src_incident_types WHERE TRY_CAST(id AS BIGINT) = 15
 ),
 
 -- ── 4. As junções da base sobrevivem, uma a uma? ──────────────────────────
@@ -72,18 +72,18 @@ funil AS (
       FROM src_assignment_incidents ai
       JOIN src_assignments    a  ON a.id  = ai.assignment_id
       JOIN src_incident_types it ON it.id = ai.incident_type_id
-        AND CAST(it.id AS VARCHAR) IN ('12','1014','1254','1255','1256','1136','249','268','1160','1015','279','15')
+        AND TRY_CAST(it.id AS BIGINT) IN (12, 1014, 1254, 1255, 1256, 1136, 249, 268, 1160, 1015, 279, 15)
     UNION ALL SELECT 43, 'C. B + created >= 2026-01-01 (= a base)', CAST(count(*) AS VARCHAR)
       FROM src_assignment_incidents ai
       JOIN src_assignments    a  ON a.id  = ai.assignment_id
       JOIN src_incident_types it ON it.id = ai.incident_type_id
-        AND CAST(it.id AS VARCHAR) IN ('12','1014','1254','1255','1256','1136','249','268','1160','1015','279','15')
+        AND TRY_CAST(it.id AS BIGINT) IN (12, 1014, 1254, 1255, 1256, 1136, 249, 268, 1160, 1015, 279, 15)
       WHERE a.created >= TIMESTAMP '2026-01-01'
     UNION ALL SELECT 44, 'D. C + status diferente de Cancelado', CAST(count(*) AS VARCHAR)
       FROM src_assignment_incidents ai
       JOIN src_assignments    a  ON a.id  = ai.assignment_id
       JOIN src_incident_types it ON it.id = ai.incident_type_id
-        AND CAST(it.id AS VARCHAR) IN ('12','1014','1254','1255','1256','1136','249','268','1160','1015','279','15')
+        AND TRY_CAST(it.id AS BIGINT) IN (12, 1014, 1254, 1255, 1256, 1136, 249, 268, 1160, 1015, 279, 15)
       LEFT JOIN src_incident_status is2 ON is2.id = ai.incident_status_id
       WHERE a.created >= TIMESTAMP '2026-01-01' AND is2.title IS DISTINCT FROM 'Cancelado'
 )
