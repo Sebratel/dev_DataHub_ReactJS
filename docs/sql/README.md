@@ -7,9 +7,10 @@ deste lake — as armadilhas que não dão erro, só resultado errado.
 | Arquivo | O que é |
 |---|---|
 | `tecnicos-produtividade-detalhe.sql` | conjunto: um protocolo por papel (instalador/auxiliar) |
-| `tecnicos-produtividade.sql` | conjunto: o agregado por técnico, lendo o detalhe |
+| `tecnicos-produtividade.sql` | conjunto: o agregado por técnico **e mês**, lendo o detalhe |
 | `tecnicos-produtividade-diagnostico.sql` | descartável: volume dos conjuntos e janelas de data |
 | `tecnicos-produtividade-diagnostico-2.sql` | descartável: onde um funil de junções zera |
+| `tecnicos-produtividade-diagnostico-3.sql` | descartável: por que o técnico auxiliar não resolve |
 
 ---
 
@@ -80,7 +81,19 @@ alcançam o sistema de arquivos (`read_parquet`, `glob`, `attach`, `pragma`…).
 Referencie conjuntos pelo **apelido com underscore** — a lista fica no painel
 direito da tela.
 
-## 5. Cadência: cascata nem sempre
+## 5. Agregado precisa de uma coluna de tempo
+
+Um calculado agregado só por entidade (técnico, cliente, equipe) não dá recorte
+de período: a data foi embora no `GROUP BY`. Inclua a competência no grão desde
+o início — custa pouco (96 técnicos × 12 meses são ~1.000 linhas) e é a
+diferença entre um painel filtrável e um número único.
+
+E guarde os **componentes**, não a razão. `protocolos` e `dias_trabalhados`
+somam entre meses; `media_por_dia` não. Num período de vários meses a média é
+`sum(protocolos) / sum(dias_trabalhados)` — a média das médias mensais pesa
+igual quem trabalhou 2 dias e quem trabalhou 20.
+
+## 6. Cadência: cascata nem sempre
 
 Um calculado que cita 10 fontes, em **cascata**, recalcula a cada sincronização
 de qualquer uma delas. Com as fontes em cadência de minutos, isso vira recálculo
