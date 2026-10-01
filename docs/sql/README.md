@@ -8,8 +8,6 @@ deste lake — as armadilhas que não dão erro, só resultado errado.
 |---|---|
 | `tecnicos-produtividade-detalhe.sql` | conjunto: um protocolo por papel (instalador/auxiliar) |
 | `tecnicos-produtividade.sql` | conjunto: o agregado por técnico **e mês**, lendo o detalhe |
-| `tecnicos-produtividade-diagnostico.sql` | descartável: volume dos conjuntos e janelas de data |
-| `tecnicos-produtividade-diagnostico-2.sql` | descartável: onde um funil de junções zera |
 | `tecnicos-produtividade-diagnostico-3.sql` | descartável: por que o técnico auxiliar não resolve |
 
 ---
@@ -93,7 +91,18 @@ somam entre meses; `media_por_dia` não. Num período de vários meses a média 
 `sum(protocolos) / sum(dias_trabalhados)` — a média das médias mensais pesa
 igual quem trabalhou 2 dias e quem trabalhou 20.
 
-## 6. Cadência: cascata nem sempre
+## 6. Parte de Parquet pela metade
+
+Se a prévia trouxer **`File '...' too small to be a Parquet file`**, o SQL está
+certo: o conjunto citado tem uma parte truncada no lake, de uma materialização
+interrompida. Abra esse conjunto e use **Materializar agora** (ou *Sincronizar
+agora*, se for fonte) — a carga nova substitui as partes antigas.
+
+O motor agora escreve a parte com sufixo `.writing` e só a renomeia no fim, e o
+boot varre o lake pondo em quarentena o que não for Parquet válido. Mas um
+conjunto já envenenado antes disso continua assim até a próxima carga.
+
+## 7. Cadência: cascata nem sempre
 
 Um calculado que cita 10 fontes, em **cascata**, recalcula a cada sincronização
 de qualquer uma delas. Com as fontes em cadência de minutos, isso vira recálculo

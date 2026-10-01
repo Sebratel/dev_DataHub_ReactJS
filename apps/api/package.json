@@ -20,7 +20,8 @@
     "sqlconfig:smoke": "tsx src/dev/syncConfigSqlSmoke.ts",
     "tz:smoke": "tsx src/dev/timezoneSmoke.ts",
     "staging:smoke": "tsx src/dev/stagingSmoke.ts",
-    "derived:smoke": "tsx src/dev/derivedCadenceSmoke.ts"
+    "derived:smoke": "tsx src/dev/derivedCadenceSmoke.ts",
+    "lake:smoke": "tsx src/dev/lakeRepairSmoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

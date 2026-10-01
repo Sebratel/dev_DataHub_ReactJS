@@ -33,7 +33,7 @@ import { monitorRouter } from './modules/admin/monitorRouter.js'
 import { diskRouter } from './modules/admin/diskRouter.js'
 import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
-import { cleanStaging } from './core/lake.js'
+import { cleanStaging, faxinaLake } from './core/lake.js'
 import { closeOrphanRuns } from './modules/sync/ingest.js'
 import { reloadConnections } from './connectors/store.js'
 import { reloadMasterAdmins } from './modules/auth/masterAdmins.js'
@@ -140,6 +140,20 @@ try {
   if (n) console.log(`[lake] staging: ${n} arquivo(s) órfão(s) removido(s).`)
 } catch (e) {
   console.warn(`[lake] limpeza de staging falhou: ${(e as Error).message}`)
+}
+// Parquet pela metade de uma escrita interrompida. Um único arquivo truncado
+// derruba a leitura do conjunto INTEIRO — e de todo calculado e painel que o
+// usam —, com uma mensagem que não diz nem qual conjunto. Aqui, no boot, nada
+// está escrevendo, então é o momento seguro de varrer.
+try {
+  const f = faxinaLake()
+  if (f.parciais.length) console.log(`[lake] ${f.parciais.length} parte(s) pela metade removida(s).`)
+  for (const q of f.emQuarentena) {
+    console.warn(`[lake] ARQUIVO CORROMPIDO posto em quarentena: ${q} -> ${q}.corrompido. ` +
+      'O conjunto volta a ser legível; re-sincronize ou re-materialize para repor as linhas.')
+  }
+} catch (e) {
+  console.warn(`[lake] faxina de parquet falhou: ${(e as Error).message}`)
 }
 // Carrega as conexões GERENCIADAS (cadastradas na tela) para o registry.
 if (isDbAvailable()) {

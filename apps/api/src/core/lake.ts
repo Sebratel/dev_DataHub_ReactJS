@@ -1,7 +1,10 @@
 // O "lake": diretório local de Parquet por tenant/dataset (volume em produção),
 // com espelhamento opcional para o bucket GCS (durabilidade). As consultas leem
 // SEMPRE o diretório local — rápido e sem custo de egress.
-import { mkdirSync, existsSync, readdirSync, unlinkSync, statSync, rmSync, statfsSync } from 'node:fs'
+import {
+  mkdirSync, existsSync, readdirSync, unlinkSync, statSync, rmSync, statfsSync,
+  renameSync, openSync, readSync, closeSync,
+} from 'node:fs'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -71,6 +74,109 @@ export function removeDatasetDir(tenant: string, slug: string): boolean {
 
 export function clearParquet(dir: string, except?: string): void {
   for (const f of listParquet(dir)) if (f !== except) unlinkSync(f)
+}
+
+// ── Parte EM ESCRITA ─────────────────────────────────────────────────────
+// O `COPY ... TO` do DuckDB escrevia direto com o nome final, dentro da pasta
+// do conjunto. Interrompido no meio — servidor reiniciado, disco cheio, erro
+// depois do arquivo já criado — ele deixava um "part-xxx.parquet" truncado, e
+// o `catch` só marcava a execução como erro: ninguém removia o arquivo.
+//
+// A partir daí o conjunto ficava ENVENENADO. `read_parquet(pasta/*.parquet)`
+// lê TODOS os arquivos, então um inválido derruba a leitura inteira — o
+// próprio conjunto, todo calculado que o referencia e todo painel que o usa,
+// com a mensagem "File ... too small to be a Parquet file", que não diz nem
+// qual conjunto nem o que fazer. Aconteceu em produção.
+//
+// O sufixo abaixo NÃO termina em .parquet, então nenhum glob o enxerga: uma
+// escrita interrompida deixa lixo invisível em vez de veneno. A parte só
+// ganha o nome final depois do COPY voltar, por rename (atômico no mesmo
+// volume).
+export const SUFIXO_EM_ESCRITA = '.writing'
+
+export function partEmEscrita(dir: string, runId: string): { tmp: string; final: string } {
+  const final = join(dir, `part-${runId}.parquet`)
+  return { tmp: `${final}${SUFIXO_EM_ESCRITA}`, final }
+}
+
+/** Promove a parte recém-escrita ao nome definitivo. */
+export function concluiParte(p: { tmp: string; final: string }): void {
+  renameSync(p.tmp, p.final)
+}
+
+/** Remove a parte pela metade. Best-effort: já estamos tratando um erro. */
+export function descartaParte(p: { tmp: string; final: string }): void {
+  try { if (existsSync(p.tmp)) unlinkSync(p.tmp) } catch { /* nada a fazer */ }
+}
+
+// Um Parquet válido começa E termina com o número mágico "PAR1" — o do fim faz
+// parte do rodapé, que é onde o esquema mora e o que o leitor abre primeiro.
+// Uma escrita interrompida tem o começo e não tem o fim, e é exatamente esse o
+// arquivo que derruba a leitura.
+const MAGICA = 'PAR1'
+export function parquetIntacto(file: string): boolean {
+  let fd: number | undefined
+  try {
+    const { size } = statSync(file)
+    if (size < 12) return false // 4 (início) + 4 (tamanho do rodapé) + 4 (fim)
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(4)
+    readSync(fd, buf, 0, 4, 0)
+    if (buf.toString('latin1') !== MAGICA) return false
+    readSync(fd, buf, 0, 4, size - 4)
+    return buf.toString('latin1') === MAGICA
+  } catch {
+    return false
+  } finally {
+    if (fd !== undefined) try { closeSync(fd) } catch { /* já fechado */ }
+  }
+}
+
+export interface FaxinaDoLake {
+  parciais: string[]     // restos de escrita interrompida (.writing)
+  emQuarentena: string[] // .parquet que não são Parquet
+}
+
+// Varre um diretório de conjunto e o devolve LEGÍVEL.
+//
+// Partes pela metade são apagadas — não contêm dado nenhum que alguém queira.
+// Parquet inválido é RENOMEADO, não apagado: tirar do glob já destrava a
+// leitura, e apagar sozinho um arquivo que o operador nunca viu é destruir
+// evidência de um defeito que talvez ainda não esteja explicado.
+export function faxinaDataset(dir: string): FaxinaDoLake {
+  const r: FaxinaDoLake = { parciais: [], emQuarentena: [] }
+  if (!existsSync(dir)) return r
+  for (const f of readdirSync(dir)) {
+    const caminho = join(dir, f)
+    if (f.endsWith(SUFIXO_EM_ESCRITA)) {
+      try { unlinkSync(caminho); r.parciais.push(caminho) } catch { /* segue */ }
+      continue
+    }
+    if (!f.endsWith('.parquet')) continue
+    if (parquetIntacto(caminho)) continue
+    try {
+      renameSync(caminho, `${caminho}.corrompido`)
+      r.emQuarentena.push(caminho)
+    } catch { /* segue */ }
+  }
+  return r
+}
+
+// Faxina do lake inteiro, no BOOT — quando nada está sincronizando e, portanto,
+// nenhum arquivo legítimo está no meio de uma escrita.
+export function faxinaLake(): FaxinaDoLake {
+  const total: FaxinaDoLake = { parciais: [], emQuarentena: [] }
+  if (!existsSync(LAKE_ROOT)) return total
+  for (const t of readdirSync(LAKE_ROOT, { withFileTypes: true })) {
+    if (!t.isDirectory() || t.name.startsWith('.')) continue
+    for (const d of readdirSync(join(LAKE_ROOT, t.name), { withFileTypes: true })) {
+      if (!d.isDirectory()) continue
+      const r = faxinaDataset(join(LAKE_ROOT, t.name, d.name))
+      total.parciais.push(...r.parciais)
+      total.emQuarentena.push(...r.emQuarentena)
+    }
+  }
+  return total
 }
 
 export function dirBytes(dir: string): number {

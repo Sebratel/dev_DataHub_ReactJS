@@ -7,10 +7,12 @@
 // apelido com underscore (massiva_history). Internamente viram CTEs sobre
 // read_parquet — o usuário nunca vê caminhos de arquivo.
 // ─────────────────────────────────────────────────────────────────────────
-import { join } from 'node:path'
 import { db } from '../../db/pool.js'
 import { config } from '../../core/config.js'
-import { datasetDir, parquetGlob, listParquet, clearParquet, dirBytes, uploadToGcs } from '../../core/lake.js'
+import {
+  datasetDir, parquetGlob, listParquet, clearParquet, dirBytes, uploadToGcs,
+  partEmEscrita, concluiParte, descartaParte,
+} from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { assertReadOnly, stripNoise } from '../../core/guard.js'
 import { accessibleDatasetIds, type AccessUser } from '../../core/access.js'
@@ -276,6 +278,20 @@ export function buildLakeSql(userSql: string, refs: LakeRef[]): string {
 // Erro de "tabela não existe" do DuckDB → mensagem que explica as 3 causas
 // possíveis e lista o que ESTÁ disponível (apelidos com underscore).
 function friendlyDuckError(e: Error, refs: LakeRef[]): Error {
+  // Parquet truncado no lake. A mensagem do DuckDB traz o CAMINHO do arquivo e
+  // mais nada — nem qual conjunto é, nem que isso se conserta sozinho. Quem lê
+  // "too small to be a Parquet file" procura erro no próprio SQL, que está
+  // certo.
+  const t = /File '([^']*[/\\]([^/\\]+)[/\\][^/\\]+)' too small to be a Parquet file/.exec(e.message)
+  if (t) {
+    return new Error(
+      `O conjunto "${t[2]}" tem um arquivo truncado no lake, de uma materialização interrompida ` +
+      '(servidor reiniciado, disco cheio). Não é problema deste SQL. ' +
+      `Abra "${t[2]}" e use Materializar agora (ou Sincronizar agora, se for fonte): ` +
+      'a nova carga substitui as partes antigas e o conjunto volta a ser legível. ' +
+      `Arquivo: ${t[1]}`,
+    )
+  }
   const m = /Table with name (\S+) does not exist/.exec(e.message)
   if (!m) return e
   const available = refs.map((r) => r.slug.replace(/-/g, '_')).join(', ')
@@ -361,11 +377,17 @@ export async function materializeDerived(ds: {
     const refs = await lakeRefs(ds.tenantSlug, { excludeSlug: ds.slug })
     const wrapped = buildLakeSql(ds.transformSql, refs)
 
-    const partFs = join(dir, `part-${run.id}.parquet`)
-    const partDuck = partFs.replace(/\\/g, '/')
+    // Escreve com sufixo .writing e só renomeia no fim: um COPY interrompido
+    // deixa um arquivo que nenhum glob enxerga, em vez de um Parquet truncado
+    // que derruba toda leitura do conjunto daí em diante (ver lake.ts).
+    const parte = partEmEscrita(dir, String(run.id))
+    const partFs = parte.final
+    const partDuck = parte.tmp.replace(/\\/g, '/')
     try {
       await duckQuery(`copy (${wrapped}) to '${partDuck}' (format parquet, compression zstd)`)
+      concluiParte(parte)
     } catch (e) {
+      descartaParte(parte)
       throw friendlyDuckError(e as Error, refs)
     }
     clearParquet(dir, partFs)

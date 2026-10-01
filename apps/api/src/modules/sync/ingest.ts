@@ -14,7 +14,10 @@ import { db } from '../../db/pool.js'
 import { getConnector } from '../../connectors/registry.js'
 import { querySource } from '../../connectors/pools.js'
 import { fetchHttpPages, type HttpEndpoint, type HttpPagination, type PageMetric } from '../../connectors/httpSource.js'
-import { datasetDir, parquetGlob, clearParquet, dirBytes, uploadToGcs, listParquet, stagingDir } from '../../core/lake.js'
+import {
+  datasetDir, parquetGlob, clearParquet, dirBytes, uploadToGcs, listParquet, stagingDir,
+  partEmEscrita, concluiParte, descartaParte,
+} from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { materializeDerived, referencedSlugs } from '../transform/derive.js'
 
@@ -698,7 +701,12 @@ async function runSync(datasetId: string): Promise<string> {
 
     // JSONL → Parquet (zstd). Snapshot substitui as partes; incremental acrescenta.
     if (total > 0) {
-      const part = join(dir, `part-${run.id}.parquet`).replace(/\\/g, '/')
+      // Mesma trava do calculado: escreve com sufixo .writing e só renomeia no
+      // fim. Três execuções recentes desta plataforma morreram com "o servidor
+      // reiniciou durante a execução" — cada uma delas, aqui, deixava para trás
+      // um Parquet truncado capaz de derrubar toda leitura do conjunto.
+      const parte = partEmEscrita(dir, String(run.id))
+      const part = parte.tmp.replace(/\\/g, '/')
       // Schema DECLARADO (não auto-inferido): lemos cada coluna com um tipo
       // seguro e convertemos com try_cast (NULL em vez de erro). Sem isto, o
       // read_json_auto adivinha o tipo e ESTOURA em valores fora do padrão —
@@ -726,8 +734,14 @@ async function runSync(datasetId: string): Promise<string> {
         ? `read_json(${sqlit(jsonl.replace(/\\/g, '/'))}, columns={${cols}}, format='newline_delimited', ` +
           `maximum_object_size=${config.sync.maxJsonObjectBytes})`
         : `read_json_auto('${jsonl.replace(/\\/g, '/')}')` // sem campos: fallback improvável
-      await duckQuery(`copy (select ${selectList || '*'} from ${src}) to '${part}' (format parquet, compression zstd)`)
-      if (replaceParts) clearParquet(dir, join(dir, `part-${run.id}.parquet`))
+      try {
+        await duckQuery(`copy (select ${selectList || '*'} from ${src}) to '${part}' (format parquet, compression zstd)`)
+        concluiParte(parte)
+      } catch (e) {
+        descartaParte(parte)
+        throw e
+      }
+      if (replaceParts) clearParquet(dir, parte.final)
 
       // UPSERT no lake. Sem isto, a linha reeditada CONVIVE com a versão antiga
       // (o incremental acrescenta uma parte e nada remove a anterior), e as duas
