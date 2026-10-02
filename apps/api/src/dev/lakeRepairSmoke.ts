@@ -96,6 +96,31 @@ check('descartar remove o resto da escrita falha', !existsSync(p2.tmp) && !exist
 check('e a pasta segue legível',
   Number((await duckQuery(`select count(*) n from read_parquet('${parquetGlob(dir)}')`)).rows[0]?.n) === 3)
 
+// ── O ciclo COMPLETO, na ordem em que a materialização faz ───────────────
+// Este bloco existe por um erro real: ao passar o COPY a escrever no
+// temporário, a leitura seguinte (refreshFields, que faz `describe select *
+// from read_parquet(...)`) continuou apontando para o caminho temporário —
+// que já tinha sido renomeado. Toda materialização passou a falhar com "No
+// files found that match the pattern ...parquet.writing".
+//
+// Testar as primitivas isoladas não pega isso: cada uma estava certa. O que
+// quebrou foi a SEQUÊNCIA — escrever num caminho e ler no outro.
+console.log('\n── ciclo completo: escrever no temporário, ler no definitivo ──')
+const ciclo = partEmEscrita(dir, 'run-ciclo')
+await duckQuery(`copy (select 1 as a, 'z' as b) to '${ciclo.tmpDuck}' (format parquet)`)
+concluiParte(ciclo)
+check('tmpDuck e finalDuck são caminhos diferentes', ciclo.tmpDuck !== ciclo.finalDuck)
+check('o temporário não existe mais depois de concluir', !existsSync(ciclo.tmp))
+let leu = false
+try {
+  // Exatamente o que refreshFields faz com a parte recém-escrita.
+  await duckQuery(`describe select * from read_parquet('${ciclo.finalDuck}')`)
+  leu = true
+} catch (e) {
+  check('describe sobre a parte concluída funciona', false, (e as Error).message.split('\n')[0])
+}
+if (leu) check('describe sobre a parte concluída funciona', true)
+
 rmSync(dir, { recursive: true, force: true })
 console.log(`\n${failures ? `${failures} FALHA(S)` : 'tudo ok'}\n`)
 process.exit(failures ? 1 : 0)

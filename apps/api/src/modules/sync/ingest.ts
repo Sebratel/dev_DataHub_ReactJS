@@ -706,7 +706,6 @@ async function runSync(datasetId: string): Promise<string> {
       // reiniciou durante a execução" — cada uma delas, aqui, deixava para trás
       // um Parquet truncado capaz de derrubar toda leitura do conjunto.
       const parte = partEmEscrita(dir, String(run.id))
-      const part = parte.tmp.replace(/\\/g, '/')
       // Schema DECLARADO (não auto-inferido): lemos cada coluna com um tipo
       // seguro e convertemos com try_cast (NULL em vez de erro). Sem isto, o
       // read_json_auto adivinha o tipo e ESTOURA em valores fora do padrão —
@@ -735,7 +734,7 @@ async function runSync(datasetId: string): Promise<string> {
           `maximum_object_size=${config.sync.maxJsonObjectBytes})`
         : `read_json_auto('${jsonl.replace(/\\/g, '/')}')` // sem campos: fallback improvável
       try {
-        await duckQuery(`copy (select ${selectList || '*'} from ${src}) to '${part}' (format parquet, compression zstd)`)
+        await duckQuery(`copy (select ${selectList || '*'} from ${src}) to '${parte.tmpDuck}' (format parquet, compression zstd)`)
         concluiParte(parte)
       } catch (e) {
         descartaParte(parte)
@@ -772,10 +771,10 @@ async function runSync(datasetId: string): Promise<string> {
           await uploadToGcs(final, String(ds.tenant_slug), String(ds.slug))
         } else {
           console.log(`[sync] ${ds.slug}: compactação dispensada (${check.why}).`)
-          await uploadToGcs(part, String(ds.tenant_slug), String(ds.slug))
+          await uploadToGcs(parte.final, String(ds.tenant_slug), String(ds.slug))
         }
       } else {
-        await uploadToGcs(part, String(ds.tenant_slug), String(ds.slug))
+        await uploadToGcs(parte.final, String(ds.tenant_slug), String(ds.slug))
       }
     }
 

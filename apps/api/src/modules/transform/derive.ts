@@ -381,18 +381,16 @@ export async function materializeDerived(ds: {
     // deixa um arquivo que nenhum glob enxerga, em vez de um Parquet truncado
     // que derruba toda leitura do conjunto daí em diante (ver lake.ts).
     const parte = partEmEscrita(dir, String(run.id))
-    const partFs = parte.final
-    const partDuck = parte.tmp.replace(/\\/g, '/')
     try {
-      await duckQuery(`copy (${wrapped}) to '${partDuck}' (format parquet, compression zstd)`)
+      await duckQuery(`copy (${wrapped}) to '${parte.tmpDuck}' (format parquet, compression zstd)`)
       concluiParte(parte)
     } catch (e) {
       descartaParte(parte)
       throw friendlyDuckError(e as Error, refs)
     }
-    clearParquet(dir, partFs)
+    clearParquet(dir, parte.final)
 
-    const fields = await refreshFields(String(ds.id), partDuck)
+    const fields = await refreshFields(String(ds.id), parte.finalDuck)
     const count = Number(
       (await duckQuery(`select count(*) as n from read_parquet('${parquetGlob(dir)}')`)).rows[0]?.n ?? 0,
     )
@@ -404,7 +402,7 @@ export async function materializeDerived(ds: {
       `update sync_runs set status = 'done', rows = $2, bytes = $3, finished_at = now() where id = $1`,
       [run.id, count, dirBytes(dir)],
     )
-    await uploadToGcs(partFs, ds.tenantSlug, ds.slug)
+    await uploadToGcs(parte.final, ds.tenantSlug, ds.slug)
     console.log(`[derive] ${ds.slug}: materializado, ${count} linha(s), ${fields.length} campo(s).`)
     return `ok: ${count} linha(s)`
   } catch (e) {

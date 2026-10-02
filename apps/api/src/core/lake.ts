@@ -94,18 +94,38 @@ export function clearParquet(dir: string, except?: string): void {
 // volume).
 export const SUFIXO_EM_ESCRITA = '.writing'
 
-export function partEmEscrita(dir: string, runId: string): { tmp: string; final: string } {
+// Os QUATRO caminhos vêm prontos, e com nome dizendo qual é qual, porque
+// confundi-los já custou caro: trocar o destino do COPY para o temporário e
+// deixar um `read_parquet` apontando para ele faz toda materialização falhar
+// com "No files found that match the pattern ...parquet.writing" — o arquivo
+// existiu, foi renomeado, e quem lê depois procura no nome velho.
+//
+// Regra: `tmpDuck` é só para ESCREVER; depois de concluiParte(), tudo que lê
+// usa `finalDuck` (ou `final`, para o sistema de arquivos).
+export interface ParteEmEscrita {
+  /** Caminho de sistema do arquivo temporário. */
+  tmp: string
+  /** Caminho de sistema do arquivo definitivo. */
+  final: string
+  /** Destino do COPY (barras normais — o DuckDB no Windows evita escape de \). */
+  tmpDuck: string
+  /** Para LER depois de concluída. */
+  finalDuck: string
+}
+
+export function partEmEscrita(dir: string, runId: string): ParteEmEscrita {
   const final = join(dir, `part-${runId}.parquet`)
-  return { tmp: `${final}${SUFIXO_EM_ESCRITA}`, final }
+  const tmp = `${final}${SUFIXO_EM_ESCRITA}`
+  return { tmp, final, tmpDuck: tmp.replace(/\\/g, '/'), finalDuck: final.replace(/\\/g, '/') }
 }
 
 /** Promove a parte recém-escrita ao nome definitivo. */
-export function concluiParte(p: { tmp: string; final: string }): void {
+export function concluiParte(p: ParteEmEscrita): void {
   renameSync(p.tmp, p.final)
 }
 
 /** Remove a parte pela metade. Best-effort: já estamos tratando um erro. */
-export function descartaParte(p: { tmp: string; final: string }): void {
+export function descartaParte(p: ParteEmEscrita): void {
   try { if (existsSync(p.tmp)) unlinkSync(p.tmp) } catch { /* nada a fazer */ }
 }
 
