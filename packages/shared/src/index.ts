@@ -87,6 +87,31 @@ export interface DatasetSummary {
     // chega com carimbo retroativo. A compactação absorve a releitura.
     watermarkLagMinutes: number
   }
+  // Publicação no Databricks — presente APENAS para admins.
+  databricks?: {
+    enabled: boolean
+    mode: 'SNAPSHOT' | 'INCREMENTAL'
+    // null = derivada do tipo do conjunto (fonte → bronze, calculado → prata).
+    layer: 'bronze' | 'prata' | 'ouro' | null
+    /** A camada que vale de fato, já resolvida. */
+    effectiveLayer: 'bronze' | 'prata' | 'ouro'
+    /** Nome da tabela Delta no destino (slug com underscore). */
+    table: string
+  }
+}
+
+export interface DatabricksRun {
+  id: string
+  status: 'SUCCESS' | 'FAILED' | 'SKIPPED'
+  mode: string
+  sourceParts: number | null
+  rowCount: number | null
+  fileSizeBytes: number | null
+  filePath: string | null
+  attempts: number
+  errorMessage: string | null
+  startedAt: string
+  finishedAt: string | null
 }
 
 export interface SyncRun {

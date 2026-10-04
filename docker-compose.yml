@@ -134,6 +134,19 @@ services:
       # Lake (GCS) e integrações.
       BUCKET_GCP_NAME: ${BUCKET_GCP_NAME:-}
       PATH_CREDENTIALS: ${PATH_CREDENTIALS:-}
+      # Publicacao no Databricks (piloto Native/Matrix). O hub consolida o
+      # Parquet do lake e ENVIA; o Databricks nunca alcanca os bancos daqui.
+      # Desligada por padrao: sem isto ligado, nenhum envio sai.
+      DATABRICKS_SYNC_ENABLED: ${DATABRICKS_SYNC_ENABLED:-false}
+      DATABRICKS_HOST: ${DATABRICKS_HOST:-}
+      DATABRICKS_CLIENT_ID: ${DATABRICKS_CLIENT_ID:-}
+      DATABRICKS_CLIENT_SECRET: ${DATABRICKS_CLIENT_SECRET:-}
+      DATABRICKS_TOKEN: ${DATABRICKS_TOKEN:-}
+      DATABRICKS_VOLUME_PATH: ${DATABRICKS_VOLUME_PATH:-/Volumes/piloto_mariadb/landing/arquivos}
+      DATABRICKS_UPLOAD_TIMEOUT_SECONDS: ${DATABRICKS_UPLOAD_TIMEOUT_SECONDS:-300}
+      DATABRICKS_UPLOAD_MAX_RETRIES: ${DATABRICKS_UPLOAD_MAX_RETRIES:-5}
+      DATABRICKS_MAX_PART_BYTES: ${DATABRICKS_MAX_PART_BYTES:-536870912}
+      DATABRICKS_SOURCE_TZ: ${DATABRICKS_SOURCE_TZ:-America/Sao_Paulo}
       # IA (chat com tools). Sem a chave, o resto do sistema funciona normal.
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

@@ -18,6 +18,7 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 import { removeDatasetDir } from '../../core/lake.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
+import { camadaDe, slugDeTabela } from '../databricks/publish.js'
 
 export const datasetsRouter = Router()
 
@@ -68,6 +69,7 @@ const DATASET_COLUMNS = `
   d.connection_id, d.schema_name, d.object_name,
   d.sync_mode, d.incremental_key, d.incremental_key_2, d.sync_cadence, d.sync_since,
   d.sync_since_days, d.dedupe_keys, d.watermark_lag_minutes, d.schedule_id,
+  d.databricks_enabled, d.databricks_mode, d.databricks_layer,
   (select count(*) from dataset_fields f where f.dataset_id = d.id and not f.hidden) as field_count`
 
 function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary {
@@ -107,6 +109,15 @@ function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary
         dedupeKeys: (row.dedupe_keys as string[]) ?? [],
         watermarkLagMinutes: Number(row.watermark_lag_minutes ?? 0),
         scheduleId: (row.schedule_id as string) ?? null,
+      },
+      databricks: {
+        enabled: !!row.databricks_enabled,
+        mode: String(row.databricks_mode ?? 'SNAPSHOT') as 'SNAPSHOT' | 'INCREMENTAL',
+        layer: (row.databricks_layer as 'bronze' | 'prata' | 'ouro' | null) ?? null,
+        effectiveLayer: camadaDe(
+          String(row.kind), (row.databricks_layer as string | null) ?? null,
+        ) as 'bronze' | 'prata' | 'ouro',
+        table: slugDeTabela(String(row.slug)),
       },
     } : {}),
   }

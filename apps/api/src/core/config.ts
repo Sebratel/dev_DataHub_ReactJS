@@ -85,6 +85,34 @@ export const config = {
     diskWarnPercent: Math.min(99, Math.max(50, Number(process.env.SYNC_DISK_WARN_PERCENT) || 85)),
   },
 
+  // Publicação no Databricks — envio de saída, best-effort, depois da
+  // materialização. Ver docs do piloto Native/Matrix.
+  databricks: {
+    // Chave geral. Desligada = nenhum envio sai, independentemente do que cada
+    // conjunto tiver marcado. É o freio que não exige deploy para puxar.
+    enabled: (process.env.DATABRICKS_SYNC_ENABLED || '').toLowerCase() === 'true',
+    // Sem https:// e sem barra no fim — o host entra na URL montada no cliente.
+    host: (process.env.DATABRICKS_HOST || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, ''),
+    clientId: (process.env.DATABRICKS_CLIENT_ID || '').trim(),
+    clientSecret: process.env.DATABRICKS_CLIENT_SECRET || '',
+    // Alternativa ao OAuth, só para o piloto.
+    token: process.env.DATABRICKS_TOKEN || '',
+    // Em dev, aponte para .../arquivos/_dev: o job de carga ignora pastas que
+    // começam com '_', então teste de desenvolvedor nunca vira tabela.
+    volumePath: (process.env.DATABRICKS_VOLUME_PATH || '/Volumes/piloto_mariadb/landing/arquivos')
+      .replace(/\/+$/, ''),
+    uploadTimeoutMs: Math.max(
+      10_000, (Number(process.env.DATABRICKS_UPLOAD_TIMEOUT_SECONDS) || 300) * 1000),
+    maxRetries: Math.max(0, Number(process.env.DATABRICKS_UPLOAD_MAX_RETRIES) || 5),
+    // Acima disto o consolidado é dividido em partes (seção 5 do spec). O teto
+    // duro da Files API é 5 GB; este corte é folgado de propósito.
+    maxPartBytes: Math.max(
+      64 * 1024 * 1024, Number(process.env.DATABRICKS_MAX_PART_BYTES) || 512 * 1024 * 1024),
+    // Fuso em que os timestamps do lake foram gravados (sem fuso embutido).
+    // É o que a conversão para UTC assume — errar aqui desloca tudo em silêncio.
+    sourceTimezone: process.env.DATABRICKS_SOURCE_TZ || 'America/Sao_Paulo',
+  },
+
   // Motor de consulta (DuckDB). Limites protegem o servidor de uma consulta
   // pesada de um time derrubar o hub para todos.
   duck: {

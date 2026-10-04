@@ -21,7 +21,8 @@
     "tz:smoke": "tsx src/dev/timezoneSmoke.ts",
     "staging:smoke": "tsx src/dev/stagingSmoke.ts",
     "derived:smoke": "tsx src/dev/derivedCadenceSmoke.ts",
-    "lake:smoke": "tsx src/dev/lakeRepairSmoke.ts"
+    "lake:smoke": "tsx src/dev/lakeRepairSmoke.ts",
+    "databricks:smoke": "tsx src/dev/databricksSmoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

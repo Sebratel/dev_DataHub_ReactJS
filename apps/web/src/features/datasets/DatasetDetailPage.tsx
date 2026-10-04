@@ -15,6 +15,7 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import OfficialBadge from '@/components/OfficialBadge'
 import SyncPanel from './SyncPanel'
+import DatabricksPanel from './DatabricksPanel'
 import DerivedCadencePanel from './DerivedCadencePanel'
 import DataTable from './DataTable'
 import AccessDialog from './AccessDialog'
@@ -363,6 +364,10 @@ export default function DatasetDetailPage() {
 
       {/* Cadência do derivado -- inclui a opcao 'cascade' (admin ou dono) */}
       {canManage && derived && <DerivedCadencePanel dataset={dataset} onSaved={load} />}
+
+      {/* Publicação no Databricks — vale para fonte e calculado, por isso fica
+          fora do SyncPanel (que é só de fonte). */}
+      {isAdmin && <DatabricksPanel dataset={dataset} onChanged={load} />}
 
       {/* Dados do lake — qualquer usuário, quando já sincronizado */}
       {dataset.lastSyncAt && <DataTable dataset={dataset} />}

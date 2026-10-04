@@ -15,6 +15,7 @@ import { queryRouter } from './modules/query/queryRouter.js'
 import { viewsRouter } from './modules/explorer/viewsRouter.js'
 import { exportRouter } from './modules/explorer/exportRouter.js'
 import { transformRouter } from './modules/transform/transformRouter.js'
+import { databricksRouter, databricksAdminRouter } from './modules/databricks/databricksRouter.js'
 import { metricsRouter } from './modules/metrics/metricsRouter.js'
 import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
 import { aiWidgetsRouter } from './modules/dashboards/aiWidgetsRouter.js'
@@ -95,7 +96,9 @@ app.use('/api/v1/schedules', schedulesRouter)
 app.use('/api/v1/datasets', viewsRouter)
 app.use('/api/v1/datasets', exportRouter)
 app.use('/api/v1/datasets', transformRouter) // /derived — antes do genérico
+app.use('/api/v1/datasets', databricksRouter) // /:id/databricks — antes do genérico
 app.use('/api/v1/datasets', datasetsRouter)
+app.use('/api/v1/databricks', databricksAdminRouter)
 
 // Biblioteca de métricas e dashboards.
 app.use('/api/v1/metrics', metricsRouter)

@@ -16,6 +16,7 @@ import { syncRouter } from '../modules/sync/syncRouter.js'
 import { autotuneRouter } from '../modules/sync/autotuneRouter.js'
 import { schedulesRouter } from '../modules/sync/schedulesRouter.js'
 import { accessRouter, ROLES } from '../modules/admin/accessRouter.js'
+import { databricksRouter, databricksAdminRouter } from '../modules/databricks/databricksRouter.js'
 import { isMaster, isEnvMaster, grantMaster, revokeMaster } from '../modules/auth/masterAdmins.js'
 import { config } from '../core/config.js'
 
@@ -52,14 +53,19 @@ function routesOf(router: unknown): Map<string, string[]> {
 //
 // Os três "master-*" só exigem master QUANDO há conjunto de fonte envolvido —
 // é o que mantém os calculados liberados, como sempre foram.
-type Level = 'master' | 'master-src' | 'master-sched' | 'master-batch' | 'admin'
+// 'master-pub'   → requireAuth:admin + requireMaster (incondicional)
+type Level = 'master' | 'master-src' | 'master-sched' | 'master-batch' | 'master-pub' | 'admin'
 
 // Nome do middleware que cada nível condicional exige na pilha.
 const GUARD: Partial<Record<Level, string>> = {
   'master-src': 'requireMasterOnSource',
   'master-sched': 'requireMasterOnScheduleMembers',
   'master-batch': 'requireMasterOnDatasetBatch',
+  'master-pub': 'requireMaster',
 }
+
+// Níveis em que o master é exigido SEMPRE, não só quando há conjunto de fonte.
+const INCONDICIONAIS = new Set<Level>(['master-pub'])
 
 const EXPECTED: Record<string, Record<string, Level>> = {
   syncRouter: {
@@ -106,9 +112,25 @@ const EXPECTED: Record<string, Record<string, Level>> = {
     'POST /:id/assign': 'master-batch',
     'POST /unassign': 'master-batch',
   },
+  databricksRouter: {
+    // Ligar a publicação faz o conjunto INTEIRO sair da rede interna para um
+    // workspace externo. Aqui o master é exigido sempre — inclusive em conjunto
+    // calculado, que nas outras telas é liberado: a diferença não é carga na
+    // fonte, é dado atravessando a internet.
+    'PATCH /:id/databricks': 'master-pub',
+    // Operação: reenviar à mão o que já está habilitado, e ver o histórico.
+    'POST /:id/databricks-publish': 'admin',
+    'GET /:id/databricks-runs': 'admin',
+  },
+  databricksAdminRouter: {
+    'GET /status': 'admin',
+  },
 }
 
-const ROUTERS: Record<string, unknown> = { syncRouter, autotuneRouter, schedulesRouter, accessRouter }
+const ROUTERS: Record<string, unknown> = {
+  syncRouter, autotuneRouter, schedulesRouter, accessRouter,
+  databricksRouter, databricksAdminRouter,
+}
 
 console.log('\n── nível de permissão por rota ──')
 for (const [routerName, expected] of Object.entries(EXPECTED)) {
@@ -140,7 +162,10 @@ for (const [routerName, expected] of Object.entries(EXPECTED)) {
     if (level === 'master') {
       check(`${routerName}: ${key} exige master`, temMaster && !guardsPresentes.length, handlers.join(' → '))
     } else if (guardEsperado) {
-      check(`${routerName}: ${key} exige master quando há fonte`,
+      const rotulo = INCONDICIONAIS.has(level as Level)
+        ? 'exige master'
+        : 'exige master quando há fonte'
+      check(`${routerName}: ${key} ${rotulo}`,
         temAdmin && guardsPresentes.length === 1 && handlers.includes(guardEsperado),
         handlers.join(' → '))
     } else {

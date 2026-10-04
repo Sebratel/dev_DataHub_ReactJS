@@ -154,10 +154,49 @@ Para deixar a ingestão mais gentil: lote menor + pausa maior (ex.:
 | `DUCK_MAX_CONCURRENCY` | `6` | Máx. de consultas simultâneas |
 | `EMBEDDINGS_ENABLED` | `true` | Liga a busca semântica (RAG) |
 | `EMBEDDINGS_CACHE_DIR` | `/app/.models` | Cache do modelo de embeddings |
+| `DATABRICKS_SYNC_ENABLED` | `false` | Freio geral da publicação no Databricks |
+| `DATABRICKS_VOLUME_PATH` | `/Volumes/piloto_mariadb/landing/arquivos` | Destino; em dev use `.../_dev` |
+| `DATABRICKS_UPLOAD_MAX_RETRIES` | `5` | Retentativas em 429/5xx/rede |
+| `DATABRICKS_SOURCE_TZ` | `America/Sao_Paulo` | Fuso que o lake gravou (vira UTC no envio) |
+
+> Variável nova **tem** que entrar no bloco `environment` do `docker-compose.yml`:
+> o que não estiver listado lá não chega ao contêiner, por mais preenchido que
+> apareça no Portainer. `npm run env:smoke --workspace apps/api` confere isso.
 
 ---
 
-## 7. Busca semântica (RAG) — operação
+## 7. Publicação no Databricks — operação
+
+O Data Hub **envia**; o Databricks nunca alcança os bancos da Sebratel. Depois de
+cada materialização, o conjunto habilitado é consolidado num único Parquet e
+enviado ao volume, com um manifesto por último — é o manifesto que autoriza o
+job de carga a ler.
+
+- **Ligar um conjunto:** tela do conjunto → *Publicação no Databricks*. Só o
+  **admin master** liga, porque aqui o dado sai da rede interna.
+- **Testar sem virar tabela:** aponte `DATABRICKS_VOLUME_PATH` para
+  `.../arquivos/_dev`. O job de carga ignora pastas que começam com `_`.
+- **Por que um envio não saiu:** a tela mostra o último status e o erro. `401`,
+  `403` e `404` **não** são repetidos (credencial, permissão ou volume errado —
+  nada disso melhora sozinho); rede, `429` e `5xx` repetem com backoff.
+- **Duas falhas seguidas** no mesmo conjunto imprimem `[databricks][ALERTA]` no
+  log do contêiner.
+- **O envio nunca atrasa a sincronização:** ele roda solto, depois do `sync_runs`
+  já estar fechado. Databricks fora do ar não segura a fila.
+- Histórico no banco:
+  ```bash
+  docker exec -i datahub-db psql -U datahub -d datahub -c \
+    "select dataset_slug, status, row_count, source_parts, attempts, error_message, started_at
+       from databricks_sync_runs order by started_at desc limit 20;"
+  ```
+
+**Fuso:** o lake guarda hora local de São Paulo sem fuso; o envio converte para
+UTC explicitamente. Se um horário aparecer 3 h deslocado no Databricks, o
+suspeito é `DATABRICKS_SOURCE_TZ`, não o Spark.
+
+---
+
+## 8. Busca semântica (RAG) — operação
 
 - Modelo local (`multilingual-e5-small`) roda dentro da API; **sem chave/custo**.
 - No 1º boot baixa ~120MB (precisa de saída para a internet) e cacheia no volume
@@ -172,7 +211,7 @@ Para deixar a ingestão mais gentil: lote menor + pausa maior (ex.:
 
 ---
 
-## 8. Recuperação rápida (ordem sugerida num incidente)
+## 9. Recuperação rápida (ordem sugerida num incidente)
 
 1. `df -h /` — o disco está cheio?
 2. Achou staging gigante? Confirme 0 syncs rodando → apague o `.jsonl` → reinicie.

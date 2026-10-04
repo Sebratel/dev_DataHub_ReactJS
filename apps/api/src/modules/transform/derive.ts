@@ -16,6 +16,7 @@ import {
 import { duckQuery } from '../query/duck.js'
 import { assertReadOnly, stripNoise } from '../../core/guard.js'
 import { accessibleDatasetIds, type AccessUser } from '../../core/access.js'
+import { publicarDataset } from '../databricks/publish.js'
 import type { FieldType, DerivedCadenceItem } from '@datahub/shared'
 
 // Além do guard read-only: bloqueia funções do DuckDB que alcançam o sistema
@@ -404,6 +405,10 @@ export async function materializeDerived(ds: {
     )
     await uploadToGcs(parte.final, ds.tenantSlug, ds.slug)
     console.log(`[derive] ${ds.slug}: materializado, ${count} linha(s), ${fields.length} campo(s).`)
+    // Mesmo gancho do ingest: um calculado (prata/ouro) publica pelo mesmo
+    // caminho de um conjunto de fonte. Sem `await` e sem lançar — um envio
+    // lento não pode segurar a fila de materialização (ver ingest.ts).
+    void publicarDataset(String(ds.id), new Date())
     return `ok: ${count} linha(s)`
   } catch (e) {
     await db.query(

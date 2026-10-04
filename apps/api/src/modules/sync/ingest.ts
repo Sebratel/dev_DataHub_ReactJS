@@ -20,6 +20,8 @@ import {
 } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { materializeDerived, referencedSlugs } from '../transform/derive.js'
+import { recencyExpression, type RecencyKey } from './recency.js'
+import { publicarDataset } from '../databricks/publish.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -340,33 +342,10 @@ async function compactionNeeded(
 // fica vazio em disco — uma queda do processo ali perde o dado. Nesta ordem, o
 // pior caso de uma queda no meio é o conjunto ficar com linhas repetidas até a
 // próxima compactação, que conserta sozinha. Perder dado não conserta.
-// Uma chave incremental identifica a linha; NEM TODA identifica um INSTANTE.
-// Quando a tabela de origem não tem coluna de criação, o hub usa o `id`
-// numérico como 1ª chave ("linha nova = id maior"). Juntar esse `id` com a 2ª
-// chave num `greatest(id, updated_at)` é comparar número com data: o DuckDB
-// recusa a consulta inteira ("Cannot combine types of DOUBLE and TIMESTAMP") e
-// a compactação — logo, a sincronização — falha em toda execução.
-//
-// E, mesmo que o banco aceitasse, não faria sentido: `id` não é um instante,
-// então ordenar por "o maior entre um id e uma data" não diz qual versão da
-// linha é a mais recente.
-//
-// Regra: quem decide recência são as chaves TEMPORAIS. Havendo alguma, só elas
-// entram. Não havendo nenhuma (tabela sem data de espécie alguma), usa a
-// primeira chave sozinha — aí não há o que comparar, e uma coluna só nunca
-// mistura tipo com ninguém.
-export interface RecencyKey { key: string; isDate: boolean }
-
-export function recencyExpression(keys: RecencyKey[]): string {
-  const ident = (s: string) => `"${String(s).replace(/"/g, '""')}"`
-  const datas = keys.filter((k) => k.isDate)
-  const usadas = datas.length ? datas : keys.slice(0, 1)
-  if (!usadas.length) return 'NULL'
-  // greatest() só entre colunas do MESMO tipo — é a regra que faltava.
-  return usadas.length > 1
-    ? `greatest(${usadas.map((k) => ident(k.key)).join(', ')})`
-    : ident(usadas[0].key)
-}
+// A regra de recência mora em ./recency.js — é compartilhada com a
+// consolidação do envio ao Databricks. Reexportada aqui para não quebrar quem
+// já a importava deste módulo.
+export { recencyExpression, type RecencyKey } from './recency.js'
 
 export async function compactLake(
   dir: string, dedupeKeys: string[], recencyKeys: RecencyKey[], runId: string,
@@ -802,6 +781,17 @@ async function runSync(datasetId: string): Promise<string> {
       [run.id, total, dirBytes(dir), compacted, compactMs, listParquet(dir).length],
     )
     console.log(`[sync] ${ds.slug}: ${mode}, ${total} linha(s) novas, total no lake ${count}.`)
+    // Publicação no Databricks: DEPOIS de a sincronização estar fechada no
+    // banco, e sem poder desfazê-la. `publicarDataset` não lança — se lançasse,
+    // uma indisponibilidade do Databricks viraria "a sincronização falhou", com
+    // o dado já íntegro no lake.
+    //
+    // Sem `await`, e isso é o ponto: a fila de sincronização é SEQUENCIAL e
+    // global. Esperar o envio aqui colocaria o próximo conjunto atrás de uma
+    // rede que pode estar fora — com 5 retentativas e timeout de 300 s, um
+    // Databricks mudo atrasaria a carga de todos os outros em até meia hora.
+    // O envio segue por conta própria e se registra sozinho.
+    void publicarDataset(datasetId, new Date())
     return `ok: ${total} linha(s)`
   } catch (e) {
     const cancelled = e instanceof SyncCancelled
