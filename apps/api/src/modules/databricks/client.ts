@@ -165,6 +165,19 @@ export async function enviarArquivo(
   return { attempts }
 }
 
+export interface EntradaVolume { path: string; name: string; is_directory: boolean; file_size?: number }
+
+/** Lista o conteúdo de um diretório do volume — conferência pós-envio. */
+export async function listarDiretorio(caminhoVolume: string): Promise<EntradaVolume[]> {
+  const host = exigeHost()
+  const { valor } = await comRetentativa(() => chamar(
+    `https://${host}/api/2.0/fs/directories${encodePath(caminhoVolume)}`,
+    { method: 'GET', okStatus: [200] },
+  ))
+  const corpo = (await valor.json()) as { contents?: EntradaVolume[] }
+  return corpo.contents ?? []
+}
+
 /** Conferência de setup: o volume existe e a credencial o enxerga? */
 export async function conferirVolume(nomeCompleto: string): Promise<unknown> {
   const host = exigeHost()
