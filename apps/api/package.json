@@ -23,7 +23,8 @@
     "derived:smoke": "tsx src/dev/derivedCadenceSmoke.ts",
     "lake:smoke": "tsx src/dev/lakeRepairSmoke.ts",
     "databricks:smoke": "tsx src/dev/databricksSmoke.ts",
-    "databricks:check": "tsx src/dev/databricksCheck.ts"
+    "databricks:check": "tsx src/dev/databricksCheck.ts",
+    "databricks:setup-job": "tsx src/dev/databricksSetupJob.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
