@@ -1,15 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Integrações: tokens de acesso + API pública de leitura.
 //   Autenticado:  GET/POST/PATCH/DELETE /api/v1/credentials  (gestão de tokens)
-//   Público:      GET /public/v1/datasets/:slug/rows?token=…&format=csv|json
+//   Público:      GET  /public/v1/datasets/:slug/rows?token=…&format=csv|json
+//                 POST /public/v1/datasets/:slug/query   (QueryDef → resultado)
 // O token é exibido UMA única vez na criação; só o hash é guardado.
 // A API pública roda como NÃO-admin: sensíveis mascarados, ocultos fora.
 // ─────────────────────────────────────────────────────────────────────────
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { createHash, randomBytes } from 'node:crypto'
-import type { FieldType, ApiWriteOp } from '@datahub/shared'
+import type { FieldType, ApiWriteOp, QueryDef, QueryFilter } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
+import { config } from '../../core/config.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { compileQuery } from '../query/compile.js'
@@ -247,6 +249,75 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
       return
     }
     res.json({ dataset: ds.slug, total, limit, offset, rows })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+// ─── Consulta: o MESMO QueryDef dos painéis, pelo token ────────────────────
+// Para quem lê o lake de fora — outra aplicação montando painéis. Pelo /rows
+// ela precisava baixar o conjunto inteiro e agregar do lado de lá, o que não
+// para em pé com milhões de linhas: aqui ela manda o QueryDef e recebe só o
+// resultado, agregado pelo DuckDB sobre o Parquet.
+//
+// Nada de novo em permissão: é o compilador do /api/v1/datasets/:slug/query,
+// rodando como NÃO-admin (sensíveis mascarados no select e proibidos em
+// filtro/agrupamento/ordenação, ocultos inexistentes), com o escopo de leitura
+// do token e o limite/cota do portão. Agregar também não revela nada que o
+// /rows já não entregue. E das telas vêm o tempo limite das consultas
+// interativas e o teto de 10 mil linhas por resposta.
+publicRouter.post('/datasets/:slug/query', async (req, res) => {
+  const cred = res.locals.consumer as Consumer
+  const slugs = cred.datasetSlugs
+  if (slugs.length && !slugs.includes(req.params.slug)) {
+    return res.status(403).json({ error: 'Este token não tem acesso a este conjunto de dados.' })
+  }
+
+  const ds = (await db.query(
+    `select d.* from datasets d join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and d.slug = $2`,
+    [cred.tenantSlug, req.params.slug],
+  )).rows[0]
+  if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+  res.locals.dataSlug = ds.slug
+  const dir = datasetDir(String(cred.tenantSlug), String(ds.slug))
+  if (!listParquet(dir).length) return res.status(409).json({ error: 'Conjunto ainda não sincronizado.' })
+
+  const fields = (await db.query(
+    `select f.key, f.type, f.sensitive from dataset_fields f
+      where f.dataset_id = $1 and not f.hidden order by f.sort_order`,
+    [ds.id],
+  )).rows as { key: string; type: FieldType; sensitive: boolean }[]
+  // Métricas da biblioteca, para o select {metric: slug} valer aqui também.
+  const metrics = (await db.query(
+    `select slug, agg, field_key, filters from metrics where dataset_id = $1`,
+    [ds.id],
+  )).rows.map((m) => ({
+    slug: String(m.slug), agg: String(m.agg), fieldKey: String(m.field_key),
+    filters: (m.filters ?? []) as QueryFilter[],
+  }))
+
+  const started = Date.now()
+  try {
+    const def = (req.body ?? {}) as QueryDef
+    const compiled = compileQuery({ ...def, dataset: String(ds.slug) }, fields, {
+      admin: false, glob: parquetGlob(dir), metrics,
+    })
+    const timeoutMs = config.duck.queryTimeoutMs
+    const result = await duckQuery(compiled.sql, compiled.params, { timeoutMs })
+    res.locals.rows = result.rows.length
+    const total = compiled.countSql
+      ? Number((await duckQuery(compiled.countSql, compiled.countParams, { timeoutMs })).rows[0]?.n ?? 0)
+      : undefined
+    await db.query(`update api_credentials set last_used_at = now() where id = $1`, [cred.id])
+    const typeByKey = new Map(fields.map((f) => [f.key, f.type]))
+    res.json({
+      dataset: ds.slug,
+      columns: result.columns.map((name) => ({ name, type: typeByKey.get(name) ?? 'text' })),
+      rows: result.rows,
+      total,
+      tookMs: Date.now() - started,
+    })
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }

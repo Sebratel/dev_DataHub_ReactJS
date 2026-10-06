@@ -15,24 +15,44 @@ export interface QueryFilter {
   field: string
   op: FilterOp
   value?: unknown
+  // Aceita também as linhas em que o campo está vazio (null). Existe por causa
+  // do 'not_in'/'!=': em SQL, `status not in ('Cancelado')` descarta as linhas
+  // com status vazio — e quem filtra "status não é Cancelado" espera vê-las.
+  orNull?: boolean
 }
 
 export type Aggregation = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'count_distinct'
+
+// Granularidade para agrupar por data. O valor sai como o INÍCIO do período,
+// em texto 'AAAA-MM-DD' — 17/03/2026 vira '2026-01-01' (year e quarter),
+// '2026-03-01' (month) ou '2026-03-17' (day). Texto ordena igual à data e não
+// depende de fuso.
+export type DateGrain = 'year' | 'quarter' | 'month' | 'day'
 
 export type QuerySelect =
   | string // campo simples
   | { field: string; agg: Aggregation; as?: string }
   | { metric: string; as?: string } // métrica da biblioteca
+  | { field: string; grain: DateGrain; as?: string } // data truncada no período
+  | { agg: 'count'; as?: string } // contagem de LINHAS (count(*)), sem campo
+
+// Agrupamento: campo simples, ou data truncada no período (mesma conta do
+// select com `grain` — os dois precisam vir juntos, como num GROUP BY).
+export type QueryGroupBy = string | { field: string; grain: DateGrain }
 
 export interface QueryDef {
   dataset: string // slug do dataset
   select?: QuerySelect[]
   filters?: QueryFilter[]
-  groupBy?: string[]
+  groupBy?: QueryGroupBy[]
   orderBy?: { field: string; dir: 'asc' | 'desc' }[]
   limit?: number
   offset?: number
   search?: string // busca livre em campos texto
+  // Com groupBy: devolve também em `total` quantos GRUPOS existem — é o que
+  // permite paginar uma lista agrupada. Custa uma segunda passada no lake, por
+  // isso só quando pedido. Sem groupBy o total já vem sempre.
+  withTotal?: boolean
 }
 
 export interface QueryResult {
