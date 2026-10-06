@@ -17,6 +17,7 @@ import { config } from '../core/config.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const NOME_JOB = 'Data Hub — carga do volume de chegada'
+const NOME_LIMPEZA = 'Data Hub — limpeza do volume de chegada'
 const VOLUME = '/Volumes/piloto_mariadb/landing/arquivos'
 
 const { host, token } = config.databricks
@@ -43,19 +44,26 @@ const usuario = eu.userName
 if (!usuario) throw new Error('Não consegui identificar o usuário do token.')
 const pastaNotebook = `/Workspace/Users/${usuario}/datahub`
 const caminhoNotebook = `${pastaNotebook}/carga_landing`
+const caminhoLimpeza = `${pastaNotebook}/limpeza_volume`
 console.log(`Usuário do token: ${usuario}`)
 
-// ── 1. Sobe o notebook ───────────────────────────────────────────────────
-const fonte = readFileSync(resolve(__dirname, '../../../../databricks/carga_landing.py'), 'utf8')
+// ── 1. Sobe os notebooks ─────────────────────────────────────────────────
 await api('POST', '/api/2.0/workspace/mkdirs', { path: pastaNotebook })
-await api('POST', '/api/2.0/workspace/import', {
-  path: caminhoNotebook,
-  format: 'SOURCE',
-  language: 'PYTHON',
-  overwrite: true,
-  content: Buffer.from(fonte, 'utf8').toString('base64'),
-})
-console.log(`  ok   notebook em ${caminhoNotebook}`)
+
+async function subirNotebook(arquivo: string, destino: string): Promise<void> {
+  const fonte = readFileSync(resolve(__dirname, `../../../../databricks/${arquivo}`), 'utf8')
+  await api('POST', '/api/2.0/workspace/import', {
+    path: destino,
+    format: 'SOURCE',
+    language: 'PYTHON',
+    overwrite: true,
+    content: Buffer.from(fonte, 'utf8').toString('base64'),
+  })
+  console.log(`  ok   notebook em ${destino}`)
+}
+
+await subirNotebook('carga_landing.py', caminhoNotebook)
+await subirNotebook('limpeza_volume.py', caminhoLimpeza)
 
 // ── 2. Cria (ou atualiza) o job ──────────────────────────────────────────
 // Gatilho por CHEGADA DE ARQUIVO, e não por horário: o Data Hub envia quando
@@ -88,18 +96,46 @@ const definicao = {
   queue: { enabled: true },
 }
 
-const lista = await api<{ jobs?: Array<{ job_id: number; settings: { name: string } }> }>(
-  'GET', `/api/2.2/jobs/list?name=${encodeURIComponent(NOME_JOB)}`)
-const existente = lista.jobs?.find((j) => j.settings?.name === NOME_JOB)
-
-if (existente) {
-  await api('POST', '/api/2.2/jobs/reset', {
-    job_id: existente.job_id, new_settings: definicao,
-  })
-  console.log(`  ok   job atualizado (id ${existente.job_id})`)
-  console.log(`\nAbra em: https://${host}/jobs/${existente.job_id}`)
-} else {
-  const criado = await api<{ job_id: number }>('POST', '/api/2.2/jobs/create', definicao)
-  console.log(`  ok   job criado (id ${criado.job_id})`)
-  console.log(`\nAbra em: https://${host}/jobs/${criado.job_id}`)
+// ── 3. Limpeza do volume, uma vez por dia ────────────────────────────────
+// Por HORÁRIO, não por chegada de arquivo: apagar não é reação a nada que
+// chegou. Às 5h de São Paulo, depois da janela da madrugada e antes de a
+// operação começar o dia.
+const limpeza = {
+  name: NOME_LIMPEZA,
+  description: 'Apaga do volume de chegada os arquivos com mais de 7 dias. '
+    + 'A tabela Delta e que guarda o dado; estes arquivos sao so a viagem.',
+  tasks: [{
+    task_key: 'limpeza',
+    notebook_task: {
+      notebook_path: caminhoLimpeza,
+      source: 'WORKSPACE',
+      base_parameters: { retencao_dias: '7' },
+    },
+  }],
+  schedule: {
+    quartz_cron_expression: '0 0 5 * * ?',
+    timezone_id: 'America/Sao_Paulo',
+    pause_status: 'UNPAUSED',
+  },
+  max_concurrent_runs: 1,
 }
+
+async function provisiona(nome: string, definicao: unknown): Promise<number> {
+  const lista = await api<{ jobs?: Array<{ job_id: number; settings: { name: string } }> }>(
+    'GET', `/api/2.2/jobs/list?name=${encodeURIComponent(nome)}`)
+  const existente = lista.jobs?.find((j) => j.settings?.name === nome)
+  if (existente) {
+    await api('POST', '/api/2.2/jobs/reset', { job_id: existente.job_id, new_settings: definicao })
+    console.log(`  ok   job atualizado: ${nome} (id ${existente.job_id})`)
+    return existente.job_id
+  }
+  const criado = await api<{ job_id: number }>('POST', '/api/2.2/jobs/create', definicao)
+  console.log(`  ok   job criado: ${nome} (id ${criado.job_id})`)
+  return criado.job_id
+}
+
+const idCarga = await provisiona(NOME_JOB, definicao)
+const idLimpeza = await provisiona(NOME_LIMPEZA, limpeza)
+
+console.log(`\nCarga:   https://${host}/jobs/${idCarga}`)
+console.log(`Limpeza: https://${host}/jobs/${idLimpeza}`)

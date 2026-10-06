@@ -2,10 +2,19 @@
 // notebook. O gatilho normal é a chegada de arquivo; isto existe para testar e
 // para reprocessar sem esperar o próximo envio.
 //
-// Uso: npm run databricks:run-job --workspace apps/api
+// Uso: npm run databricks:run-job --workspace apps/api [-- limpeza]
 import { config } from '../core/config.js'
 
-const NOME_JOB = 'Data Hub — carga do volume de chegada'
+const JOBS: Record<string, string> = {
+  carga: 'Data Hub — carga do volume de chegada',
+  limpeza: 'Data Hub — limpeza do volume de chegada',
+}
+const qual = (process.argv[2] ?? 'carga').toLowerCase()
+const NOME_JOB = JOBS[qual]
+if (!NOME_JOB) {
+  console.error(`Job desconhecido: "${qual}". Use: ${Object.keys(JOBS).join(' | ')}`)
+  process.exit(1)
+}
 const { host, token } = config.databricks
 if (!host || !token) { console.error('Defina DATABRICKS_HOST e DATABRICKS_TOKEN no .env.'); process.exit(1) }
 
