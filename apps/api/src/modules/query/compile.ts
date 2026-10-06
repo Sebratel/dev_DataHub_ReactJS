@@ -3,8 +3,11 @@
 //   • todo campo referenciado precisa existir no catálogo (whitelist);
 //   • campos ocultos não existem para o compilador;
 //   • campos sensíveis: SELECT devolve máscara; filtrar/agrupar/ordenar por
-//     eles é bloqueado para não-admins (canal de vazamento);
-//   • valores de filtro viram parâmetros preparados — nunca interpolados.
+//     eles é bloqueado para não-admins (canal de vazamento) — e o período de
+//     uma data (`grain`) conta como agrupar;
+//   • valores de filtro viram parâmetros preparados — nunca interpolados; a
+//     granularidade de data só entra no SQL depois de conferida contra a
+//     lista fixa (GRAINS).
 // ─────────────────────────────────────────────────────────────────────────
 import type { QueryDef, QueryFilter, QuerySelect } from '@datahub/shared'
 
@@ -24,7 +27,9 @@ export interface CompileMetric {
 
 export interface Compiled {
   sql: string
-  countSql: string | null // total sem limit/offset (só quando não há groupBy)
+  // Total sem limit/offset: de linhas quando não há groupBy; de GRUPOS quando
+  // há groupBy e o QueryDef pede `withTotal`; null nos demais casos.
+  countSql: string | null
   params: unknown[]       // parâmetros do sql completo (select + where, em ordem)
   countParams: unknown[]  // parâmetros só do where (para o countSql)
 }
@@ -33,10 +38,25 @@ const OPS: Record<string, string> = {
   '=': '=', '!=': '<>', '>': '>', '>=': '>=', '<': '<', '<=': '<=',
 }
 const AGGS = new Set(['sum', 'avg', 'min', 'max', 'count', 'count_distinct'])
+const GRAINS = new Set(['year', 'quarter', 'month', 'day'])
 const MASK = '•••'
 const MAX_LIMIT = 10_000
 
 const qid = (s: string) => '"' + s.replace(/"/g, '') + '"'
+
+// Data truncada no início do período, em texto 'AAAA-MM-DD' (ver DateGrain).
+// Campo de texto passa por try_cast: uma data ilegível vira NULL — um grupo
+// vazio — em vez de derrubar a consulta inteira. Número/booleano não têm data
+// nenhuma para truncar. A granularidade só entra no SQL depois de conferida
+// contra GRAINS: é texto que vem do cliente.
+function grainExpr(f: CompileField, grain: string): string {
+  if (!GRAINS.has(grain)) throw new Error(`Granularidade de data inválida: ${grain}`)
+  if (f.type !== 'date' && f.type !== 'text') {
+    throw new Error(`Agrupar por ${grain} só vale para campo de data (ou texto com data): "${f.key}" é ${f.type}.`)
+  }
+  const ts = f.type === 'date' ? qid(f.key) : `try_cast(${qid(f.key)} as timestamp)`
+  return `strftime(date_trunc('${grain}', ${ts}), '%Y-%m-%d')`
+}
 
 export function compileQuery(
   def: QueryDef,
@@ -88,6 +108,24 @@ export function compileQuery(
       const filtered = conds.length ? `${aggExpr} filter (where ${conds.join(' and ')})` : aggExpr
       return `${filtered} as ${qid(alias)}`
     }
+    if ('grain' in sel) {
+      // Mesma regra do groupBy: o período de uma data sensível já diz algo
+      // sobre ela, então não-admin não agrupa por ela.
+      const f = resolve(sel.field, 'agrupamento')
+      const alias = sel.as || `${sel.grain}_${f.key}`
+      aliases.add(alias)
+      return `${grainExpr(f, sel.grain)} as ${qid(alias)}`
+    }
+    if (!('field' in sel)) {
+      // Contagem de linhas. `count` de um campo conta só onde ele não é nulo,
+      // e não há campo do catálogo que garanta estar sempre preenchido. O tipo
+      // só admite 'count' aqui, mas o corpo vem de fora — por isso a checagem.
+      const agg: string = sel.agg
+      if (agg !== 'count') throw new Error(`Sem campo, a única agregação possível é a contagem de linhas ("count"), não "${agg}".`)
+      const alias = sel.as || 'count'
+      aliases.add(alias)
+      return `count(*) as ${qid(alias)}`
+    }
     const f = resolve(sel.field, 'agregação')
     if (!AGGS.has(sel.agg)) throw new Error(`Agregação inválida: ${sel.agg}`)
     if (f.sensitive && !opts.admin) throw new Error(`O campo "${f.key}" é sensível e não pode ser agregado.`)
@@ -110,6 +148,12 @@ export function compileQuery(
     where.push(filterExpr(flt, whereParams))
   }
   function filterExpr(flt: QueryFilter, params: unknown[]): string {
+    const expr = baseFilterExpr(flt, params)
+    // is_null/not_null já dizem tudo sobre o nulo — `orNull` não os altera.
+    if (!flt.orNull || flt.op === 'is_null' || flt.op === 'not_null') return expr
+    return `(${qid(resolve(flt.field, 'filtro').key)} is null or ${expr})`
+  }
+  function baseFilterExpr(flt: QueryFilter, params: unknown[]): string {
     const f = resolve(flt.field, 'filtro')
     const col = qid(f.key)
     // O DuckDB não infere o tipo de parâmetros preparados neste contexto
@@ -155,7 +199,11 @@ export function compileQuery(
   }
 
   // ── GROUP BY / ORDER BY / LIMIT ──────────────────────────────
-  const groupBy = (def.groupBy ?? []).map((k) => qid(resolve(k, 'agrupamento').key))
+  const groupBy = (def.groupBy ?? []).map((g) => (
+    typeof g === 'string'
+      ? qid(resolve(g, 'agrupamento').key)
+      : grainExpr(resolve(g.field, 'agrupamento'), g.grain)
+  ))
   const orderBy = (def.orderBy ?? []).map((o) => {
     // Ordena por alias do select OU por campo do catálogo.
     if (!aliases.has(o.field)) resolve(o.field, 'ordenação')
@@ -178,8 +226,13 @@ export function compileQuery(
     (orderBy.length ? ` order by ${orderBy.join(', ')}` : '') +
     (limit === null ? (offset ? ` offset ${offset}` : '') : ` limit ${limit} offset ${offset}`)
 
-  // Total (para paginação) — só faz sentido sem agrupamento.
-  const countSql = groupBy.length ? null : `select count(*) as n ${fromWhere}`
+  // Total (para paginação): de linhas sem agrupamento; com agrupamento, de
+  // grupos — e só quando pedido (`withTotal`), porque é outra passada no lake.
+  const countSql = !groupBy.length
+    ? `select count(*) as n ${fromWhere}`
+    : def.withTotal
+      ? `select count(*) as n from (select 1 ${fromWhere} group by ${groupBy.join(', ')})`
+      : null
 
   return { sql, countSql, params: [...selectParams, ...whereParams], countParams: whereParams }
 }
