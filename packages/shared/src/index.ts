@@ -510,6 +510,13 @@ export interface NotebookCell {
   kind: NotebookCellKind
   source: string
   name?: string
+  /**
+   * Código recolhido na tela. É PERSISTIDO de propósito: uma query de 200
+   * linhas atrapalha todo mundo que abrir o notebook, não só quem a escreveu —
+   * deixar recolhido é parte de como a análise fica legível. Quem só lê também
+   * pode recolher, mas aí vale só para a sessão dele.
+   */
+  collapsed?: boolean
 }
 
 export interface NotebookSummary {

@@ -14,7 +14,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import {
   Play, Plus, Trash2, ArrowLeft, Loader2, AlertTriangle, Database,
   Boxes, ChevronDown, ChevronRight, Type, Table2, Check, Lock, Users, Download,
-  Braces, Square, Share2, Trash,
+  Braces, Square, Share2, Trash, FastForward, Minimize2, Maximize2,
 } from 'lucide-react'
 import type {
   Notebook, NotebookCell, NotebookCatalogEntry, NotebookRunResult,
@@ -64,8 +64,14 @@ export default function NotebookPage() {
   const [materializing, setMaterializing] = useState<string | null>(null)
   const [sharing, setSharing] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [runningAll, setRunningAll] = useState<{ done: number; total: number } | null>(null)
+  const [runAllError, setRunAllError] = useState<string | null>(null)
+  // Recolhimento LOCAL, que vence o persistido. Existe para quem só lê poder
+  // abrir uma célula recolhida sem conseguir (nem dever) gravar nada.
+  const [collapsedLocal, setCollapsedLocal] = useState<Record<string, boolean>>({})
 
   const python = usePython()
+  const abortAll = useRef<AbortController | null>(null)
 
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
   // Ref com o valor corrente: o debounce dispara depois, e ler o estado
@@ -135,22 +141,62 @@ export default function NotebookPage() {
     if (kind === 'markdown') setEditingMd((s) => ({ ...s, [cell.id]: true }))
   }
 
+  // ── Recolher ───────────────────────────────────────────────────────────
+  const recolhida = (c: NotebookCell) => collapsedLocal[c.id] ?? !!c.collapsed
+
+  function alternaRecolhida(c: NotebookCell) {
+    const next = !recolhida(c)
+    setCollapsedLocal((s) => ({ ...s, [c.id]: next }))
+    if (canEdit) patchCell(c.id, { collapsed: next })
+  }
+
+  function recolheTodas(valor: boolean) {
+    if (!nb) return
+    setCollapsedLocal(Object.fromEntries(nb.cells.map((c) => [c.id, valor])))
+    if (canEdit) setCells(nb.cells.map((c) => ({ ...c, collapsed: valor })))
+  }
+
+  // O que mostrar no lugar do conteúdo recolhido: a primeira linha que diz
+  // alguma coisa. Pular comentário importa — uma query boa começa com um
+  // cabeçalho de comentário, e "-- =====" não identifica célula nenhuma.
+  //
+  // Em markdown é o contrário: ali "#" é TÍTULO, e título é exatamente o
+  // melhor resumo possível. Só o cerquilha sai, para não virar ruído.
+  function resumo(kind: NotebookCell['kind'], source: string): string {
+    const linhas = source.split('\n').map((l) => l.trim())
+    const linha = kind === 'markdown'
+      ? linhas.find(Boolean)?.replace(/^#+\s*/, '')
+      : linhas.find((l) => l && !l.startsWith('--') && !l.startsWith('#'))
+    return linha ? (linha.length > 90 ? `${linha.slice(0, 90)}…` : linha) : '(vazia)'
+  }
+
   function removeCell(id: string) {
     if (!nb) return
     setCells(nb.cells.filter((c) => c.id !== id))
     setState((s) => { const { [id]: _drop, ...rest } = s; return rest })
   }
 
-  async function run(cell: NotebookCell) {
+  // Devolve o resultado além de guardá-lo no estado. O "executar tudo" precisa
+  // do valor AGORA: o setState só aparece no próximo render, e a célula Python
+  // seguinte receberia o `df` da execução anterior — erro que não dá erro.
+  async function run(cell: NotebookCell, signal?: AbortSignal): Promise<NotebookRunResult | null> {
     setState((s) => ({ ...s, [cell.id]: { running: true, result: null, error: null } }))
     try {
       const r = await api<NotebookRunResult>('/api/v1/notebooks/run', {
         method: 'POST',
         body: JSON.stringify({ sql: cell.source, limit: 500 }),
+        signal,
       })
       setState((s) => ({ ...s, [cell.id]: { running: false, result: r, error: null } }))
+      return r
     } catch (e) {
+      // Cancelamento não é falha da célula: quem parou foi a pessoa.
+      if ((e as Error).name === 'AbortError') {
+        setState((s) => ({ ...s, [cell.id]: { running: false, result: null, error: null } }))
+        return null
+      }
       setState((s) => ({ ...s, [cell.id]: { running: false, result: null, error: (e as ApiError).message } }))
+      return null
     }
   }
 
@@ -169,11 +215,80 @@ export default function NotebookPage() {
     return null
   }
 
-  async function runPython(cell: NotebookCell) {
-    const data = upstreamData(cell.id)
+  // `upstream` explícito vem do "executar tudo", que acabou de rodar o SQL e
+  // tem o resultado em mãos. Sem ele, cai na busca pelo estado — o caminho de
+  // quem clicou Executar nesta célula sozinha.
+  async function runPython(
+    cell: NotebookCell, upstream?: NotebookRunResult | null,
+  ): Promise<PythonResult> {
+    const data = upstream !== undefined ? upstream : upstreamData(cell.id)
     setState((s) => ({ ...s, [cell.id]: { running: true, result: null, error: null, python: null } }))
     const r = await python.run(cell.source, data ? { columns: data.columns, rows: data.rows } : null)
     setState((s) => ({ ...s, [cell.id]: { running: false, result: null, error: null, python: r } }))
+    return r
+  }
+
+  // ── Executar tudo ──────────────────────────────────────────────────────
+  // Em SÉRIE e de cima para baixo, porque é essa a semântica de um notebook:
+  // a célula Python lê o resultado da SQL acima dela. Em paralelo seria mais
+  // rápido e daria a resposta errada.
+  //
+  // PARA no primeiro erro. Seguir adiante produziria números que parecem
+  // válidos — a célula Python rodaria sobre o `df` da passada anterior, e
+  // ninguém olha o meio de um notebook para conferir se ele realmente rodou.
+  async function runAll() {
+    if (!nb) return
+    const fila = nb.cells.filter((c) => c.kind !== 'markdown' && c.source.trim())
+    if (!fila.length) return
+
+    const ctrl = new AbortController()
+    abortAll.current = ctrl
+    setRunAllError(null)
+    setRunningAll({ done: 0, total: fila.length })
+    // Último resultado SQL DESTA passada, passado adiante na mão.
+    let ultimoSql: NotebookRunResult | null = null
+    let concluiu = false
+    // Quem falhou é ABERTO na hora. O erro é renderizado fora da parte
+    // recolhida, mas uma célula fechada no meio de dez não é encontrada por
+    // um aviso que diz só "célula 7".
+    const falhou = (cell: NotebookCell, pos: number, tipo: string) => {
+      setCollapsedLocal((s) => ({ ...s, [cell.id]: false }))
+      setRunAllError(`Parou na célula ${pos} (${tipo}) — o erro está nela, logo abaixo do código.`)
+      setRunningAll(null)
+    }
+    try {
+      for (let i = 0; i < fila.length; i++) {
+        if (ctrl.signal.aborted) return
+        const cell = fila[i]
+        setRunningAll({ done: i, total: fila.length })
+        const pos = nb.cells.findIndex((c) => c.id === cell.id) + 1
+        if (cell.kind === 'sql') {
+          const r = await run(cell, ctrl.signal)
+          if (ctrl.signal.aborted) return
+          if (!r) { falhou(cell, pos, 'SQL'); return }
+          ultimoSql = r
+        } else {
+          const r = await runPython(cell, ultimoSql)
+          if (ctrl.signal.aborted) return
+          if (r.error) { falhou(cell, pos, 'Python'); return }
+        }
+      }
+      concluiu = true
+      setRunningAll({ done: fila.length, total: fila.length })
+    } finally {
+      abortAll.current = null
+      // Só no sucesso: deixa o "7 de 7" na tela por um instante, porque sumir
+      // no mesmo quadro em que termina faz parecer que não rodou. Na falha o
+      // contador já foi zerado, e deixá-lo girando seria mentira.
+      if (concluiu) setTimeout(() => setRunningAll(null), 1200)
+    }
+  }
+
+  function pararTudo() {
+    abortAll.current?.abort()
+    python.cancel()
+    setRunningAll(null)
+    setRunAllError('Execução interrompida.')
   }
 
   async function materialize(cell: NotebookCell) {
@@ -256,6 +371,42 @@ export default function NotebookPage() {
           className="min-w-0 flex-1 border-none bg-transparent text-[17px] font-semibold tracking-tight outline-none focus:ring-0"
         />
         <div className="flex shrink-0 items-center gap-1.5">
+          {/* Executar tudo vem ANTES dos controles de notebook: é a ação que
+              mais se repete quando se volta a uma análise de ontem. */}
+          {runningAll ? (
+            <>
+              <span className="flex items-center gap-1 text-[10.5px] tabular-nums text-zinc-500">
+                <Loader2 size={10} className="animate-spin" />
+                célula {Math.min(runningAll.done + 1, runningAll.total)} de {runningAll.total}
+              </span>
+              <button
+                onClick={pararTudo}
+                className="flex items-center gap-1.5 rounded-lg border border-crit/40 px-2.5 py-1.5 text-[11.5px] font-medium text-crit transition-colors hover:bg-crit-soft dark:text-crit-dark"
+              >
+                <Square size={11} strokeWidth={2.4} /> Parar
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => void runAll()}
+              disabled={!nb.cells.some((c) => c.kind !== 'markdown' && c.source.trim())}
+              title="Executa as células SQL e Python de cima para baixo, em série"
+              className="flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-[11.5px] font-semibold text-zinc-950 transition-colors hover:bg-accent-hover disabled:opacity-50"
+            >
+              <FastForward size={12} strokeWidth={2.2} /> Executar tudo
+            </button>
+          )}
+          {nb.cells.length > 1 && (
+            <button
+              onClick={() => recolheTodas(!nb.cells.every((c) => recolhida(c)))}
+              title={nb.cells.every((c) => recolhida(c)) ? 'Expandir todas as células' : 'Recolher todas as células'}
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[11.5px] font-medium text-zinc-600 transition-colors hover:border-zinc-300 dark:border-zinc-700 dark:text-zinc-300"
+            >
+              {nb.cells.every((c) => recolhida(c))
+                ? <><Maximize2 size={11} /> Expandir</>
+                : <><Minimize2 size={11} /> Recolher</>}
+            </button>
+          )}
           {saveState === 'saving' && <span className="flex items-center gap-1 text-[10.5px] text-zinc-400"><Loader2 size={10} className="animate-spin" /> salvando</span>}
           {saveState === 'saved' && <span className="flex items-center gap-1 text-[10.5px] text-zinc-400"><Check size={10} /> salvo</span>}
           {saveState === 'error' && <Pill tone="crit">falha ao salvar</Pill>}
@@ -304,11 +455,26 @@ export default function NotebookPage() {
         />
       )}
 
+      {/* Onde a execução em lote parou. A célula em si mostra o erro completo;
+          aqui fica só o ponteiro, porque com o código recolhido a pessoa pode
+          nem estar vendo a célula que falhou. */}
+      {runAllError && (
+        <div className="mt-2 flex items-start gap-2 rounded-xl border border-warn/40 bg-warn-soft px-3 py-2 dark:bg-warn/10">
+          <AlertTriangle size={13} className="mt-px shrink-0 text-warn dark:text-warn-dark" />
+          <p className="flex-1 text-[11.5px] leading-relaxed text-zinc-700 dark:text-zinc-300">{runAllError}</p>
+          <button onClick={() => setRunAllError(null)} className="shrink-0 text-[10.5px] text-zinc-500 hover:underline">
+            fechar
+          </button>
+        </div>
+      )}
+
       <div className="mt-3 grid items-start gap-2.5 xl:grid-cols-[minmax(0,1fr)_268px]">
         {/* Células */}
         <div className="flex min-w-0 flex-col gap-2.5">
           {nb.cells.map((cell) => {
             const st = state[cell.id]
+            const fechada = recolhida(cell)
+            const linhas = cell.source ? cell.source.split('\n').length : 0
             return (
               <Card key={cell.id}>
                 <CardHead
@@ -318,6 +484,21 @@ export default function NotebookPage() {
                     st?.result ? `${st.result.rows.length} linha(s) · ${st.result.ms} ms`
                       : cell.kind === 'python' ? (upstreamData(cell.id) ? 'df da célula SQL acima' : 'sem dados acima')
                       : undefined
+                  }
+                  // Recolher fica junto do título, onde todo editor o põe —
+                  // não no meio dos botões de ação. Com 200 linhas de SQL,
+                  // chegar nas células de baixo é o atrito mais frequente.
+                  lead={
+                    <button
+                      onClick={() => alternaRecolhida(cell)}
+                      title={fechada ? 'Expandir' : `Recolher (${linhas} linha(s))`}
+                      className="-ml-1 flex shrink-0 items-center gap-1 rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                    >
+                      {fechada ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                      {fechada && linhas > 1 && (
+                        <span className="text-[10px] tabular-nums">{linhas}</span>
+                      )}
+                    </button>
                   }
                 >
                   {cell.kind === 'python' && (
@@ -369,7 +550,19 @@ export default function NotebookPage() {
                   )}
                 </CardHead>
 
-                {cell.kind === 'python' ? (
+                {fechada ? (
+                  // O resumo é clicável: recolher sem jeito de voltar a abrir
+                  // pelo próprio corpo obrigaria a mirar no chevron.
+                  <button
+                    onClick={() => alternaRecolhida(cell)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/40"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500">
+                      {resumo(cell.kind, cell.source)}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-zinc-400">expandir</span>
+                  </button>
+                ) : cell.kind === 'python' ? (
                   <textarea
                     value={cell.source}
                     readOnly={!canEdit}
