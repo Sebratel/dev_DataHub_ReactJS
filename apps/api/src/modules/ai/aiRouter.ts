@@ -20,6 +20,14 @@ const authed = [requireAuth(), requireDb]
 
 const MAX_TOOL_ITERATIONS = 8
 
+// Sobre QUAL conjunto (ou qual busca) foi cada passo. É o que transforma uma
+// lista de "Consultando o lake…" repetida oito vezes em diagnóstico: cinco
+// tentativas no MESMO conjunto é laço; cinco conjuntos diferentes é garimpo.
+function alvoDaTool(input: Record<string, unknown>): string | null {
+  const v = input.dataset ?? input.slug ?? input.query
+  return v == null ? null : String(v).slice(0, 60)
+}
+
 const SYSTEM_PROMPT = `Você é o assistente de dados do Data Hub da Sebratel (provedor de internet).
 Responda SEMPRE em português do Brasil.
 
@@ -67,7 +75,7 @@ aiRouter.get('/conversations/:id', ...authed, async (req, res) => {
   )).rows[0]
   if (!conv) return res.status(404).json({ error: 'Conversa não encontrada.' })
   const messages = (await db.query(
-    `select id, role, content, chart, created_at from messages
+    `select id, role, content, chart, trace, created_at from messages
       where conversation_id = $1 order by created_at`,
     [req.params.id],
   )).rows
@@ -130,6 +138,12 @@ aiRouter.post('/conversations/:id/messages', ...authed, async (req, res) => {
 
     const charts: Record<string, unknown>[] = []
     let finalText = ''
+    // O que a IA consultou, passo a passo. Existe porque sem isto ninguém —
+    // nem quem usa, nem quem mantém — consegue saber POR QUE uma resposta
+    // acabou no limite: a tela mostrava o progresso e o descartava ao chegar
+    // a resposta final, e o servidor não registrava nada.
+    const trace: { name: string; alvo: string | null; erro: boolean }[] = []
+    let limitReached = false
 
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
       const turn = await provider.chat(SYSTEM_PROMPT, messages, AI_TOOLS)
@@ -147,23 +161,37 @@ aiRouter.post('/conversations/:id/messages', ...authed, async (req, res) => {
           charts.push(outcome.chart)
           send('chart', outcome.chart)
         }
+        trace.push({ name: call.name, alvo: alvoDaTool(call.input), erro: !!outcome.isError })
         results.push({ toolCallId: call.id, content: outcome.content, isError: outcome.isError })
       }
       messages.push(provider.toolResultMessage(results))
       if (i === MAX_TOOL_ITERATIONS - 1) {
-        finalText = 'Atingi o limite de consultas desta resposta. Refine a pergunta para eu continuar.'
+        limitReached = true
+        // A mensagem diz o que aconteceu, não só que acabou. "Refine a
+        // pergunta" sozinho manda a pessoa tentar de novo às cegas — e com
+        // frequência o problema é uma consulta que falha sempre, não uma
+        // pergunta grande demais.
+        const erros = trace.filter((t) => t.erro).length
+        finalText = `Parei depois de ${trace.length} consulta(s), no limite de ${MAX_TOOL_ITERATIONS} rodadas`
+          + (erros ? `, sendo ${erros} com erro` : '')
+          + '. Abra "o que eu consultei" abaixo para ver onde travei.'
+          + (erros
+            ? ' As consultas com erro indicam problema no conjunto, não na pergunta —'
+            + ' tente a mesma consulta num Notebook para ver o erro completo.'
+            : ' Se foram muitos conjuntos diferentes, aponte o conjunto certo na pergunta.')
       }
     }
 
     const saved = (await db.query(
-      `insert into messages (conversation_id, role, content, chart) values ($1, 'assistant', $2, $3)
-       returning id`,
-      [conv.id, finalText, charts.length ? JSON.stringify(charts) : null],
+      `insert into messages (conversation_id, role, content, chart, trace)
+       values ($1, 'assistant', $2, $3, $4) returning id`,
+      [conv.id, finalText, charts.length ? JSON.stringify(charts) : null,
+       trace.length ? JSON.stringify(trace) : null],
     )).rows[0]
     await db.query(`update conversations set updated_at = now() where id = $1`, [conv.id])
     await audit(req, 'ai.message', { type: 'conversation', id: String(conv.id) }, { tools: charts.length })
 
-    send('done', { id: saved.id, text: finalText, charts })
+    send('done', { id: saved.id, text: finalText, charts, trace, limitReached })
   } catch (e) {
     send('error', { error: (e as Error).message })
   } finally {

@@ -2,7 +2,7 @@
 // por SSE: eventos 'tool' viram indicadores de progresso, 'chart' renderiza
 // gráficos (mesmo componente dos dashboards) e 'done' traz o texto final.
 import { useEffect, useRef, useState } from 'react'
-import { Sparkles, Send, Plus, Trash2, Loader2, Search, Database, BarChart3 } from 'lucide-react'
+import { Sparkles, Send, Plus, Trash2, Loader2, Search, Database, BarChart3, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
 import type { Widget, WidgetType, QueryFilter, Aggregation } from '@datahub/shared'
 import { api } from '@/lib/api'
@@ -18,12 +18,21 @@ interface ChartDef {
   metric: { metric: string } | { field: string; agg: Aggregation }
   filters: QueryFilter[]
 }
+/** Um passo do raciocínio: qual tool, sobre o quê, e se deu erro. */
+interface TraceStep { name: string; alvo: string | null; erro: boolean }
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   charts?: ChartDef[]
   progress?: string[] // indicadores enquanto a IA trabalha
+  // O rastro SOBREVIVE à resposta. Antes o progresso era descartado no
+  // instante em que o texto final chegava — e era justamente quando ele
+  // passava a importar, porque "atingi o limite" sem dizer onde travou não
+  // deixa ninguém investigar nada.
+  trace?: TraceStep[]
+  limitReached?: boolean
 }
 
 const TOOL_LABEL: Record<string, { icon: typeof Search; label: string }> = {
@@ -31,6 +40,15 @@ const TOOL_LABEL: Record<string, { icon: typeof Search; label: string }> = {
   get_dataset_schema: { icon: Database, label: 'Lendo os campos do conjunto…' },
   run_query: { icon: Database, label: 'Consultando o lake…' },
   render_chart: { icon: BarChart3, label: 'Montando o gráfico…' },
+}
+
+// Rótulo curto do passo, COM o alvo: "run_query · db-senior-collaborators".
+// Sem o alvo, oito linhas iguais não distinguem laço de garimpo.
+const PASSO_LABEL: Record<string, string> = {
+  search_datasets: 'Buscou conjuntos',
+  get_dataset_schema: 'Leu os campos de',
+  run_query: 'Consultou',
+  render_chart: 'Montou gráfico de',
 }
 
 function chartToWidget(c: ChartDef, i: number): Widget {
@@ -66,10 +84,18 @@ export default function AiPage() {
     setActiveId(id)
     setError(null)
     try {
-      const r = await api<{ messages: { id: string; role: 'user' | 'assistant'; content: string; chart: ChartDef[] | null }[] }>(
-        `/api/v1/ai/conversations/${id}`,
-      )
-      setMessages(r.messages.map((m) => ({ id: m.id, role: m.role, content: m.content, charts: m.chart ?? undefined })))
+      const r = await api<{ messages: {
+        id: string; role: 'user' | 'assistant'; content: string
+        chart: ChartDef[] | null; trace: TraceStep[] | null
+      }[] }>(`/api/v1/ai/conversations/${id}`)
+      setMessages(r.messages.map((m) => ({
+        id: m.id, role: m.role, content: m.content,
+        charts: m.chart ?? undefined,
+        trace: m.trace ?? undefined,
+        // Conversa reaberta: o rastro já cumpriu o papel de alerta, então vem
+        // fechado. Quem quer investigar abre.
+        limitReached: false,
+      })))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao carregar conversa.')
     }
@@ -147,7 +173,12 @@ export default function AiPage() {
             charts.push(data as ChartDef)
           } else if (event === 'done') {
             setMessages((m) => m.map((msg) => msg.id === pendingId
-              ? { id: data.id, role: 'assistant', content: data.text, charts: data.charts?.length ? data.charts : undefined }
+              ? {
+                  id: data.id, role: 'assistant', content: data.text,
+                  charts: data.charts?.length ? data.charts : undefined,
+                  trace: data.trace?.length ? (data.trace as TraceStep[]) : undefined,
+                  limitReached: !!data.limitReached,
+                }
               : msg))
           } else if (event === 'error') {
             throw new Error(data.error)
@@ -237,6 +268,7 @@ export default function AiPage() {
                     </span>
                   )}
                   {m.content && <p className="whitespace-pre-wrap">{m.content}</p>}
+                  {m.trace && <TraceBlock trace={m.trace} aberto={!!m.limitReached} />}
                   {m.charts && (
                     <div className="mt-3 grid gap-3">
                       {m.charts.map((c, i) => (
@@ -271,6 +303,61 @@ export default function AiPage() {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// O que a IA consultou para chegar na resposta.
+//
+// Fica fechado numa resposta normal (quem perguntou quer o número, não o
+// caminho) e ABERTO quando a execução acabou no limite — ali o caminho é a
+// única informação que existe.
+//
+// O que torna isto diagnóstico, e não enfeite: o ALVO de cada passo e a marca
+// de erro. Oito linhas "Consultou" idênticas no mesmo conjunto são um laço de
+// repetição; oito conjuntos diferentes são garimpo; e qualquer linha vermelha
+// aponta um conjunto quebrado, que nenhuma reformulação de pergunta conserta.
+function TraceBlock({ trace, aberto }: { trace: TraceStep[]; aberto: boolean }) {
+  const [open, setOpen] = useState(aberto)
+  const erros = trace.filter((t) => t.erro).length
+
+  // Repetição do MESMO passo sobre o MESMO alvo: o sinal mais forte de laço.
+  const repetido = new Map<string, number>()
+  for (const t of trace) {
+    const k = `${t.name}|${t.alvo ?? ''}`
+    repetido.set(k, (repetido.get(k) ?? 0) + 1)
+  }
+  const maisRepetido = [...repetido.values()].reduce((a, b) => Math.max(a, b), 0)
+
+  return (
+    <div className={clsx('text-xs', erros || aberto ? 'mt-2.5' : 'mt-2')}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-zinc-500 transition-colors hover:text-zinc-900 dark:hover:text-zinc-100"
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        o que eu consultei ({trace.length} passo{trace.length > 1 ? 's' : ''}
+        {erros ? `, ${erros} com erro` : ''})
+      </button>
+      {open && (
+        <ol className="mt-1.5 space-y-0.5 border-l border-zinc-200 pl-2.5 dark:border-zinc-800">
+          {trace.map((t, i) => (
+            <li key={i} className={clsx('flex items-baseline gap-1.5',
+              t.erro ? 'text-crit dark:text-crit-dark' : 'text-zinc-500')}>
+              <span className="w-4 shrink-0 tabular-nums text-right text-[10px] text-zinc-400">{i + 1}</span>
+              {t.erro && <AlertTriangle size={10} className="shrink-0 translate-y-px" />}
+              <span>{PASSO_LABEL[t.name] ?? t.name}</span>
+              {t.alvo && <span className="min-w-0 truncate font-mono text-[10.5px]">{t.alvo}</span>}
+            </li>
+          ))}
+        </ol>
+      )}
+      {open && maisRepetido >= 3 && (
+        <p className="mt-1.5 leading-relaxed text-warn dark:text-warn-dark">
+          O mesmo passo se repetiu {maisRepetido} vezes sobre o mesmo alvo — isso é a IA tentando de novo,
+          não procurando. Reformular a pergunta não resolve; o problema está no conjunto ou na consulta.
+        </p>
+      )}
     </div>
   )
 }

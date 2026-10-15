@@ -1,0 +1,16 @@
+-- O caminho que a IA percorreu para montar uma resposta.
+--
+-- A tela já mostrava o progresso enquanto a resposta era gerada e o DESCARTAVA
+-- no instante em que o texto final chegava — exatamente quando ele passa a
+-- importar. Uma resposta que termina em "atingi o limite de consultas" sem
+-- dizer onde travou não deixa ninguém investigar: nem quem perguntou, nem
+-- quem mantém a plataforma. O servidor também não registrava nada.
+--
+-- Guardado como jsonb: [{ name, alvo, erro }], um item por chamada de tool.
+-- Não guarda o CONTEÚDO devolvido pela tool, de propósito — ali vão linhas de
+-- conjuntos que quem abrir a conversa depois pode não ter acesso para ler, e é
+-- a mesma razão pela qual o notebook não persiste resultado de célula.
+--
+-- Nulo em toda mensagem anterior a esta migração, e nas de usuário. A tela
+-- simplesmente não desenha o bloco quando não há rastro.
+alter table messages add column trace jsonb;
