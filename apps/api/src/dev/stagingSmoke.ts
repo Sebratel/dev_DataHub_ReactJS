@@ -20,10 +20,10 @@
 // o tamanho de uma linha, e o problema é disco.
 //
 // Uso: npm run staging:smoke --workspace apps/api
-import { writeFileSync, mkdtempSync, rmSync, createWriteStream, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { writeFileSync, rmSync, createWriteStream, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { createGzip } from 'node:zlib'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { smokeDir } from './smokeDir.js'
 import { duckQuery } from '../modules/query/duck.js'
 import { config } from '../core/config.js'
 
@@ -33,7 +33,7 @@ function check(name: string, ok: boolean, detail = ''): void {
   if (!ok) failures++
 }
 
-const dir = mkdtempSync(join(tmpdir(), 'staging-smoke-')).replace(/\\/g, '/')
+const dir = smokeDir('staging-smoke-').replace(/\\/g, '/')
 const NL = String.fromCharCode(10)
 const PADRAO_DUCKDB = 16 * 1024 * 1024
 

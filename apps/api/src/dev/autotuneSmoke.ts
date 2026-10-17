@@ -10,9 +10,8 @@
 //   4. o motor de decisão escolhe a regra certa em cada formato de tabela que
 //      existe nas fontes (created+modified, só PK, view, sem identidade…).
 // Uso: npm run autotune:smoke --workspace apps/api
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
+import { smokeDir } from './smokeDir.js'
 import { checkReadOnly } from '../core/guard.js'
 import { duckQuery } from '../modules/query/duck.js'
 import { recencyExpression, excedeTeto } from '../modules/sync/ingest.js'
@@ -83,7 +82,7 @@ for (const [name, def, expected] of CASES) {
 
 // ── 3. Sondagem da compactação, no DuckDB de verdade ─────────────────────
 console.log('\n── compactação condicional (DuckDB) ──')
-const dir = mkdtempSync(join(tmpdir(), 'autotune-smoke-')).replace(/\\/g, '/')
+const dir = smokeDir('autotune-smoke-').replace(/\\/g, '/')
 try {
   const probe = async (keys: string[]) => {
     const group = keys.map((k) => `"${k}"`).join(', ')
@@ -141,7 +140,7 @@ console.log('\n── disjuntor de carga em fuga ──')
 // e a compactação falha em TODA execução. Foi o que travou um conjunto real em
 // 50 execuções seguidas, sem nunca sincronizar.
 console.log('\n── recência da compactação (DuckDB) ──')
-const dir2 = mkdtempSync(join(tmpdir(), 'recency-smoke-')).replace(/\\/g, '/')
+const dir2 = smokeDir('recency-smoke-').replace(/\\/g, '/')
 try {
   // Duas versões da MESMA linha: a antiga nunca editada (updated_at nulo) e a
   // nova, editada. A compactação tem de ficar com a editada.

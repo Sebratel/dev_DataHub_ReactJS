@@ -7,9 +7,9 @@
 //   npm run export:smoke --workspace apps/api
 // e, para o número de heap ser confiável (GC determinístico):
 //   node --expose-gc --import tsx src/dev/exportSmoke.ts
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { smokeDir } from './smokeDir.js'
 import { duckQuery, duckStream } from '../modules/query/duck.js'
 
 const ROWS = Number(process.env.SMOKE_ROWS) || 2_000_000
@@ -18,7 +18,7 @@ const MB = (b: number) => `${(b / 1024 / 1024).toFixed(0)} MB`
 const gc = (globalThis as { gc?: () => void }).gc
 const heap = () => { gc?.(); return process.memoryUsage().heapUsed }
 
-const dir = mkdtempSync(join(tmpdir(), 'datahub-export-smoke-'))
+const dir = smokeDir('datahub-export-smoke-')
 const parquet = join(dir, 'amostra.parquet').replace(/\\/g, '/')
 
 let failures = 0

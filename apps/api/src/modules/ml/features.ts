@@ -10,7 +10,7 @@
 // seria um número plausível e silenciosamente errado — por isso é validado.
 // ─────────────────────────────────────────────────────────────────────────
 import { duckQuery } from '../query/duck.js'
-import { lakeRefs, buildLakeSql, validateTransformSql } from '../transform/derive.js'
+import { lakeRefs, compileLakeSql, validateTransformSql } from '../transform/derive.js'
 import type { AccessUser } from '../../core/access.js'
 import type { Matrix } from './algorithms.js'
 
@@ -70,7 +70,7 @@ export async function runFeatureSql(
   // prévia). Sem, roda com o tenant inteiro — treino e predição executam uma
   // definição cuja autoria já foi conferida em assertReferencesAllowed.
   const refs = await lakeRefs(tenantSlug, { user })
-  const wrapped = buildLakeSql(sql, refs)
+  const wrapped = await compileLakeSql(sql, refs)
   const res = await duckQuery(`select * from (${wrapped}) as __ml limit ${Math.max(1, Math.floor(maxRows))}`, [], { adhoc: true })
   return res.rows
 }

@@ -10,10 +10,10 @@
 // consome a API.
 //
 // Uso: npm run public-query:smoke --workspace apps/api
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { QueryDef } from '@datahub/shared'
+import { smokeDir } from './smokeDir.js'
 import { compileQuery, type CompileField } from '../modules/query/compile.js'
 import { duckQuery } from '../modules/query/duck.js'
 
@@ -23,7 +23,7 @@ function check(name: string, ok: boolean, detail = ''): void {
   if (!ok) failures++
 }
 
-const dir = mkdtempSync(join(tmpdir(), 'dh-public-query-'))
+const dir = smokeDir('dh-public-query-')
 const glob = join(dir, '*.parquet').replace(/\\/g, '/')
 await duckQuery(`copy (select * from (values
     (1, timestamp '2026-01-15 10:00:00', '2026-01-15',          'Concluído',    'A', 10.0, timestamp '1990-05-01 00:00:00'),

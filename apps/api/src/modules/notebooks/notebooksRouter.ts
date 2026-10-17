@@ -17,7 +17,7 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import { config } from '../../core/config.js'
 import { duckQuery } from '../query/duck.js'
 import {
-  lakeRefs, buildLakeSql, validateTransformSql, assertReferencesAllowed,
+  lakeRefs, compileLakeSql, validateTransformSql, assertReferencesAllowed,
 } from '../transform/derive.js'
 import { enqueueSync } from '../sync/ingest.js'
 import type { AccessUser } from '../../core/access.js'
@@ -339,7 +339,7 @@ notebooksRouter.post('/run', ...authed, async (req, res) => {
     validateTransformSql(sql)
     await assertReferencesAllowed(req.user!.tenant, sql, req.user!)
     const refs = await lakeRefs(req.user!.tenant, { user: req.user! })
-    const wrapped = buildLakeSql(sql, refs)
+    const wrapped = await compileLakeSql(sql, refs)
 
     // Pede uma linha a mais que o limite: é assim que dá para dizer "há mais"
     // com honestidade, sem contar o total (que custaria uma segunda varredura).
@@ -377,7 +377,7 @@ notebooksRouter.post('/materialize', requireAuth({ role: 'editor' }), requireDb,
     // catálogo é pior que um erro na tela.
     const refs = await lakeRefs(req.user!.tenant, { user: req.user! })
     await duckQuery(
-      `select * from (${buildLakeSql(sql, refs)}) as __p limit 1`,
+      `select * from (${await compileLakeSql(sql, refs)}) as __p limit 1`,
       [],
       { timeoutMs: config.duck.queryTimeoutMs, adhoc: true },
     )

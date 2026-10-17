@@ -12,10 +12,9 @@
 // conversão que cada um faz por conta própria.
 //
 // Uso: TZ=America/Sao_Paulo npm run tz:smoke --workspace apps/api
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import { PGlite } from '@electric-sql/pglite'
+import { smokeDir } from './smokeDir.js'
 import { duckQuery } from '../modules/query/duck.js'
 import { timestampLocal, normalizaWatermark } from '../modules/sync/ingest.js'
 
@@ -48,7 +47,7 @@ const lida = (await pg.query<{ criado: unknown }>(
 check('a fonte entrega o horário como está na tabela', lida === NA_FONTE, lida)
 
 // E como o lake grava, a partir desse texto.
-const dir = mkdtempSync(join(tmpdir(), 'tz-smoke-')).replace(/\\/g, '/')
+const dir = smokeDir('tz-smoke-').replace(/\\/g, '/')
 try {
   await duckQuery(
     `copy (select try_cast('${lida}' as TIMESTAMP) as criado)

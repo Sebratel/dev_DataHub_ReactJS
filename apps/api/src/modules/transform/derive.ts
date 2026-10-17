@@ -260,9 +260,103 @@ export async function assertNoDerivedCycle(tenantSlug: string, slug: string, new
   }
 }
 
+// ── Validação do SQL livre pela árvore do próprio DuckDB (SEG-01) ─────────
+// A lista de palavras proibidas acima olha TEXTO, e precisa apagar o que está
+// entre aspas para não disparar por um literal. Era exatamente por ali que
+// passava `select * from '/caminho/arquivo.parquet'`: o DuckDB lê o arquivo
+// quando o caminho aparece entre aspas no FROM, e o filtro já tinha apagado o
+// caminho antes de olhar. Regex sobre SQL sempre fica atrás da gramática.
+//
+// Aqui quem lê o SQL é o parser do DuckDB (json_serialize_sql), e a regra
+// vira uma lista do que PODE, não do que não pode:
+//   • exatamente uma consulta SELECT/WITH;
+//   • toda tabela citada é um conjunto que o usuário alcança (slug ou apelido)
+//     ou uma CTE do próprio SQL — nunca um caminho, nunca schema.tabela;
+//   • funções de tabela só as que geram linhas sem ler nada (range…).
+//
+// A trava do motor (duck.ts) segura o que estiver FORA do lake; esta segura o
+// que está DENTRO — sem ela, um caminho entre aspas leria o Parquet de um
+// conjunto sem concessão, que mora na mesma pasta permitida.
+const SAFE_TABLE_FUNCTIONS = new Set(['range', 'generate_series', 'unnest'])
+
+// Nome que o DuckDB poderia tratar como arquivo (replacement scan): extensão,
+// diretório ou glob. Vale também para nome de CTE — uma CTE declarada dentro
+// de uma subconsulta e citada fora do escopo dela cai no replacement scan.
+const PATHLIKE = /[./\\*?:]/
+
+type AstNode = { [k: string]: unknown }
+
+function walkAst(node: unknown, visit: (n: AstNode) => void): void {
+  if (Array.isArray(node)) { for (const x of node) walkAst(x, visit); return }
+  if (!node || typeof node !== 'object') return
+  visit(node as AstNode)
+  for (const v of Object.values(node as AstNode)) walkAst(v, visit)
+}
+
+export async function assertSafeLakeSql(userSql: string, refs: LakeRef[]): Promise<void> {
+  const body = userSql.trim().replace(/;\s*$/, '')
+  const res = await duckQuery('select json_serialize_sql(?::varchar) as ast', [body], { adhoc: true })
+  const ast = JSON.parse(String(res.rows[0]?.ast ?? '{}')) as AstNode
+  if (ast.error) {
+    throw new Error(`O SQL não é uma consulta válida: ${String(ast.error_message ?? 'erro de sintaxe')}. ` +
+      'Use uma única consulta SELECT ou WITH.')
+  }
+  if (!Array.isArray(ast.statements) || ast.statements.length !== 1) {
+    throw new Error('Use uma única consulta SELECT ou WITH (sem vários comandos).')
+  }
+
+  const ctes = new Set<string>()
+  walkAst(ast, (n) => {
+    const map = (n.cte_map as { map?: Array<{ key?: unknown }> } | undefined)?.map
+    if (Array.isArray(map)) for (const e of map) ctes.add(String(e.key ?? '').toLowerCase())
+  })
+  for (const c of ctes) {
+    if (PATHLIKE.test(c)) throw new Error(`Nome de CTE não permitido: "${c}". Use letras, números, "_" ou "-".`)
+  }
+
+  const allowed = new Set(refs.flatMap((r) => [r.slug, r.slug.replace(/-/g, '_')]).map((s) => s.toLowerCase()))
+  walkAst(ast, (n) => {
+    if (n.type === 'BASE_TABLE') {
+      const name = String(n.table_name ?? '')
+      const lower = name.toLowerCase()
+      if (n.schema_name || n.catalog_name || PATHLIKE.test(name)) {
+        throw new Error(
+          `Referência não permitida no SQL: "${[n.catalog_name, n.schema_name, name].filter(Boolean).join('.')}". ` +
+          'Cite os conjuntos pelo slug ou pelo apelido com underscore — caminhos de arquivo e esquemas não são aceitos.',
+        )
+      }
+      if (!allowed.has(lower) && !ctes.has(lower)) {
+        throw new Error(
+          `O conjunto "${name}" não existe no lake ou você não tem acesso a ele. ` +
+          `Disponíveis para você: ${[...new Set(refs.map((r) => r.slug.replace(/-/g, '_')))].join(', ') || 'nenhum'}.`,
+        )
+      }
+    } else if (n.type === 'TABLE_FUNCTION') {
+      const fn = String((n.function as AstNode | undefined)?.function_name ?? '').toLowerCase()
+      if (!SAFE_TABLE_FUNCTIONS.has(fn)) {
+        throw new Error(
+          `Função de tabela não permitida: "${fn}". Leia os dados pelos conjuntos do lake ` +
+          `(slug ou apelido); funções aceitas: ${[...SAFE_TABLE_FUNCTIONS].join(', ')}.`,
+        )
+      }
+    }
+  })
+}
+
+// ÚNICA porta para executar SQL de usuário sobre o lake: valida pela árvore e
+// só então monta. Notebook, prévia e materialização de calculado e atributos
+// de ML passam por aqui — inclusive na execução em segundo plano de uma
+// definição já salva, que pode ter sido gravada antes desta validação existir.
+export async function compileLakeSql(userSql: string, refs: LakeRef[]): Promise<string> {
+  validateTransformSql(userSql)
+  await assertSafeLakeSql(userSql, refs)
+  return buildLakeSql(userSql, refs)
+}
+
 // Envolve o SQL do usuário com CTEs (um por conjunto do lake). O SQL vira uma
-// subconsulta — funciona mesmo quando o usuário usa o próprio WITH.
-export function buildLakeSql(userSql: string, refs: LakeRef[]): string {
+// subconsulta — funciona mesmo quando o usuário usa o próprio WITH. Interna:
+// fora daqui, use compileLakeSql (que valida antes).
+function buildLakeSql(userSql: string, refs: LakeRef[]): string {
   if (!refs.length) {
     throw new Error('Nenhum conjunto de dados com dados no lake — sincronize as fontes primeiro.')
   }
@@ -313,7 +407,7 @@ export async function previewDerived(
   // Prévia é caminho INTERATIVO: o usuário digita SQL livre, então só enxerga
   // os conjuntos que ele pode ler.
   const refs = await lakeRefs(tenantSlug, { user })
-  const wrapped = buildLakeSql(sql, refs)
+  const wrapped = await compileLakeSql(sql, refs)
   try {
     const res = await duckQuery(`select * from (${wrapped}) as __p limit 50`, [], { timeoutMs: config.duck.queryTimeoutMs, adhoc: true })
     return { columns: res.columns, rows: res.rows }
@@ -376,7 +470,7 @@ export async function materializeDerived(ds: {
     // Exclui o próprio slug: um derivado não referencia a si mesmo (leria a
     // versão anterior). Cadeias derivado→derivado usam os demais materializados.
     const refs = await lakeRefs(ds.tenantSlug, { excludeSlug: ds.slug })
-    const wrapped = buildLakeSql(ds.transformSql, refs)
+    const wrapped = await compileLakeSql(ds.transformSql, refs)
 
     // Escreve com sufixo .writing e só renomeia no fim: um COPY interrompido
     // deixa um arquivo que nenhum glob enxerga, em vez de um Parquet truncado

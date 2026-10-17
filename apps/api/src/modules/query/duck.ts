@@ -8,22 +8,63 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { config } from '../../core/config.js'
+import { LAKE_ROOT, stagingDir } from '../../core/lake.js'
 
 let instance: DuckDBInstance | null = null
+let creating: Promise<DuckDBInstance> | null = null
+
+// Pastas que o MOTOR pode tocar. Todo o resto do disco fica fora de alcance —
+// inclusive para SQL de usuário (notebook, calculado, atributos de ML), que
+// roda nesta mesma instância. Antes disto, `select * from '/caminho/qualquer'`
+// lia qualquer arquivo do contêiner (SEG-01): CSV/JSON soltos, a credencial
+// do GCP em PATH_CREDENTIALS, /proc/self/environ com as senhas das fontes.
+//
+// A lista é a de quem de fato lê/escreve arquivo pelo DuckDB: lake (consulta,
+// materialização, ingestão), staging da ingestão (JSONL → Parquet), pasta
+// temporária do envio ao Databricks e o spill do próprio motor. Quem precisar
+// de uma pasta nova acrescenta AQUI — e recebe "Permission Error" até isso.
+export function engineAllowedDirs(spill: string): string[] {
+  const dirs = [LAKE_ROOT, stagingDir(), join(tmpdir(), 'datahub-databricks'), spill]
+  for (const d of dirs) { try { mkdirSync(d, { recursive: true }) } catch { /* já existe */ } }
+  // Barra normal e barra final: é a forma que as consultas usam (parquetGlob,
+  // tmpDuck) e evita que "/lake" libere também "/lake-outro".
+  return [...new Set(dirs.map((d) => d.replace(/\\/g, '/').replace(/\/?$/, '/')))]
+}
+
+const sqlStr = (s: string) => `'${s.replace(/'/g, "''")}'`
+
+async function createLockedInstance(): Promise<DuckDBInstance> {
+  const spill = join(tmpdir(), 'datahub-duckdb-spill')
+  const inst = await DuckDBInstance.create(':memory:', {
+    memory_limit: config.duck.memoryLimit,
+    threads: String(config.duck.threads),
+    // Spill em disco: ordenações/agregações grandes vão para disco em vez de
+    // estourar a memória (degrada com elegância no lugar de OOM).
+    temp_directory: spill,
+  })
+  // A ordem importa: a lista de pastas só pode ser definida enquanto o acesso
+  // externo está ligado, e o lock por último impede que um SQL qualquer
+  // desfaça os dois (`set enable_external_access = true` passa a ser recusado).
+  // allowed_directories não é aceito como opção de criação neste binding, por
+  // isso vai por SET, antes de qualquer outra conexão existir.
+  const boot = await inst.connect()
+  try {
+    const dirs = engineAllowedDirs(spill).map(sqlStr).join(', ')
+    await boot.run(`set allowed_directories = [${dirs}]`)
+    await boot.run(`set enable_external_access = false`)
+    await boot.run(`set lock_configuration = true`)
+  } finally {
+    boot.closeSync()
+  }
+  return inst
+}
 
 async function getInstance(): Promise<DuckDBInstance> {
-  if (!instance) {
-    const spill = join(tmpdir(), 'datahub-duckdb-spill')
-    try { mkdirSync(spill, { recursive: true }) } catch { /* já existe */ }
-    instance = await DuckDBInstance.create(':memory:', {
-      memory_limit: config.duck.memoryLimit,
-      threads: String(config.duck.threads),
-      // Spill em disco: ordenações/agregações grandes vão para disco em vez de
-      // estourar a memória (degrada com elegância no lugar de OOM).
-      temp_directory: spill,
-    })
-  }
-  return instance
+  if (instance) return instance
+  // Duas consultas no boot não podem criar duas instâncias (a segunda ficaria
+  // órfã, com memória própria).
+  creating ??= createLockedInstance().then((i) => { instance = i; return i })
+  return creating
 }
 
 export interface DuckResult {

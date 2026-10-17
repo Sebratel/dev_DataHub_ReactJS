@@ -10,9 +10,9 @@
 // small to be a Parquet file") não diz nem qual conjunto nem o que fazer.
 //
 // Uso: npm run lake:smoke --workspace apps/api
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { smokeDir } from './smokeDir.js'
 import { duckQuery } from '../modules/query/duck.js'
 import {
   parquetIntacto, faxinaDataset, partEmEscrita, concluiParte, descartaParte,
@@ -25,7 +25,7 @@ function check(name: string, ok: boolean, detail = ''): void {
   if (!ok) failures++
 }
 
-const dir = mkdtempSync(join(tmpdir(), 'lake-repair-')).replace(/\\/g, '/')
+const dir = smokeDir('lake-repair-').replace(/\\/g, '/')
 
 // ── Um Parquet legítimo, escrito pelo DuckDB ─────────────────────────────
 const bom = join(dir, 'part-bom.parquet').replace(/\\/g, '/')
