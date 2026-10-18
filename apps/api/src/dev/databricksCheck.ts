@@ -158,13 +158,16 @@ if (comOauth) {
   })
   const tok = ((await r.json()) as { access_token?: string }).access_token
 
-  const negado = async (rotulo: string, metodo: string, caminho: string, corpo?: unknown) => {
-    const resp = await fetch(`https://${config.databricks.host}${caminho}`, {
+  const tentar = async (metodo: string, caminho: string, corpo?: unknown) =>
+    fetch(`https://${config.databricks.host}${caminho}`, {
       method: metodo,
       headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
       body: corpo ? JSON.stringify(corpo) : undefined,
       signal: AbortSignal.timeout(30_000),
     })
+
+  const negado = async (rotulo: string, metodo: string, caminho: string, corpo?: unknown) => {
+    const resp = await tentar(metodo, caminho, corpo)
     // 403 é o ideal; 404 também serve, porque sem USE_SCHEMA o objeto nem
     // existe para esta identidade — o efeito prático é o mesmo.
     if (resp.status === 403 || resp.status === 404) {
@@ -174,12 +177,39 @@ if (comOauth) {
     }
   }
 
+  // Limites de DADOS: estes dependem só do Unity Catalog, e são os que a
+  // configuração controla de verdade. Se algum destes passar, há erro nosso.
   await negado('não cria schema no catálogo', 'POST', '/api/2.1/unity-catalog/schemas',
     { name: `teste_permissao_${Date.now()}`, catalog_name: 'piloto_mariadb' })
   await negado('não enxerga a tabela em bronze', 'GET',
     '/api/2.1/unity-catalog/tables/piloto_mariadb.bronze.api_resumo')
-  await negado('não cria job no workspace', 'POST', '/api/2.2/jobs/create',
+
+  // Limite de PLATAFORMA, e este não é configurável.
+  //
+  // A Files API exige um entitlement de workspace (databricks-sql-access,
+  // workspace-access ou workspace-consume), e QUALQUER um deles também permite
+  // criar job. Testei os três: o envio funciona e a criação de job passa junto.
+  // Não é descuido de configuração — é o acesso ao workspace sendo indivisível.
+  //
+  // O que isso significa na prática: quem roubar o segredo não lê dado nenhum
+  // (os dois testes acima continuam valendo), mas pode gastar compute. O
+  // controle disso é o orçamento e a rotação do segredo, não a permissão.
+  //
+  // O job de teste é apagado em seguida — teste que suja o workspace vira
+  // ruído, e ruído a gente aprende a ignorar.
+  const resp = await tentar('POST', '/api/2.2/jobs/create',
     { name: `teste-permissao-${Date.now()}`, tasks: [] })
+  if (resp.status === 403) {
+    ok('não cria job no workspace', 'recusado com 403')
+  } else if (resp.ok) {
+    const { job_id: jobId } = (await resp.json()) as { job_id?: number }
+    if (jobId) await tentar('POST', '/api/2.2/jobs/delete', { job_id: jobId })
+    console.log('  nota  cria job no workspace — limite da plataforma, não da configuração.')
+    console.log('        Acesso ao volume e acesso ao workspace vêm juntos; a contenção')
+    console.log('        é orçamento e rotação do segredo. Job de teste removido.')
+  } else {
+    nok('criação de job', `resposta inesperada: HTTP ${resp.status}`)
+  }
 }
 
 console.log(falhas ? `\n${falhas} verificação(ões) falharam.` : '\nTudo certo.')
