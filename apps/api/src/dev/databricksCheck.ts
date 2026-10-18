@@ -32,7 +32,9 @@ const nok = (t: string, d = '') => { console.log(` FALHA ${t}${d ? ` — ${d}` :
 console.log('\n1. Configuração')
 console.log(`  host        ${config.databricks.host || '(vazio)'}`)
 console.log(`  volume      ${config.databricks.volumePath}`)
-console.log(`  autenticação ${config.databricks.token ? 'PAT' : config.databricks.clientId ? 'OAuth M2M' : 'NENHUMA'}`)
+const comOauth = Boolean(config.databricks.clientId && config.databricks.clientSecret)
+console.log(`  autenticação ${comOauth ? `OAuth M2M (${config.databricks.clientId})` : config.databricks.token ? 'PAT' : 'NENHUMA'}`)
+if (comOauth) console.log(`  escopo      ${config.databricks.oauthScope}`)
 console.log(`  integração  ${config.databricks.enabled ? 'ligada' : 'DESLIGADA'}`)
 if (!config.databricks.host || (!config.databricks.token && !config.databricks.clientId)) {
   nok('credencial e host definidos', 'preencha DATABRICKS_HOST e DATABRICKS_TOKEN no .env')
@@ -133,6 +135,51 @@ try {
   if (err.status === 403) console.log('       → a credencial lê o volume mas não escreve: falta WRITE VOLUME.')
 } finally {
   if (tmpDir) try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* segue */ }
+}
+
+// ── 6. O que a credencial NÃO pode fazer ─────────────────────────────────
+// Provar que ela escreve é metade. A outra metade é provar que ela não faz o
+// resto — e essa metade ninguém descobre por acidente, porque sistema que
+// funciona não reclama de ter permissão demais.
+//
+// Só roda no OAuth: com PAT pessoal o resultado seria o oposto (o seu usuário
+// pode tudo), e um teste que sempre passa não vale nada.
+if (comOauth) {
+  console.log('\n6. Limites da credencial (o que ela NÃO deve conseguir)')
+  const { clientId, clientSecret, oauthScope } = config.databricks
+  const r = await fetch(`https://${config.databricks.host}/oidc/v1/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: `grant_type=client_credentials&scope=${encodeURIComponent(oauthScope)}`,
+    signal: AbortSignal.timeout(30_000),
+  })
+  const tok = ((await r.json()) as { access_token?: string }).access_token
+
+  const negado = async (rotulo: string, metodo: string, caminho: string, corpo?: unknown) => {
+    const resp = await fetch(`https://${config.databricks.host}${caminho}`, {
+      method: metodo,
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: corpo ? JSON.stringify(corpo) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    })
+    // 403 é o ideal; 404 também serve, porque sem USE_SCHEMA o objeto nem
+    // existe para esta identidade — o efeito prático é o mesmo.
+    if (resp.status === 403 || resp.status === 404) {
+      ok(rotulo, `recusado com ${resp.status}`)
+    } else {
+      nok(rotulo, `CONSEGUIU (HTTP ${resp.status}) — permissão a mais, revise`)
+    }
+  }
+
+  await negado('não cria schema no catálogo', 'POST', '/api/2.1/unity-catalog/schemas',
+    { name: `teste_permissao_${Date.now()}`, catalog_name: 'piloto_mariadb' })
+  await negado('não enxerga a tabela em bronze', 'GET',
+    '/api/2.1/unity-catalog/tables/piloto_mariadb.bronze.api_resumo')
+  await negado('não cria job no workspace', 'POST', '/api/2.2/jobs/create',
+    { name: `teste-permissao-${Date.now()}`, tasks: [] })
 }
 
 console.log(falhas ? `\n${falhas} verificação(ões) falharam.` : '\nTudo certo.')

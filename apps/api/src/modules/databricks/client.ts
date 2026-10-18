@@ -38,10 +38,14 @@ export function limparTokenCache(): void {
 
 async function obterToken(): Promise<string> {
   const { token, clientId, clientSecret, host } = config.databricks
-  if (token) return token // PAT: caminho do piloto
+  // OAuth M2M vem PRIMEIRO quando configurado, e o PAT fica como alternativa.
+  // A precedência inversa (PAT antes) tinha um efeito ruim: numa máquina com os
+  // dois definidos, o caminho de produção nunca era exercitado — o PAT pessoal
+  // respondia por tudo e o OAuth só seria testado de verdade em produção.
   if (!clientId || !clientSecret) {
+    if (token) return token
     throw new DatabricksError(
-      'Databricks sem credencial: defina DATABRICKS_TOKEN ou DATABRICKS_CLIENT_ID/SECRET.',
+      'Databricks sem credencial: defina DATABRICKS_CLIENT_ID/SECRET ou DATABRICKS_TOKEN.',
       null, false,
     )
   }
