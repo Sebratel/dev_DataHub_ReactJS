@@ -67,6 +67,11 @@ export async function canExport(user: AccessUser, datasetId: string): Promise<bo
      where d.id = $1`,
     [datasetId, user.email],
   )).rows[0]
-  if (!r || r.owner == null) return false // dataset inexistente
+  // Inexistente = nenhuma linha agregada. Testar `owner == null` aqui recusava
+  // também todo conjunto SEM DONO (owner_email nulo, como o "Saúde das APIs"
+  // criado no boot): bool_or(null = $2) é null, e o conjunto aberto ao tenant
+  // ficava inexportável para qualquer não-admin. `visibility` é not null,
+  // então tenant_open só é null quando o conjunto não existe.
+  if (!r || r.tenant_open == null) return false
   return !!r.owner || !!r.tenant_open || !!r.granted_export
 }
