@@ -28,32 +28,31 @@ async function api<T>(metodo: string, caminho: string, corpo?: unknown): Promise
   return (texto ? JSON.parse(texto) : {}) as T
 }
 
-interface Warehouse { id: string; name: string; enable_serverless_compute?: boolean }
-interface Resposta {
-  statement_id: string
-  status: { state: string; error?: { message?: string } }
-  manifest?: { schema?: { columns?: Array<{ name: string }> } }
-  result?: { data_array?: string[][] }
+// Permissão pela API do Unity Catalog, e não por GRANT em SQL.
+//
+// GRANT é SQL, SQL precisa de um warehouse, e warehouse é compute que liga,
+// demora e custa — para três linhas de permissão. A API faz o mesmo sem acordar
+// nada. E, quando o compute está indisponível (trial vencido, conta bloqueada),
+// esta é a única via que ainda funciona: foi exatamente o caso em 18/10/2026.
+type Privilegio = 'USE_CATALOG' | 'USE_SCHEMA' | 'READ_VOLUME' | 'WRITE_VOLUME'
+
+interface Atribuicao { principal: string; privileges: Privilegio[] }
+
+async function concede(
+  tipo: 'catalog' | 'schema' | 'volume', nome: string, principal: string, add: Privilegio[],
+): Promise<void> {
+  await api('PATCH', `/api/2.1/unity-catalog/permissions/${tipo}/${encodeURIComponent(nome)}`, {
+    changes: [{ principal, add }],
+  })
 }
 
-let warehouseId: string | null = null
-async function sql(statement: string): Promise<string[][]> {
-  if (!warehouseId) {
-    const { warehouses = [] } = await api<{ warehouses?: Warehouse[] }>('GET', '/api/2.0/sql/warehouses')
-    if (!warehouses.length) throw new Error('Nenhum SQL Warehouse no workspace.')
-    warehouseId = (warehouses.find((w) => w.enable_serverless_compute) ?? warehouses[0]).id
-  }
-  let r = await api<Resposta>('POST', '/api/2.0/sql/statements', {
-    warehouse_id: warehouseId, statement, wait_timeout: '30s', format: 'JSON_ARRAY',
-  })
-  for (let i = 0; i < 40 && (r.status.state === 'PENDING' || r.status.state === 'RUNNING'); i++) {
-    await new Promise((x) => setTimeout(x, 3_000))
-    r = await api<Resposta>('GET', `/api/2.0/sql/statements/${r.statement_id}`)
-  }
-  if (r.status.state !== 'SUCCEEDED') {
-    throw new Error(`${r.status.state}: ${r.status.error?.message ?? '(sem detalhe)'}`)
-  }
-  return r.result?.data_array ?? []
+async function permissoesDe(
+  tipo: 'catalog' | 'schema' | 'volume', nome: string, principal: string,
+): Promise<Privilegio[]> {
+  const r = await api<{ privilege_assignments?: Atribuicao[] }>(
+    'GET', `/api/2.1/unity-catalog/permissions/${tipo}/${encodeURIComponent(nome)}`
+      + `?principal=${encodeURIComponent(principal)}`)
+  return r.privilege_assignments?.find((a) => a.principal === principal)?.privileges ?? []
 }
 
 interface SP { displayName?: string; applicationId?: string; active?: boolean }
@@ -75,42 +74,88 @@ if (!alvo) {
   process.exit(0)
 }
 
-const sp = sps.find((s) => s.applicationId === alvo)
+// Service principal criado no nível da CONTA não entra no workspace sozinho —
+// é por isso que ele não aparece numa listagem feita aqui mesmo tendo sido
+// criado. Adicionar ao workspace é um POST no SCIM, com o applicationId.
+let sp = sps.find((s) => s.applicationId === alvo)
 if (!sp) {
-  console.error(`Service principal ${alvo} não existe neste workspace.`)
-  console.error('Rode sem argumento para ver os que existem.')
-  process.exit(1)
-}
-console.log(`\nAplicando a permissão mínima a "${sp.displayName}" (${alvo})\n`)
-
-// Escrever no volume e nada além. Nenhum GRANT em bronze/prata/ouro: o Data Hub
-// entrega arquivo, quem cria tabela é o job de carga, com outra identidade.
-const GRANTS = [
-  `GRANT USE CATALOG ON CATALOG ${CATALOGO} TO \`${alvo}\``,
-  `GRANT USE SCHEMA ON SCHEMA ${CATALOGO}.landing TO \`${alvo}\``,
-  `GRANT READ VOLUME, WRITE VOLUME ON VOLUME ${VOLUME} TO \`${alvo}\``,
-]
-for (const g of GRANTS) {
-  await sql(g)
-  console.log(`  ok   ${g.replace(/TO `.*`/, 'TO <sp>')}`)
-}
-
-// ── A parte que prova que é MÍNIMA ───────────────────────────────────────
-console.log('\nConferência — o que esta identidade enxerga:\n')
-const mostra = async (rotulo: string, statement: string) => {
+  console.log(`Service principal ${alvo} ainda não está neste workspace. Tentando adicionar…`)
   try {
-    const linhas = await sql(statement)
-    const dele = linhas.filter((l) => l.some((c) => c === alvo))
-    console.log(`  ${rotulo}: ${dele.length ? dele.map((l) => l.join(' ')).join(' | ') : '(nenhum)'}`)
+    sp = await api<SP>('POST', '/api/2.0/preview/scim/v2/ServicePrincipals', {
+      schemas: ['urn:ietf:params:scim:schemas:core:2.0:ServicePrincipal'],
+      applicationId: alvo,
+      displayName: 'Data Hub (envio ao volume)',
+      active: true,
+    })
+    console.log('  ok   adicionado ao workspace\n')
   } catch (e) {
-    console.log(`  ${rotulo}: erro — ${(e as Error).message}`)
+    // 403 aqui é esperado quando o SP foi criado no nível da CONTA: dar acesso
+    // ao workspace é operação de conta, e um token de workspace não a faz.
+    // Não é impedimento para as permissões do Unity Catalog, que vivem no
+    // metastore — por isso seguimos em vez de abortar.
+    console.log(`  !    não consegui adicionar pelo token de workspace (${(e as Error).message.slice(0, 80)}…)`)
+    console.log('       Isso se resolve no console da CONTA — ver instrução no fim.\n')
   }
 }
-await mostra('catálogo  ', `SHOW GRANTS ON CATALOG ${CATALOGO}`)
-await mostra('landing   ', `SHOW GRANTS ON SCHEMA ${CATALOGO}.landing`)
-await mostra('volume    ', `SHOW GRANTS ON VOLUME ${VOLUME}`)
-for (const camada of ['bronze', 'prata', 'ouro']) {
-  await mostra(`${camada.padEnd(10)}`, `SHOW GRANTS ON SCHEMA ${CATALOGO}.${camada}`)
+console.log(`Aplicando a permissão mínima a ${sp?.displayName ?? alvo} (${alvo})\n`)
+
+// Escrever no volume e nada além. Nenhuma permissão em bronze/prata/ouro: o
+// Data Hub entrega arquivo; quem cria tabela é o job de carga, com outra
+// identidade. Dar a ele acesso de escrita aos schemas seria dar poder que a
+// função dele não usa — e que um vazamento do segredo usaria.
+// Conceder e CONFERIR na sequência, um a um.
+//
+// A API aceita um PATCH para um principal que ela não reconhece e responde
+// 200 sem aplicar nada — foi o que aconteceu em 18/10/2026, com o service
+// principal ainda sem acesso ao workspace. Um "ok" impresso logo após o PATCH
+// seria mentira, e mentira que só apareceria mais tarde, como um 403 no envio.
+let aplicouTudo = true
+async function concedeEConfere(
+  tipo: 'catalog' | 'schema' | 'volume', nome: string, add: Privilegio[],
+): Promise<void> {
+  await concede(tipo, nome, alvo, add)
+  const agora = await permissoesDe(tipo, nome, alvo)
+  const faltando = add.filter((p) => !agora.includes(p))
+  if (faltando.length) {
+    aplicouTudo = false
+    console.log(`  NÃO PEGOU  ${add.join(', ')} em ${nome} — a API aceitou e não aplicou`)
+  } else {
+    console.log(`  ok         ${add.join(', ')} em ${nome}`)
+  }
 }
-console.log('\nEsperado: permissão no catálogo, no schema landing e no volume — e NENHUMA')
-console.log('em bronze, prata e ouro. Se aparecer algo lá, revogue.')
+
+await concedeEConfere('catalog', CATALOGO, ['USE_CATALOG'])
+await concedeEConfere('schema', `${CATALOGO}.landing`, ['USE_SCHEMA'])
+await concedeEConfere('volume', VOLUME, ['READ_VOLUME', 'WRITE_VOLUME'])
+
+// ── A parte que prova que é MÍNIMA ───────────────────────────────────────
+// Conceder é metade do trabalho. A outra metade é olhar onde ele NÃO deve ter
+// nada — só o primeiro é fácil de ver sem querer.
+console.log('\nConferência — o que esta identidade enxerga:\n')
+const mostra = async (rotulo: string, tipo: 'catalog' | 'schema' | 'volume', nome: string) => {
+  try {
+    const p = await permissoesDe(tipo, nome, alvo)
+    console.log(`  ${rotulo.padEnd(12)} ${p.length ? p.join(', ') : '(nenhuma)'}`)
+  } catch (e) {
+    console.log(`  ${rotulo.padEnd(12)} erro — ${(e as Error).message}`)
+  }
+}
+await mostra('catálogo', 'catalog', CATALOGO)
+await mostra('landing', 'schema', `${CATALOGO}.landing`)
+await mostra('volume', 'volume', VOLUME)
+for (const camada of ['bronze', 'prata', 'ouro']) {
+  await mostra(camada, 'schema', `${CATALOGO}.${camada}`)
+}
+console.log('\nEsperado: USE_CATALOG, USE_SCHEMA e READ/WRITE_VOLUME — e NENHUMA')
+console.log('permissão em bronze, prata e ouro. Se aparecer algo lá, revogue.')
+
+if (!aplicouTudo) {
+  console.log('\n── A ORDEM ESTÁ INVERTIDA, e o passo que falta é no console da CONTA ──')
+  console.log('Enquanto o service principal não tiver acesso AO WORKSPACE, o Unity Catalog')
+  console.log('não o reconhece como principal: ele aceita a concessão e não guarda nada.')
+  console.log('Dar acesso ao workspace é operação de CONTA — um token de workspace não faz.')
+  console.log('\n  1. accounts.cloud.databricks.com → Workspaces → workspace → Permissions')
+  console.log(`     → Add → service principal ${alvo} → papel: User`)
+  console.log('  2. rode este script de novo; aí as três permissões pegam.')
+  process.exit(1)
+}
