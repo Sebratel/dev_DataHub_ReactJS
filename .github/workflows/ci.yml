@@ -57,6 +57,10 @@ jobs:
 
       - name: Smokes (sem banco)
         working-directory: apps/api
+        env:
+          # perms:smoke confere a configuração de masters (a lista não pode
+          # estar vazia). Na máquina de dev ela vem do .env; aqui, um fictício.
+          MASTER_ADMIN_EMAILS: ci.master@sebratel.com.br
         run: |
           set -e
           for s in routes:check perms:smoke env:smoke auth:smoke sandbox:smoke \
