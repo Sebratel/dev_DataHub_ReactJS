@@ -194,6 +194,40 @@ job de carga a ler.
 UTC explicitamente. Se um horário aparecer 3 h deslocado no Databricks, o
 suspeito é `DATABRICKS_SOURCE_TZ`, não o Spark.
 
+### Montar (ou remontar) o lado do Databricks
+
+Vale para workspace novo, troca de nuvem ou religar depois de uma pausa. Tudo
+pela API — nenhum passo exige compute, o que importa quando a conta está sem
+crédito e nenhum warehouse sobe.
+
+```bash
+cd apps/api
+# 1. catálogo piloto_mariadb, schemas landing/bronze/prata/ouro e o volume
+npm run databricks:setup-catalog
+# 2. permissão mínima do service principal (só escrever no volume)
+npm run databricks:grants -- <applicationId>
+# 3. notebooks + os dois jobs (carga por chegada de arquivo, limpeza diária)
+npm run databricks:setup-job
+# 4. prova de ponta a ponta: envia um conjunto pequeno e testa os limites
+npm run databricks:check
+```
+
+Os três primeiros são idempotentes: rodar de novo não duplica nada.
+
+**Pausar sem desmontar:** `npm run databricks:setup-job -- --pause` desliga os
+dois jobs; `--resume` religa. Job pausado não roda e não custa, e a
+configuração fica de pé.
+
+**Ao conferir o service principal no console, olhe o Client ID, nunca o nome.**
+A tela "Add identity" transforma o UUID colado em NOME e gera um Client ID
+novo — é fácil acabar com dois service principals, o secret num e a permissão
+no outro.
+
+**Trocar de nuvem (AWS ↔ GCP) não mexe no código.** O Data Hub empurra
+arquivos e não sabe onde o destino está: mudam `DATABRICKS_HOST` e as
+credenciais, e o `DATABRICKS_VOLUME_PATH` continua igual se os nomes de
+catálogo e volume forem mantidos. O provisionamento é a sequência acima.
+
 ---
 
 ## 8. Busca semântica (RAG) — operação

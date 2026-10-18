@@ -134,6 +134,20 @@ async function provisiona(nome: string, definicao: unknown): Promise<number> {
   return criado.job_id
 }
 
+// --pause deixa os dois jobs provisionados e DESLIGADOS. Serve para congelar o
+// piloto sem desmontar nada: job pausado não roda e não custa, e voltar é
+// --resume. Desfazer o provisionamento para depois refazer seria perder a
+// configuração por um motivo que é temporário.
+const modo = process.argv[2]
+const pausar = modo === '--pause'
+const retomar = modo === '--resume'
+if (pausar || retomar) {
+  const estado = pausar ? 'PAUSED' : 'UNPAUSED'
+  definicao.trigger.pause_status = estado
+  limpeza.schedule.pause_status = estado
+  console.log(`\nModo: ${pausar ? 'PAUSANDO' : 'RETOMANDO'} os dois jobs\n`)
+}
+
 const idCarga = await provisiona(NOME_JOB, definicao)
 const idLimpeza = await provisiona(NOME_LIMPEZA, limpeza)
 
