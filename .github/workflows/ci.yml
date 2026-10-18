@@ -1,0 +1,112 @@
+# CI do Data Hub — o "CI mínimo" pedido pelo comitê (DATAHUB v0.1: DSP-13,
+# QLD-13, SEG-14). Roda antes de qualquer coisa chegar à main, que é o que a
+# stack do Portainer publica.
+#
+#   api     typecheck + smokes (sem banco) + testes de integração do comitê
+#           (a API real contra um Postgres de serviço, com pgvector)
+#   web     typecheck + build do front
+#   imagem  constrói as duas imagens como o Portainer constrói — um Dockerfile
+#           quebrado só apareceria no deploy de produção
+#   ci-ok   agrega os três: é ESTE o nome a marcar como verificação
+#           obrigatória na regra da main (um nome só, que não muda quando um
+#           job novo entra)
+#
+# Nenhum segredo é usado: os testes não falam com fonte, Google, IA nem
+# Databricks (o harness zera tudo isso — ver apps/api/src/test/harness.ts).
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Fuso do contêiner de produção: o agendador e o smoke de fuso dependem dele.
+      TZ: America/Sao_Paulo
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: datahub
+          POSTGRES_PASSWORD: ci-somente-teste
+          POSTGRES_DB: datahub
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U datahub"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Typecheck da API
+        run: npm run typecheck --workspace apps/api
+
+      - name: Smokes (sem banco)
+        working-directory: apps/api
+        run: |
+          set -e
+          for s in routes:check perms:smoke env:smoke auth:smoke sandbox:smoke \
+                   lake:smoke export:smoke public-query:smoke staging:smoke tz:smoke \
+                   autotune:smoke derived:smoke sqlconfig:smoke databricks:smoke ml:smoke; do
+            echo "::group::$s"
+            npm run "$s"
+            echo "::endgroup::"
+          done
+
+      - name: Testes de integração do comitê (T-FUN, T-SEG, T-DSP, T-MON)
+        working-directory: apps/api
+        env:
+          DATAHUB_TEST_DB_HOST: localhost
+          DATAHUB_TEST_DB_PORT: '5432'
+          DATAHUB_TEST_DB_USER: datahub
+          DATAHUB_TEST_DB_PASSWORD: ci-somente-teste
+        run: npm run test:it
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck e build do front
+        run: npm run build --workspace apps/web
+
+  imagem:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Imagem do web (nginx + build do front)
+        run: docker build -f Dockerfile -t datahub-web:ci .
+      - name: Imagem da API
+        run: docker build -f Dockerfile.api -t datahub-api:ci .
+
+  ci-ok:
+    if: always()
+    needs: [api, web, imagem]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Todos os jobs passaram?
+        run: |
+          echo "api=${{ needs.api.result }} web=${{ needs.web.result }} imagem=${{ needs.imagem.result }}"
+          test "${{ needs.api.result }}" = success
+          test "${{ needs.web.result }}" = success
+          test "${{ needs.imagem.result }}" = success

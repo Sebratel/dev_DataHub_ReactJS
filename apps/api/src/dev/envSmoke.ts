@@ -38,6 +38,12 @@ const DISPENSADAS: Record<string, string> = {
   LAKE_ROOT: 'fixado pelo volume datahub-lake',
   // Só o script de carga sintética (dev/exportSmoke.ts), nunca em produção.
   SMOKE_ROWS: 'script de desenvolvimento',
+  // Só os testes de integração (src/test/harness.ts) — apontam o Postgres de
+  // teste no CI; o harness recusa qualquer host que não seja local.
+  DATAHUB_TEST_DB_HOST: 'testes de integração',
+  DATAHUB_TEST_DB_PORT: 'testes de integração',
+  DATAHUB_TEST_DB_USER: 'testes de integração',
+  DATAHUB_TEST_DB_PASSWORD: 'testes de integração',
   // Injetada pelo runtime/ferramentas, não pela stack.
   NODE_ENV: 'definida pelo runtime',
 }

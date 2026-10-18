@@ -31,7 +31,7 @@ const stripComments = (src: string) => src
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
-const index = stripComments(await readFile(join(SRC, 'index.ts'), 'utf8'))
+const index = stripComments(await readFile(join(SRC, 'app.ts'), 'utf8'))
 const files = (await walk(join(SRC, 'modules'))).concat(await walk(join(SRC, 'connectors')))
 
 interface Missing { router: string; file: string; reason: string }
@@ -46,7 +46,7 @@ for (const file of files) {
     found++
     const rel = relative(SRC, file).replace(/\\/g, '/')
     if (!new RegExp(`\\b${name}\\b`).test(index)) {
-      missing.push({ router: name, file: rel, reason: 'não importado no index.ts' })
+      missing.push({ router: name, file: rel, reason: 'não importado no app.ts' })
       continue
     }
     if (!new RegExp(`app\\.use\\([^)]*\\b${name}\\b`).test(index)) {
@@ -62,4 +62,4 @@ if (missing.length) {
   console.error('\nUm router não montado responde 404 em produção sem nenhum aviso em tempo de build.')
   process.exit(1)
 }
-console.log('Todos importados e montados no index.ts.')
+console.log('Todos importados e montados no app.ts.')
