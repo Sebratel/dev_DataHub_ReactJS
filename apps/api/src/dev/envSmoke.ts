@@ -38,6 +38,12 @@ const DISPENSADAS: Record<string, string> = {
   LAKE_ROOT: 'fixado pelo volume datahub-lake',
   // Só o script de carga sintética (dev/exportSmoke.ts), nunca em produção.
   SMOKE_ROWS: 'script de desenvolvimento',
+  // Só os testes de integração (src/test/harness.ts) — apontam o Postgres de
+  // teste no CI; o harness recusa qualquer host que não seja local.
+  DATAHUB_TEST_DB_HOST: 'testes de integração',
+  DATAHUB_TEST_DB_PORT: 'testes de integração',
+  DATAHUB_TEST_DB_USER: 'testes de integração',
+  DATAHUB_TEST_DB_PASSWORD: 'testes de integração',
   // Injetada pelo runtime/ferramentas, não pela stack.
   NODE_ENV: 'definida pelo runtime',
 }
@@ -61,7 +67,10 @@ for (const file of tsFiles(join(REPO, 'apps/api/src'))) {
 }
 
 // 2. O que o compose entrega ao serviço `api`.
-const compose = readFileSync(join(REPO, 'docker-compose.yml'), 'utf8')
+// O compose está guardado no repositório com CRLF, e a cópia de trabalho pode
+// estar com LF (ver .gitattributes / `* -text`). Sem normalizar, o regex abaixo
+// só casa numa das duas — passava no Windows e falhava no CI.
+const compose = readFileSync(join(REPO, 'docker-compose.yml'), 'utf8').replace(/\r\n/g, '\n')
 const bloco = /\n {2}api:\n([\s\S]*?)\n {2}[a-z-]+:\n/.exec(compose)
 if (!bloco) {
   console.error('Não achei o serviço `api` no docker-compose.yml.')

@@ -27,7 +27,8 @@
     "databricks:setup-job": "tsx src/dev/databricksSetupJob.ts",
     "public-query:smoke": "tsx src/dev/publicQuerySmoke.ts",
     "sandbox:smoke": "tsx src/dev/sqlSandboxSmoke.ts",
-    "sandbox:audit": "tsx src/dev/sqlSandboxAudit.ts"
+    "sandbox:audit": "tsx src/dev/sqlSandboxAudit.ts",
+    "test:it": "node --import tsx --test --test-reporter=spec \"src/test/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",

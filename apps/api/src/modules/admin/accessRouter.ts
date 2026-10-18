@@ -119,6 +119,10 @@ accessRouter.patch('/users/:email/role', adminOnly, async (req, res) => {
   } catch (e) {
     await client.query('rollback'); throw e
   } finally { client.release() }
+  // O papel fica no cache de sessão (5 min por token). Sem descartá-lo, um
+  // admin REBAIXADO seguia admin por até 5 minutos — o mesmo motivo pelo qual
+  // conceder/revogar master já invalida o cache.
+  invalidateTokenCache(req.params.email)
   await audit(req, 'access.user.role', { type: 'user', id: req.params.email }, { role })
   res.json({ ok: true })
 })
