@@ -54,14 +54,18 @@ async function obterToken(): Promise<string> {
       Authorization: `Basic ${basica}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: 'grant_type=client_credentials&scope=all-apis',
+    body: `grant_type=client_credentials&scope=${encodeURIComponent(config.databricks.oauthScope)}`,
     signal: AbortSignal.timeout(30_000),
   })
   if (!resp.ok) {
     // O corpo de um erro de OIDC não traz o segredo, mas pode trazer o
-    // client_id; fica de fora por via das dúvidas.
+    // client_id; fica de fora por via das dúvidas. O escopo vai na mensagem
+    // porque é a causa mais provável e a menos óbvia: pedir um escopo que o
+    // segredo não tem devolve 400/401 sem dizer qual é o problema.
     throw new DatabricksError(
-      `Falha ao obter token OAuth (HTTP ${resp.status}).`, resp.status, deveRepetir(resp.status),
+      `Falha ao obter token OAuth (HTTP ${resp.status}; escopo pedido: `
+      + `"${config.databricks.oauthScope}" — confira se é o mesmo com que o segredo foi emitido).`,
+      resp.status, deveRepetir(resp.status),
     )
   }
   const dados = (await resp.json()) as { access_token?: string; expires_in?: number }
