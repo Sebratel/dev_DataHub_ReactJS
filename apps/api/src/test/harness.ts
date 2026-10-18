@@ -93,6 +93,14 @@ try {
   }
 } catch { /* sem .env (CI): nada a neutralizar */ }
 
+// Os mesmos tratadores do index.ts: em produção, uma rejeição não tratada numa
+// rota é LOGADA e o processo segue (a requisição fica pendurada — DSP-18).
+// Sem isto, o executor de testes trataria a mesma situação como queda do
+// processo, e o teste mediria um comportamento que a produção não tem.
+process.on('unhandledRejection', (err) => {
+  console.error('[teste] rejeição não tratada numa rota (em produção: logada, processo segue):', (err as Error)?.message)
+})
+
 // Daqui para baixo, imports dinâmicos: só agora a configuração é lida.
 const { config } = await import('../core/config.js')
 const pg = (await import('pg')).default
@@ -202,6 +210,19 @@ export interface SeedDataset {
   fields: SeedField[]
   /** SELECT que produz as linhas (colunas = keys dos campos). */
   rowsSql: string
+  /** Nome físico da tabela na fonte (padrão: o slug). */
+  objectName?: string
+}
+
+/** Espera uma condição assíncrona (telemetria e fila gravam sem esperar a resposta). */
+export async function waitFor<T>(fn: () => Promise<T | null | undefined | false>, ms = 15_000): Promise<T | null> {
+  const fim = Date.now() + ms
+  for (;;) {
+    const v = await fn()
+    if (v) return v
+    if (Date.now() > fim) return null
+    await new Promise((r) => setTimeout(r, 150))
+  }
 }
 
 /**
@@ -213,9 +234,10 @@ export async function seedDataset(d: SeedDataset): Promise<string> {
   const ds = (await db.query(
     `insert into datasets (tenant_id, connection_id, schema_name, object_name, slug, name,
                            visibility, owner_email, sync_mode, kind, row_count, last_sync_at)
-     values ($1, 'teste', 'public', $2, $2, $3, $4, $5, 'snapshot', 'source', 0, now())
+     values ($1, 'teste', 'public', $6, $2, $3, $4, $5, 'snapshot', 'source', 0, now())
      returning id`,
-    [tenant.id, d.slug, `TESTE-COMITE ${d.slug}`, d.visibility ?? 'tenant', d.owner ? USERS[d.owner] : null],
+    [tenant.id, d.slug, `TESTE-COMITE ${d.slug}`, d.visibility ?? 'tenant', d.owner ? USERS[d.owner] : null,
+     d.objectName ?? d.slug],
   )).rows[0]
   for (const [i, f] of d.fields.entries()) {
     await db.query(

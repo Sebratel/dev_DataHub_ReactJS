@@ -114,6 +114,19 @@ describe('T-SEG-06 escalada de papel', () => {
     }
   })
 
+  it('T-SEG-06 rebaixar o papel vale na requisição seguinte, mesmo com a sessão em cache', async () => {
+    // O MESMO token do começo ao fim: é ele que fica no cache de sessão (5 min).
+    // Antes da correção, o admin rebaixado seguia admin até o cache vencer.
+    const c = as('viewer2')
+    const promove = (role: string) =>
+      as('admin').patch(`/api/v1/admin/users/${encodeURIComponent(USERS.viewer2)}/role`, { role })
+    assert.equal((await c.get('/api/v1/admin/users')).status, 403)
+    assert.equal((await promove('admin')).status, 200)
+    assert.equal((await c.get('/api/v1/admin/users')).status, 200, 'promoção não valeu na hora')
+    assert.equal((await promove('viewer')).status, 200)
+    assert.equal((await c.get('/api/v1/admin/users')).status, 403, 'rebaixado continuou admin')
+  })
+
   it('T-SEG-06 editor não aprova produto de API nem promove ninguém', async () => {
     const e = as('editor')
     assert.equal((await e.post('/api/v1/products/00000000-0000-0000-0000-000000000000/approve')).status, 403)
