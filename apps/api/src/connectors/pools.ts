@@ -47,6 +47,18 @@ export function resetPool(id: string): void {
   const my = mysqlPools.get(id); if (my) { mysqlPools.delete(id); void my.end().catch(() => {}) }
 }
 
+// Encerra TODAS as pools e espera. Para quem precisa do processo limpo — os
+// testes de integração, antes de apagar o banco de teste (uma pool de fonte
+// aberta para ele, como a 'datahub-meta', seria derrubada no DROP e o erro
+// estouraria fora de qualquer teste).
+export async function closeAllPools(): Promise<void> {
+  const pgs = [...pgPools.values()]
+  const mys = [...mysqlPools.values()]
+  pgPools.clear()
+  mysqlPools.clear()
+  await Promise.allSettled([...pgs.map((p) => p.end()), ...mys.map((p) => p.end())])
+}
+
 // ── Datas do Postgres vêm como TEXTO, igual ao MySQL ─────────────────────
 // Por padrão o driver do Postgres converte data/hora num `Date` do
 // JavaScript. Parece inofensivo e não é: um `timestamp without time zone`
