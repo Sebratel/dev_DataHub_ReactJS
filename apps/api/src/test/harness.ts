@@ -66,6 +66,10 @@ const TEST_ENV: Record<string, string> = {
   CONNECTIONS_SECRET: 'segredo-so-de-teste-nao-usar-em-producao',
   LAKE_ROOT: lakeRoot,
   SYNC_STAGING_DIR: join(lakeRoot, '.staging'),
+  // Carga em lotes PEQUENOS e sem pausa: os testes de qualidade (QLD-01)
+  // precisam de várias páginas com poucas linhas para cair na fronteira.
+  SYNC_BATCH_SIZE: '50',
+  SYNC_BATCH_PAUSE_MS: '1',
   // Nada de rede nem de trabalho de fundo.
   ANTHROPIC_API_KEY: '',
   EMBEDDINGS_ENABLED: 'false',
@@ -251,6 +255,60 @@ export async function seedDataset(d: SeedDataset): Promise<string> {
   const file = join(dir, 'part-1.parquet').replace(/\\/g, '/')
   await duckQuery(`copy (${d.rowsSql}) to '${file}' (format parquet)`)
   return String(ds.id)
+}
+
+// ── Fonte de teste: o próprio Postgres de teste faz o papel do ERP ─────────
+/**
+ * Cadastra (como admin, pela rota real) uma conexão que aponta para o banco
+ * de teste — as tabelas criadas no schema `fonte` viram uma "fonte de
+ * produção" de mentira, lida pelo MESMO caminho de ingestão das de verdade.
+ */
+export async function connectTestSource(): Promise<string> {
+  await db.query('create schema if not exists fonte')
+  const c = config.datahubDb as { host: string; port: number; user: string; password: string }
+  const r = await as('admin').post('/api/v1/connections', {
+    kind: 'postgres', name: 'TESTE-COMITE fonte', host: c.host, port: c.port,
+    database: TEST_DB, username: c.user, password: c.password,
+  })
+  if (r.status !== 201) throw new Error(`conexão de teste: ${r.status} ${JSON.stringify(r.body)}`)
+  return String(r.body.id)
+}
+
+/** Publica fonte.<table> como conjunto e aplica a regra de carga (como master). */
+export async function publishSource(connectionId: string, table: string, syncConfig: Record<string, unknown>): Promise<{ id: string; slug: string }> {
+  const p = await as('admin').post('/api/v1/datasets', { connectionId, schema: 'fonte', table })
+  if (p.status !== 201) throw new Error(`publicar ${table}: ${p.status} ${JSON.stringify(p.body)}`)
+  const cfg = await as('master').patch(`/api/v1/datasets/${p.body.id}/sync-config`, syncConfig)
+  if (cfg.status !== 200) throw new Error(`regra de carga de ${table}: ${cfg.status} ${JSON.stringify(cfg.body)}`)
+  return { id: String(p.body.id), slug: String(p.body.slug) }
+}
+
+/** Dispara uma carga (ou recarga) e espera ela terminar. Lança se a carga falhar. */
+export async function syncAndWait(datasetId: string, kind: 'sync' | 'reload' = 'sync'): Promise<void> {
+  const antes = Number((await db.query('select count(*) n from sync_runs where dataset_id = $1', [datasetId])).rows[0].n)
+  const r = kind === 'sync'
+    ? await as('admin').post(`/api/v1/datasets/${datasetId}/sync`)
+    : await as('master').post(`/api/v1/datasets/${datasetId}/reload`)
+  if (r.status !== 202) throw new Error(`${kind}: ${r.status} ${JSON.stringify(r.body)}`)
+  const run = await waitFor(async () => {
+    const rows = (await db.query(
+      `select status, error from sync_runs where dataset_id = $1 order by started_at desc`, [datasetId])).rows
+    return rows.length > antes && rows[0].status !== 'running' ? rows[0] : null
+  }, 30_000)
+  if (!run) throw new Error(`${kind} não terminou em 30 s`)
+  if (run.status !== 'done') throw new Error(`${kind} falhou: ${run.status} ${run.error ?? ''}`)
+}
+
+/** Linhas no lake de um conjunto, lidas direto do Parquet (sem máscara nem permissão). */
+export async function lakeCount(slug: string): Promise<number> {
+  const glob = join(lakeRoot, 'sebratel', slug, '*.parquet').replace(/\\/g, '/')
+  return Number((await duckQuery(`select count(*) as n from read_parquet('${glob}')`)).rows[0].n)
+}
+
+/** Linhas do lake de um conjunto, lidas direto do Parquet. */
+export async function lakeRows(slug: string, orderBy = '1'): Promise<Record<string, unknown>[]> {
+  const glob = join(lakeRoot, 'sebratel', slug, '*.parquet').replace(/\\/g, '/')
+  return (await duckQuery(`select * from read_parquet('${glob}') order by ${orderBy}`)).rows
 }
 
 /** Fecha servidor e banco e apaga o lake de teste. Chamar no after() de cada arquivo. */
