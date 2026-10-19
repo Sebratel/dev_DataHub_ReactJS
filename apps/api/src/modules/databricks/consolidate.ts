@@ -74,6 +74,8 @@ export interface Consolidado {
   columns: ColunaConsolidada[]
   /** Colunas cujo nome mudou na normalização. */
   renamed: Array<{ from: string; to: string }>
+  /** Colunas que NÃO foram enviadas por estarem ocultas no catálogo. */
+  omitted: string[]
   /** Preenchido quando o conjunto não tem dedupe_keys. */
   warning?: string
   /** Diretório temporário a remover depois do envio. */
@@ -112,10 +114,23 @@ export interface ConsolidarArgs {
   runId: string
   /** Prefixo do nome do arquivo: HHmm em São Paulo. */
   hhmm: string
+  /**
+   * Campos marcados como OCULTOS no catálogo — não vão no arquivo enviado.
+   *
+   * Existe porque "oculto na tela" e "não sai da rede" eram coisas diferentes:
+   * a consolidação lê o Parquet do lake, que tem todas as colunas, então um
+   * CPF escondido da API seguia viajando para o Databricks. Quem marcou a
+   * coluna como oculta não esperaria isso.
+   *
+   * A coluna some da PROJEÇÃO, não da deduplicação: se ela for chave de
+   * identidade, continua decidindo qual linha vence — só não é enviada.
+   */
+  colunasOcultas?: string[]
 }
 
 export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
   const { tenantSlug, slug, dedupeKeys, recencyKeys, runId, hhmm } = args
+  const ocultas = new Set(args.colunasOcultas ?? [])
   const datasetDirPath = datasetDir(tenantSlug, slug)
   const partes = listParquet(datasetDirPath)
   if (!partes.length) throw new Error(`Conjunto ${slug} não tem Parquet no lake.`)
@@ -129,10 +144,17 @@ export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
   }))
   if (!colunasOrigem.length) throw new Error(`Conjunto ${slug}: Parquet sem colunas.`)
 
-  const mapa = mapColumnNames(colunasOrigem.map((c) => c.name))
+  const enviaveis = colunasOrigem.filter((c) => !ocultas.has(c.name))
+  if (!enviaveis.length) {
+    throw new Error(
+      `Conjunto ${slug}: todas as colunas estão ocultas — não há o que publicar.`)
+  }
+  const omitidas = colunasOrigem.filter((c) => ocultas.has(c.name)).map((c) => c.name)
+
+  const mapa = mapColumnNames(enviaveis.map((c) => c.name))
   const tz = config.databricks.sourceTimezone
 
-  const colunas: ColunaConsolidada[] = colunasOrigem.map((c) => ({
+  const colunas: ColunaConsolidada[] = enviaveis.map((c) => ({
     source: c.name,
     name: mapa.get(c.name)!,
     type: precisaConverterFuso(c.type) ? 'TIMESTAMP WITH TIME ZONE' : c.type,
@@ -179,8 +201,13 @@ export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
 
   // Ordem estável: a mesma entrada gera o mesmo arquivo, então um reenvio do
   // mesmo run_id sobrescreve byte a byte em vez de criar diferença espúria.
-  const ordem = chavesPresentes.length
-    ? ` order by ${chavesPresentes.map((k) => ident(mapa.get(k)!)).join(', ')}`
+  //
+  // Só as chaves que sobraram na projeção: uma chave de identidade OCULTA
+  // segue deduplicando (na subquery, que tem tudo), mas não existe aqui fora,
+  // e ordenar por ela derrubaria a consulta com "column not found".
+  const chavesVisiveis = chavesPresentes.filter((k) => mapa.has(k))
+  const ordem = chavesVisiveis.length
+    ? ` order by ${chavesVisiveis.map((k) => ident(mapa.get(k)!)).join(', ')}`
     : ''
 
   const tmpDir = join(tmpdir(), 'datahub-databricks', `${slug}-${runId}`)
@@ -219,5 +246,8 @@ export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
   )
 
   const renamed = colunas.filter((c) => c.source !== c.name).map((c) => ({ from: c.source, to: c.name }))
-  return { files, rowCount, sourceParts: partes.length, columns: colunas, renamed, warning, tmpDir }
+  return {
+    files, rowCount, sourceParts: partes.length, columns: colunas, renamed,
+    omitted: omitidas, warning, tmpDir,
+  }
 }

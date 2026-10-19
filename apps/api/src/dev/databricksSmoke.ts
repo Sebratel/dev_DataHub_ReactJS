@@ -101,6 +101,37 @@ check('timestamp sai com fuso UTC no Parquet',
   String(tipoDe.get('data_atualizacao')))
 check('DATE continua DATE', tipoDe.get('dia') === 'DATE', String(tipoDe.get('dia')))
 
+// ── 3b. Coluna oculta não sai da rede ────────────────────────────────────
+// "Oculto na tela" e "não sai da rede" eram coisas diferentes: a consolidação
+// lê o Parquet do lake, que tem todas as colunas. Um CPF escondido da API
+// seguia viajando. O caso difícil é a coluna oculta ser a CHAVE: ela precisa
+// continuar deduplicando sem aparecer no arquivo.
+console.log('\n3b. Coluna oculta fica fora do envio')
+{
+  const consOculta = await consolidar({
+    tenantSlug: TENANT, slug: SLUG,
+    dedupeKeys: ['id'],
+    recencyKeys: [{ key: 'Data Atualização', isDate: true }],
+    runId: randomUUID(), hhmm: '0900',
+    colunasOcultas: ['nome', 'id'], // 'id' é a chave: some do arquivo, não da dedup
+  })
+  const nomes = consOculta.columns.map((c) => c.name)
+  check('coluna oculta não vai no arquivo', !nomes.includes('nome'), nomes.join(', '))
+  check('chave oculta também não vai', !nomes.includes('id'), nomes.join(', '))
+  check('o que sobrou continua lá',
+    nomes.includes('data_atualizacao') && nomes.includes('dia'), nomes.join(', '))
+  check('as omitidas são declaradas', consOculta.omitted.sort().join(',') === 'id,nome',
+    consOculta.omitted.join(','))
+  // A prova de que a chave oculta ainda deduplica: 3 partes, 2 identidades.
+  check('dedup por chave oculta continua valendo', consOculta.rowCount === 2,
+    String(consOculta.rowCount))
+  const lidoOculto = await duckQuery(
+    `select * from read_parquet('${consOculta.files[0].replace(/\\/g, '/')}')`)
+  check('o Parquet gravado não tem as colunas ocultas',
+    !lidoOculto.columns.includes('id') && !lidoOculto.columns.includes('nome'),
+    lidoOculto.columns.join(', '))
+}
+
 // ── 4. Manifesto e hash ──────────────────────────────────────────────────
 console.log('\n4. Manifesto e hash')
 const manifesto = await montarManifesto({

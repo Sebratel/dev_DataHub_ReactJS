@@ -148,18 +148,24 @@ export async function publicarDataset(
   try {
     // As chaves de recência seguem a MESMA regra da compactação: só as
     // temporais decidem, e o tipo de cada uma importa (ver recencyExpression).
-    const tipos = new Map(
-      (await db.query(
-        'select key, type from dataset_fields where dataset_id = $1', [ds.id],
-      )).rows.map((r) => [String(r.key), String(r.type)]),
-    )
+    const campos = (await db.query(
+      'select key, type, hidden from dataset_fields where dataset_id = $1', [ds.id],
+    )).rows
+    const tipos = new Map(campos.map((r) => [String(r.key), String(r.type)]))
     const recencyKeys: RecencyKey[] = [ds.incremental_key, ds.incremental_key_2]
       .filter(Boolean).map(String)
       .map((key) => ({ key, isDate: tipos.get(key) === 'date' }))
+    // Campo oculto não sai da rede. Antes disto, "oculto" valia só para a API
+    // e a tela, e um CPF escondido do usuário seguia viajando para fora.
+    const colunasOcultas = campos.filter((r) => r.hidden).map((r) => String(r.key))
 
     const cons = await consolidar({
       tenantSlug: ds.tenant_slug, slug: ds.slug, dedupeKeys, recencyKeys, runId, hhmm,
+      colunasOcultas,
     })
+    if (cons.omitted.length) {
+      console.log(`[databricks] ${ds.slug}: ${cons.omitted.length} coluna(s) oculta(s) fora do envio.`)
+    }
     tmpDir = cons.tmpDir
     if (cons.warning) console.warn(`[databricks] ${cons.warning}`)
 
@@ -183,7 +189,8 @@ export async function publicarDataset(
       runId, slug: ds.slug, layer: camada, sourceConnection: ds.connection_id,
       mode: ds.databricks_mode, dedupeKeys, sourceParts: cons.sourceParts,
       rowCount: cons.rowCount, columns: cons.columns, renamed: cons.renamed,
-      warning: cons.warning, sourceTimezone: config.databricks.sourceTimezone,
+      omitted: cons.omitted, warning: cons.warning,
+      sourceTimezone: config.databricks.sourceTimezone,
       arquivos, extractedAt,
     })
     const caminhoManifesto = `${base}/${hhmm}_${runId}.manifest.json`
