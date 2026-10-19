@@ -9,7 +9,8 @@
 // Então todo envio passa por aqui e produz UM arquivo: deduplicado pela mesma
 // regra de recência da compactação, com os timestamps convertidos para UTC e
 // ordenado, para que a mesma entrada gere sempre a mesma saída.
-import { mkdirSync, statSync, readdirSync, renameSync, rmSync } from 'node:fs'
+import { mkdirSync, statSync, readdirSync, renameSync, rmSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { duckQuery } from '../query/duck.js'
@@ -74,6 +75,16 @@ export interface Consolidado {
   columns: ColunaConsolidada[]
   /** Colunas cujo nome mudou na normalização. */
   renamed: Array<{ from: string; to: string }>
+  /** Colunas que NÃO foram enviadas por estarem ocultas no catálogo. */
+  omitted: string[]
+  /** Nomes (sem caminho) das partes do lake que entraram nesta consolidação. */
+  sourceFiles: string[]
+  /**
+   * sha256 do conteúdo consolidado. Igual ao do último envio = nada mudou, e
+   * o envio pode ser pulado. Só é confiável porque a consolidação é
+   * determinística: dedup estável e ordenação fixa.
+   */
+  contentSha256: string
   /** Preenchido quando o conjunto não tem dedupe_keys. */
   warning?: string
   /** Diretório temporário a remover depois do envio. */
@@ -112,16 +123,44 @@ export interface ConsolidarArgs {
   runId: string
   /** Prefixo do nome do arquivo: HHmm em São Paulo. */
   hhmm: string
+  /**
+   * Campos marcados como OCULTOS no catálogo — não vão no arquivo enviado.
+   *
+   * Existe porque "oculto na tela" e "não sai da rede" eram coisas diferentes:
+   * a consolidação lê o Parquet do lake, que tem todas as colunas, então um
+   * CPF escondido da API seguia viajando para o Databricks. Quem marcou a
+   * coluna como oculta não esperaria isso.
+   *
+   * A coluna some da PROJEÇÃO, não da deduplicação: se ela for chave de
+   * identidade, continua decidindo qual linha vence — só não é enviada.
+   */
+  colunasOcultas?: string[]
+  /**
+   * Partes do lake a consolidar. Ausente = todas (snapshot).
+   *
+   * É por aqui que o envio incremental acontece: o lake já escreve uma parte
+   * por execução, então as partes ainda não enviadas SÃO o delta. Não existe
+   * watermark de publicação — ele seria um segundo relógio para manter em dia,
+   * e dois relógios divergem.
+   */
+  partes?: string[]
 }
 
 export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
   const { tenantSlug, slug, dedupeKeys, recencyKeys, runId, hhmm } = args
+  const ocultas = new Set(args.colunasOcultas ?? [])
   const datasetDirPath = datasetDir(tenantSlug, slug)
-  const partes = listParquet(datasetDirPath)
-  if (!partes.length) throw new Error(`Conjunto ${slug} não tem Parquet no lake.`)
+  const todas = listParquet(datasetDirPath)
+  if (!todas.length) throw new Error(`Conjunto ${slug} não tem Parquet no lake.`)
+  const partes = args.partes?.length ? args.partes : todas
+  if (!partes.length) throw new Error(`Conjunto ${slug}: nenhuma parte a consolidar.`)
 
-  const glob = parquetGlob(datasetDirPath)
-  const descr = await duckQuery(`describe select * from read_parquet(${sqlit(glob)})`)
+  // Lista explícita quando é delta; glob quando é tudo. O glob é mais barato
+  // para o DuckDB e é o caminho comum.
+  const fonteArquivos = args.partes?.length
+    ? `[${partes.map((p) => sqlit(p.replace(/\\/g, '/'))).join(', ')}]`
+    : sqlit(parquetGlob(datasetDirPath))
+  const descr = await duckQuery(`describe select * from read_parquet(${fonteArquivos})`)
   const colunasOrigem = descr.rows.map((r) => ({
     name: String(r.column_name),
     type: String(r.column_type),
@@ -129,10 +168,17 @@ export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
   }))
   if (!colunasOrigem.length) throw new Error(`Conjunto ${slug}: Parquet sem colunas.`)
 
-  const mapa = mapColumnNames(colunasOrigem.map((c) => c.name))
+  const enviaveis = colunasOrigem.filter((c) => !ocultas.has(c.name))
+  if (!enviaveis.length) {
+    throw new Error(
+      `Conjunto ${slug}: todas as colunas estão ocultas — não há o que publicar.`)
+  }
+  const omitidas = colunasOrigem.filter((c) => ocultas.has(c.name)).map((c) => c.name)
+
+  const mapa = mapColumnNames(enviaveis.map((c) => c.name))
   const tz = config.databricks.sourceTimezone
 
-  const colunas: ColunaConsolidada[] = colunasOrigem.map((c) => ({
+  const colunas: ColunaConsolidada[] = enviaveis.map((c) => ({
     source: c.name,
     name: mapa.get(c.name)!,
     type: precisaConverterFuso(c.type) ? 'TIMESTAMP WITH TIME ZONE' : c.type,
@@ -158,7 +204,7 @@ export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
   if (!dedupeKeys.length) {
     warning = `Conjunto ${slug} não tem dedupe_keys: as partes foram unidas SEM deduplicar. ` +
       'Se houver linha repetida no lake, ela chega repetida ao Databricks.'
-    fonte = `read_parquet(${sqlit(glob)})`
+    fonte = `read_parquet(${fonteArquivos})`
   } else if (faltantes.length) {
     // Chave configurada que não existe no Parquet derrubaria a consulta inteira
     // com "Referenced column not found". Avisar e seguir sem dedup é pior que
@@ -173,14 +219,19 @@ export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
         select *, row_number() over (
           partition by ${partition} order by ${recency} desc nulls last
         ) as __rn
-        from read_parquet(${sqlit(glob)})
+        from read_parquet(${fonteArquivos})
       ) where __rn = 1)`
   }
 
   // Ordem estável: a mesma entrada gera o mesmo arquivo, então um reenvio do
   // mesmo run_id sobrescreve byte a byte em vez de criar diferença espúria.
-  const ordem = chavesPresentes.length
-    ? ` order by ${chavesPresentes.map((k) => ident(mapa.get(k)!)).join(', ')}`
+  //
+  // Só as chaves que sobraram na projeção: uma chave de identidade OCULTA
+  // segue deduplicando (na subquery, que tem tudo), mas não existe aqui fora,
+  // e ordenar por ela derrubaria a consulta com "column not found".
+  const chavesVisiveis = chavesPresentes.filter((k) => mapa.has(k))
+  const ordem = chavesVisiveis.length
+    ? ` order by ${chavesVisiveis.map((k) => ident(mapa.get(k)!)).join(', ')}`
     : ''
 
   const tmpDir = join(tmpdir(), 'datahub-databricks', `${slug}-${runId}`)
@@ -219,5 +270,17 @@ export async function consolidar(args: ConsolidarArgs): Promise<Consolidado> {
   )
 
   const renamed = colunas.filter((c) => c.source !== c.name).map((c) => ({ from: c.source, to: c.name }))
-  return { files, rowCount, sourceParts: partes.length, columns: colunas, renamed, warning, tmpDir }
+
+  // Hash do conteúdo, não dos nomes: os caminhos mudam a cada execução (o
+  // run_id entra no nome do arquivo), então um hash que os incluísse jamais
+  // repetiria e o envio nunca seria pulado.
+  const hash = createHash('sha256')
+  for (const f of files) hash.update(readFileSync(f))
+
+  return {
+    files, rowCount, sourceParts: partes.length, columns: colunas, renamed,
+    omitted: omitidas, warning, tmpDir,
+    sourceFiles: partes.map((p) => p.split(/[\\/]/).pop()!).sort(),
+    contentSha256: hash.digest('hex'),
+  }
 }

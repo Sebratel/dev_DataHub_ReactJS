@@ -32,7 +32,9 @@ const nok = (t: string, d = '') => { console.log(` FALHA ${t}${d ? ` — ${d}` :
 console.log('\n1. Configuração')
 console.log(`  host        ${config.databricks.host || '(vazio)'}`)
 console.log(`  volume      ${config.databricks.volumePath}`)
-console.log(`  autenticação ${config.databricks.token ? 'PAT' : config.databricks.clientId ? 'OAuth M2M' : 'NENHUMA'}`)
+const comOauth = Boolean(config.databricks.clientId && config.databricks.clientSecret)
+console.log(`  autenticação ${comOauth ? `OAuth M2M (${config.databricks.clientId})` : config.databricks.token ? 'PAT' : 'NENHUMA'}`)
+if (comOauth) console.log(`  escopo      ${config.databricks.oauthScope}`)
 console.log(`  integração  ${config.databricks.enabled ? 'ligada' : 'DESLIGADA'}`)
 if (!config.databricks.host || (!config.databricks.token && !config.databricks.clientId)) {
   nok('credencial e host definidos', 'preencha DATABRICKS_HOST e DATABRICKS_TOKEN no .env')
@@ -107,7 +109,7 @@ try {
 
   const manifesto = await montarManifesto({
     runId, slug: escolhido.slug, layer: 'bronze', sourceConnection: 'dev',
-    mode: 'SNAPSHOT', dedupeKeys: [], sourceParts: cons.sourceParts, rowCount: cons.rowCount,
+    mode: 'SNAPSHOT', dedupeKeys: [], mergeKeys: [], sourceParts: cons.sourceParts, rowCount: cons.rowCount,
     columns: cons.columns, renamed: cons.renamed, warning: cons.warning,
     sourceTimezone: config.databricks.sourceTimezone, arquivos, extractedAt: agora,
   })
@@ -133,6 +135,81 @@ try {
   if (err.status === 403) console.log('       → a credencial lê o volume mas não escreve: falta WRITE VOLUME.')
 } finally {
   if (tmpDir) try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* segue */ }
+}
+
+// ── 6. O que a credencial NÃO pode fazer ─────────────────────────────────
+// Provar que ela escreve é metade. A outra metade é provar que ela não faz o
+// resto — e essa metade ninguém descobre por acidente, porque sistema que
+// funciona não reclama de ter permissão demais.
+//
+// Só roda no OAuth: com PAT pessoal o resultado seria o oposto (o seu usuário
+// pode tudo), e um teste que sempre passa não vale nada.
+if (comOauth) {
+  console.log('\n6. Limites da credencial (o que ela NÃO deve conseguir)')
+  const { clientId, clientSecret, oauthScope } = config.databricks
+  const r = await fetch(`https://${config.databricks.host}/oidc/v1/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: `grant_type=client_credentials&scope=${encodeURIComponent(oauthScope)}`,
+    signal: AbortSignal.timeout(30_000),
+  })
+  const tok = ((await r.json()) as { access_token?: string }).access_token
+
+  const tentar = async (metodo: string, caminho: string, corpo?: unknown) =>
+    fetch(`https://${config.databricks.host}${caminho}`, {
+      method: metodo,
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: corpo ? JSON.stringify(corpo) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    })
+
+  const negado = async (rotulo: string, metodo: string, caminho: string, corpo?: unknown) => {
+    const resp = await tentar(metodo, caminho, corpo)
+    // 403 é o ideal; 404 também serve, porque sem USE_SCHEMA o objeto nem
+    // existe para esta identidade — o efeito prático é o mesmo.
+    if (resp.status === 403 || resp.status === 404) {
+      ok(rotulo, `recusado com ${resp.status}`)
+    } else {
+      nok(rotulo, `CONSEGUIU (HTTP ${resp.status}) — permissão a mais, revise`)
+    }
+  }
+
+  // Limites de DADOS: estes dependem só do Unity Catalog, e são os que a
+  // configuração controla de verdade. Se algum destes passar, há erro nosso.
+  await negado('não cria schema no catálogo', 'POST', '/api/2.1/unity-catalog/schemas',
+    { name: `teste_permissao_${Date.now()}`, catalog_name: 'piloto_mariadb' })
+  await negado('não enxerga a tabela em bronze', 'GET',
+    '/api/2.1/unity-catalog/tables/piloto_mariadb.bronze.api_resumo')
+
+  // Limite de PLATAFORMA, e este não é configurável.
+  //
+  // A Files API exige um entitlement de workspace (databricks-sql-access,
+  // workspace-access ou workspace-consume), e QUALQUER um deles também permite
+  // criar job. Testei os três: o envio funciona e a criação de job passa junto.
+  // Não é descuido de configuração — é o acesso ao workspace sendo indivisível.
+  //
+  // O que isso significa na prática: quem roubar o segredo não lê dado nenhum
+  // (os dois testes acima continuam valendo), mas pode gastar compute. O
+  // controle disso é o orçamento e a rotação do segredo, não a permissão.
+  //
+  // O job de teste é apagado em seguida — teste que suja o workspace vira
+  // ruído, e ruído a gente aprende a ignorar.
+  const resp = await tentar('POST', '/api/2.2/jobs/create',
+    { name: `teste-permissao-${Date.now()}`, tasks: [] })
+  if (resp.status === 403) {
+    ok('não cria job no workspace', 'recusado com 403')
+  } else if (resp.ok) {
+    const { job_id: jobId } = (await resp.json()) as { job_id?: number }
+    if (jobId) await tentar('POST', '/api/2.2/jobs/delete', { job_id: jobId })
+    console.log('  nota  cria job no workspace — limite da plataforma, não da configuração.')
+    console.log('        Acesso ao volume e acesso ao workspace vêm juntos; a contenção')
+    console.log('        é orçamento e rotação do segredo. Job de teste removido.')
+  } else {
+    nok('criação de job', `resposta inesperada: HTTP ${resp.status}`)
+  }
 }
 
 console.log(falhas ? `\n${falhas} verificação(ões) falharam.` : '\nTudo certo.')

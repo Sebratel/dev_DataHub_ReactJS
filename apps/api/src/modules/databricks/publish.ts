@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, rmSync } from 'node:fs'
 import { db } from '../../db/pool.js'
 import { config } from '../../core/config.js'
+import { listParquet, datasetDir } from '../../core/lake.js'
 import { consolidar } from './consolidate.js'
 import { criarDiretorio, enviarArquivo, DatabricksError } from './client.js'
 import { montarManifesto } from './manifest.js'
@@ -60,18 +61,68 @@ async function registrar(linha: {
   runId: string; datasetId: string; slug: string; status: string; mode: string
   sourceParts?: number; rowCount?: number; fileSize?: number; filePath?: string
   attempts: number; erro?: string; inicio: Date
+  sha?: string; sourceFiles?: string[]; effectiveMode?: string
 }): Promise<void> {
   await db.query(
     `insert into databricks_sync_runs
        (id, dataset_id, dataset_slug, status, mode, source_parts, row_count,
-        file_size_bytes, file_path, attempts, error_message, started_at, finished_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())`,
+        file_size_bytes, file_path, attempts, error_message, started_at, finished_at,
+        content_sha256, source_files, effective_mode)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), $13,$14,$15)`,
     [
       linha.runId, linha.datasetId, linha.slug, linha.status, linha.mode,
       linha.sourceParts ?? null, linha.rowCount ?? null, linha.fileSize ?? null,
       linha.filePath ?? null, linha.attempts, linha.erro ?? null, linha.inicio,
+      linha.sha ?? null, linha.sourceFiles ?? null, linha.effectiveMode ?? null,
     ],
   )
+}
+
+interface UltimoEnvio { sha: string | null; arquivos: string[] | null }
+
+/** O último envio que de fato chegou ao volume — SKIPPED e FAILED não contam. */
+async function ultimoEnvioBemSucedido(slug: string): Promise<UltimoEnvio | null> {
+  const r = (await db.query(
+    `select content_sha256, source_files from databricks_sync_runs
+      where dataset_slug = $1 and status = 'SUCCESS'
+      order by started_at desc limit 1`, [slug],
+  )).rows[0]
+  if (!r) return null
+  return { sha: (r.content_sha256 as string) ?? null, arquivos: (r.source_files as string[]) ?? null }
+}
+
+/**
+ * Quais partes do lake enviar.
+ *
+ * O lake escreve uma parte por execução, então as partes que ainda não foram
+ * enviadas são o delta — não é preciso um watermark de publicação, que seria
+ * um segundo relógio para manter sincronizado com o primeiro.
+ *
+ * Cai para envio COMPLETO quando alguma parte conhecida desapareceu: isso
+ * significa compactação ou recarga, e aí o lake foi reescrito. Mandar só o que
+ * sobrou produziria uma tabela com as linhas antigas que a compactação
+ * colapsou — o delta perdeu o sentido junto com os arquivos.
+ */
+export function decidirPartes(
+  noLake: string[], enviadas: string[] | null,
+): { partes: string[] | undefined; modo: 'SNAPSHOT' | 'INCREMENTAL'; motivo: string } {
+  if (!enviadas?.length) {
+    return { partes: undefined, modo: 'SNAPSHOT', motivo: 'primeiro envio' }
+  }
+  const atuais = new Set(noLake.map((p) => p.split(/[\\/]/).pop()!))
+  const sumiram = enviadas.filter((f) => !atuais.has(f))
+  if (sumiram.length) {
+    return {
+      partes: undefined, modo: 'SNAPSHOT',
+      motivo: `o lake foi reescrito (${sumiram.length} parte(s) não existem mais)`,
+    }
+  }
+  const conhecidas = new Set(enviadas)
+  const novas = noLake.filter((p) => !conhecidas.has(p.split(/[\\/]/).pop()!))
+  if (!novas.length) {
+    return { partes: undefined, modo: 'SNAPSHOT', motivo: 'nenhuma parte nova' }
+  }
+  return { partes: novas, modo: 'INCREMENTAL', motivo: `${novas.length} parte(s) nova(s)` }
 }
 
 // Duas falhas seguidas no mesmo conjunto deixam de ser azar e viram defeito: ou
@@ -148,18 +199,63 @@ export async function publicarDataset(
   try {
     // As chaves de recência seguem a MESMA regra da compactação: só as
     // temporais decidem, e o tipo de cada uma importa (ver recencyExpression).
-    const tipos = new Map(
-      (await db.query(
-        'select key, type from dataset_fields where dataset_id = $1', [ds.id],
-      )).rows.map((r) => [String(r.key), String(r.type)]),
-    )
+    const campos = (await db.query(
+      'select key, type, hidden from dataset_fields where dataset_id = $1', [ds.id],
+    )).rows
+    const tipos = new Map(campos.map((r) => [String(r.key), String(r.type)]))
     const recencyKeys: RecencyKey[] = [ds.incremental_key, ds.incremental_key_2]
       .filter(Boolean).map(String)
       .map((key) => ({ key, isDate: tipos.get(key) === 'date' }))
+    // Campo oculto não sai da rede. Antes disto, "oculto" valia só para a API
+    // e a tela, e um CPF escondido do usuário seguia viajando para fora.
+    const colunasOcultas = campos.filter((r) => r.hidden).map((r) => String(r.key))
+
+    // O delta só vale quando há identidade: sem dedupe_keys o destino não tem
+    // como casar a linha nova com a antiga, e um MERGE viraria acúmulo. E uma
+    // chave oculta não viaja, então também não serve para casar.
+    const chaveUtil = dedupeKeys.length && dedupeKeys.every((k) => !colunasOcultas.includes(k))
+    const anterior = await ultimoEnvioBemSucedido(ds.slug)
+    const noLake = listParquet(datasetDir(ds.tenant_slug, ds.slug))
+    // O que o registro guarda é o ESTADO do lake, não o que foi enviado.
+    // Guardar só o delta faria a comparação seguinte ver as partes antigas
+    // como desconhecidas e reenviá-las — o incremental reenviaria tudo, toda
+    // vez, sem nunca parecer errado.
+    const estadoDoLake = noLake.map((p) => p.split(/[\\/]/).pop()!).sort()
+    const decisao = ds.databricks_mode === 'INCREMENTAL' && chaveUtil
+      ? decidirPartes(noLake, anterior?.arquivos ?? null)
+      : { partes: undefined, modo: 'SNAPSHOT' as const, motivo: 'modo snapshot' }
 
     const cons = await consolidar({
       tenantSlug: ds.tenant_slug, slug: ds.slug, dedupeKeys, recencyKeys, runId, hhmm,
+      colunasOcultas, partes: decisao.partes,
     })
+    if (cons.omitted.length) {
+      console.log(`[databricks] ${ds.slug}: ${cons.omitted.length} coluna(s) oculta(s) fora do envio.`)
+    }
+
+    // Nada mudou desde o último envio: não há o que mandar.
+    //
+    // O custo de chegar até aqui é local e barato (DuckDB no nosso servidor).
+    // O que este `return` evita é o caro: a subida do arquivo e, sobretudo, o
+    // job de carga reescrevendo no Databricks uma tabela idêntica à que já
+    // está lá. Em conjunto que muda pouco, isso apaga a maioria dos 13 ciclos
+    // diários.
+    if (anterior?.sha && anterior.sha === cons.contentSha256) {
+      await registrar({
+        runId, datasetId: ds.id, slug: ds.slug, status: 'SKIPPED', mode: ds.databricks_mode,
+        sourceParts: cons.sourceParts, rowCount: cons.rowCount, attempts: 0, inicio,
+        erro: 'conteúdo idêntico ao último envio', sha: cons.contentSha256,
+        sourceFiles: estadoDoLake, effectiveMode: decisao.modo,
+      })
+      console.log(`[databricks] ${ds.slug}: nada mudou desde o último envio — pulado.`)
+      return {
+        status: 'SKIPPED', runId, reason: 'conteúdo idêntico ao último envio',
+        rowCount: cons.rowCount, sourceParts: cons.sourceParts,
+      }
+    }
+    if (decisao.modo === 'INCREMENTAL') {
+      console.log(`[databricks] ${ds.slug}: envio incremental — ${decisao.motivo}.`)
+    }
     tmpDir = cons.tmpDir
     if (cons.warning) console.warn(`[databricks] ${cons.warning}`)
 
@@ -181,9 +277,20 @@ export async function publicarDataset(
     // O manifesto vai por ÚLTIMO, sempre: é ele que autoriza o job a carregar.
     const manifesto = await montarManifesto({
       runId, slug: ds.slug, layer: camada, sourceConnection: ds.connection_id,
-      mode: ds.databricks_mode, dedupeKeys, sourceParts: cons.sourceParts,
+      // O modo que o manifesto declara é o EFETIVO, não o configurado: é ele
+      // que diz ao job se substitui a tabela ou faz merge. Um conjunto em
+      // INCREMENTAL que caiu para completo (compactação) precisa substituir,
+      // senão as linhas colapsadas voltariam a conviver com as novas.
+      mode: decisao.modo,
+      // Chaves JÁ NORMALIZADAS: o merge do outro lado casa pelos nomes que
+      // existem no arquivo, que passaram por snake_case.
+      mergeKeys: dedupeKeys
+        .map((k) => cons.columns.find((c) => c.source === k)?.name)
+        .filter((n): n is string => Boolean(n)),
+      dedupeKeys, sourceParts: cons.sourceParts,
       rowCount: cons.rowCount, columns: cons.columns, renamed: cons.renamed,
-      warning: cons.warning, sourceTimezone: config.databricks.sourceTimezone,
+      omitted: cons.omitted, warning: cons.warning,
+      sourceTimezone: config.databricks.sourceTimezone,
       arquivos, extractedAt,
     })
     const caminhoManifesto = `${base}/${hhmm}_${runId}.manifest.json`
@@ -197,6 +304,7 @@ export async function publicarDataset(
       runId, datasetId: ds.id, slug: ds.slug, status: 'SUCCESS', mode: ds.databricks_mode,
       sourceParts: cons.sourceParts, rowCount: cons.rowCount, fileSize: bytes,
       filePath: arquivos[0]?.volume, attempts: tentativas, inicio,
+      sha: cons.contentSha256, sourceFiles: estadoDoLake, effectiveMode: decisao.modo,
     })
     console.log(
       `[databricks] ${ds.slug}: ${cons.rowCount} linha(s) de ${cons.sourceParts} parte(s) ` +

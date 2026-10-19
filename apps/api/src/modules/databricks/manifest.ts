@@ -42,6 +42,15 @@ export interface Manifesto {
   source_connection: string
   mode: string
   dedupe_keys: string[]
+  /**
+   * As mesmas chaves, com os nomes que existem NO ARQUIVO (snake_case).
+   *
+   * O merge do outro lado casa por nome de coluna, e `dedupe_keys` guarda o
+   * nome de origem — que pode ter acento, espaço ou maiúscula. Mandar os dois
+   * evita que o job tenha de adivinhar a normalização, e mantém `dedupe_keys`
+   * legível para quem lê o manifesto.
+   */
+  merge_keys: string[]
   source_parts: number
   row_count: number
   compression: 'zstd'
@@ -50,6 +59,12 @@ export interface Manifesto {
   columns: Array<{ name: string; type: string; nullable: boolean }>
   /** Só aparece quando a normalização mudou algum nome (seção 5 do spec). */
   renamed_columns?: Array<{ from: string; to: string }>
+  /**
+   * Colunas que existem no lake e NÃO foram enviadas, por estarem ocultas.
+   * Vai no manifesto para quem lê a tabela no Databricks saber que ela é
+   * parcial de propósito, em vez de concluir que a origem não tem o campo.
+   */
+  omitted_columns?: string[]
   /** Só aparece quando o conjunto não tem dedupe_keys. */
   warning?: string
   extracted_at: string
@@ -79,10 +94,12 @@ export interface MontarManifestoArgs {
   sourceConnection: string
   mode: string
   dedupeKeys: string[]
+  mergeKeys: string[]
   sourceParts: number
   rowCount: number
   columns: ColunaConsolidada[]
   renamed: Array<{ from: string; to: string }>
+  omitted?: string[]
   warning?: string
   sourceTimezone: string
   /** Caminho local → caminho no volume. */
@@ -106,6 +123,7 @@ export async function montarManifesto(a: MontarManifestoArgs): Promise<Manifesto
     source_connection: a.sourceConnection,
     mode: a.mode,
     dedupe_keys: a.dedupeKeys,
+    merge_keys: a.mergeKeys,
     source_parts: a.sourceParts,
     row_count: a.rowCount,
     compression: 'zstd',
@@ -115,6 +133,7 @@ export async function montarManifesto(a: MontarManifestoArgs): Promise<Manifesto
       name: c.name, type: tipoLegivel(c.type), nullable: c.nullable,
     })),
     ...(a.renamed.length ? { renamed_columns: a.renamed } : {}),
+    ...(a.omitted?.length ? { omitted_columns: a.omitted } : {}),
     ...(a.warning ? { warning: a.warning } : {}),
     extracted_at: a.extractedAt.toISOString(),
     published_at: new Date().toISOString(),

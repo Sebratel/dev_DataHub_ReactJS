@@ -49,6 +49,19 @@ spark.sql(f"""
   )
 """)
 
+# Colunas que chegaram com o modo incremental. Em tabela já existente, o
+# `create table if not exists` acima não as acrescenta — daí o alter.
+#
+# `row_count` passou a ser ambíguo: em SNAPSHOT é o tamanho da tabela, em
+# INCREMENTAL é o tamanho do DELTA. Sem `table_rows`, qualquer conferência que
+# compare o registro com a contagem real acusaria divergência em todo envio
+# incremental — um alarme falso diário, que ensina a ignorar o alarme.
+for coluna, tipo in (("mode", "string"), ("table_rows", "bigint")):
+    try:
+        spark.sql(f"alter table {CONTROLE} add column {coluna} {tipo}")
+    except Exception:
+        pass  # já existe
+
 processados = {r.run_id for r in spark.table(CONTROLE).select("run_id").collect()}
 print(f"{len(processados)} carga(s) já processada(s).")
 
@@ -135,22 +148,60 @@ for caminho in sorted(manifestos()):
         continue
 
     spark.sql(f"create schema if not exists {CATALOG}.{camada}")
-    # SNAPSHOT substitui a tabela. overwriteSchema porque a origem é um ERP:
-    # coluna nova aparece sem aviso, e falhar a carga por isso seria pior.
-    (df.write
-       .mode("overwrite")
-       .option("overwriteSchema", "true")
-       .saveAsTable(tabela))
 
+    modo = m.get("mode", "SNAPSHOT")
+    merge_keys = m.get("merge_keys") or []
+    existe = spark.catalog.tableExists(tabela)
+
+    if modo == "INCREMENTAL" and merge_keys and existe:
+        # O arquivo traz só as linhas que mudaram desde o último envio, então
+        # substituir a tabela apagaria todo o histórico que não veio junto.
+        # MERGE atualiza quem já existe e insere quem é novo.
+        #
+        # O que o MERGE NÃO faz: apagar da tabela a linha que sumiu na origem.
+        # Em SNAPSHOT isso acontece de graça (a tabela é substituída); aqui,
+        # não. Uma exclusão na origem só desaparece daqui na próxima vez que o
+        # conjunto for enviado inteiro — tipicamente depois de uma compactação
+        # do lake, que já força envio completo.
+        df.createOrReplaceTempView("delta_recebido")
+        on = " and ".join(f"t.`{k}` = s.`{k}`" for k in merge_keys)
+        spark.sql(f"""
+          merge into {tabela} t
+          using delta_recebido s on {on}
+          when matched then update set *
+          when not matched then insert *
+        """)
+        print(f"OK  {tabela}: merge de {linhas} linha(s) por {', '.join(merge_keys)}.")
+        spark.catalog.dropTempView("delta_recebido")
+    else:
+        # SNAPSHOT substitui a tabela. overwriteSchema porque a origem é um
+        # ERP: coluna nova aparece sem aviso, e falhar a carga por isso seria
+        # pior. Também é o caminho do PRIMEIRO envio de um conjunto
+        # incremental, quando ainda não há tabela para casar.
+        (df.write
+           .mode("overwrite")
+           .option("overwriteSchema", "true")
+           .saveAsTable(tabela))
+        if modo == "INCREMENTAL" and not existe:
+            print(f"    {tabela}: incremental sem tabela ainda — primeiro envio entra inteiro.")
+
+    # Colunas nomeadas: `values` posicional quebraria em silêncio no dia em
+    # que outra coluna entrasse no meio.
+    total_tabela = spark.table(tabela).count()
     spark.sql(f"""
-      insert into {CONTROLE} values (
+      insert into {CONTROLE}
+        (run_id, dataset_slug, layer, table_name, row_count, manifest_path,
+         loaded_at, mode, table_rows)
+      values (
         '{run_id}', '{slug}', '{camada}', '{tabela}', {linhas},
-        '{caminho}', timestamp'{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}'
+        '{caminho}', timestamp'{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}',
+        '{modo}', {total_tabela}
       )
     """)
     processados.add(run_id)
     carregados += 1
-    print(f"OK  {tabela}: {linhas} linha(s) de {m.get('source_parts')} parte(s) no lake.")
+    if modo != "INCREMENTAL" or not merge_keys or not existe:
+        print(f"OK  {tabela}: {linhas} linha(s) de {m.get('source_parts')} parte(s) no lake.")
 
 # COMMAND ----------
 

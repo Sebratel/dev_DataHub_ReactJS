@@ -86,6 +86,9 @@ export default function DatabricksPanel({ dataset, onChanged }: {
     } finally { setBusy(false) }
   }
 
+  // A identidade da linha é configurada na Sincronização (dedupe_keys) e é o
+  // que o merge usa para casar a linha nova com a que já está no destino.
+  const temIdentidade = (dataset.sync?.dedupeKeys?.length ?? 0) > 0
   const camadaEfetiva = layer || db?.effectiveLayer || 'bronze'
   const destino = status
     ? `${status.volumePath}/${camadaEfetiva}/${dataset.slug}/dt=…`
@@ -138,9 +141,15 @@ export default function DatabricksPanel({ dataset, onChanged }: {
             <span className="mb-1 block text-xs text-zinc-500">Modo de envio</span>
             <select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)} className={ctrl}>
               <option value="SNAPSHOT">Snapshot (substitui a tabela a cada envio)</option>
-              {/* Fica para depois do piloto — mostrar desabilitado explica a
-                  ausência melhor do que esconder a opção. */}
-              <option value="INCREMENTAL" disabled>Incremental (depois do piloto)</option>
+              {/* Sem identidade da linha o destino não tem como casar a versão
+                  nova com a antiga, e o merge viraria acúmulo — a tabela
+                  cresceria a cada envio sem nada reclamar. Desabilitado com o
+                  motivo à vista explica melhor do que esconder a opção. */}
+              <option value="INCREMENTAL" disabled={!temIdentidade}>
+                {temIdentidade
+                  ? 'Incremental (envia só o que mudou)'
+                  : 'Incremental (exige identidade da linha)'}
+              </option>
             </select>
           </label>
           <label className="text-sm">
@@ -154,6 +163,15 @@ export default function DatabricksPanel({ dataset, onChanged }: {
           </label>
         </div>
       </fieldset>
+
+      {mode === 'INCREMENTAL' && (
+        <p className="mt-3 text-xs leading-relaxed text-zinc-500">
+          No incremental vão só as partes novas do lake, e o destino faz <em>merge</em> pela
+          identidade da linha. Uma linha <strong>excluída na origem</strong> não é removida lá —
+          isso só acontece no próximo envio completo, que a compactação do lake força de tempos
+          em tempos. Em Snapshot a exclusão some sozinha, porque a tabela é substituída.
+        </p>
+      )}
 
       <p className="mt-3 text-xs text-zinc-500">
         Destino: {destino

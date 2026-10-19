@@ -38,10 +38,14 @@ export function limparTokenCache(): void {
 
 async function obterToken(): Promise<string> {
   const { token, clientId, clientSecret, host } = config.databricks
-  if (token) return token // PAT: caminho do piloto
+  // OAuth M2M vem PRIMEIRO quando configurado, e o PAT fica como alternativa.
+  // A precedência inversa (PAT antes) tinha um efeito ruim: numa máquina com os
+  // dois definidos, o caminho de produção nunca era exercitado — o PAT pessoal
+  // respondia por tudo e o OAuth só seria testado de verdade em produção.
   if (!clientId || !clientSecret) {
+    if (token) return token
     throw new DatabricksError(
-      'Databricks sem credencial: defina DATABRICKS_TOKEN ou DATABRICKS_CLIENT_ID/SECRET.',
+      'Databricks sem credencial: defina DATABRICKS_CLIENT_ID/SECRET ou DATABRICKS_TOKEN.',
       null, false,
     )
   }
@@ -54,14 +58,18 @@ async function obterToken(): Promise<string> {
       Authorization: `Basic ${basica}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: 'grant_type=client_credentials&scope=all-apis',
+    body: `grant_type=client_credentials&scope=${encodeURIComponent(config.databricks.oauthScope)}`,
     signal: AbortSignal.timeout(30_000),
   })
   if (!resp.ok) {
     // O corpo de um erro de OIDC não traz o segredo, mas pode trazer o
-    // client_id; fica de fora por via das dúvidas.
+    // client_id; fica de fora por via das dúvidas. O escopo vai na mensagem
+    // porque é a causa mais provável e a menos óbvia: pedir um escopo que o
+    // segredo não tem devolve 400/401 sem dizer qual é o problema.
     throw new DatabricksError(
-      `Falha ao obter token OAuth (HTTP ${resp.status}).`, resp.status, deveRepetir(resp.status),
+      `Falha ao obter token OAuth (HTTP ${resp.status}; escopo pedido: `
+      + `"${config.databricks.oauthScope}" — confira se é o mesmo com que o segredo foi emitido).`,
+      resp.status, deveRepetir(resp.status),
     )
   }
   const dados = (await resp.json()) as { access_token?: string; expires_in?: number }

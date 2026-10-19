@@ -97,6 +97,11 @@ export const config = {
     clientSecret: process.env.DATABRICKS_CLIENT_SECRET || '',
     // Alternativa ao OAuth, só para o piloto.
     token: process.env.DATABRICKS_TOKEN || '',
+    // Escopo pedido no fluxo OAuth M2M. Tem que casar com o escopo com que o
+    // segredo foi EMITIDO: pedir 'all-apis' para um segredo emitido com escopo
+    // restrito é recusado. Deixar configurável permite emitir um segredo que
+    // só alcança a Files API — que é tudo que o envio faz.
+    oauthScope: (process.env.DATABRICKS_OAUTH_SCOPE || 'all-apis').trim(),
     // Em dev, aponte para .../arquivos/_dev: o job de carga ignora pastas que
     // começam com '_', então teste de desenvolvedor nunca vira tabela.
     volumePath: (process.env.DATABRICKS_VOLUME_PATH || '/Volumes/piloto_mariadb/landing/arquivos')
