@@ -28,6 +28,7 @@
     "databricks:setup-job": "tsx src/dev/databricksSetupJob.ts",
     "databricks:grants": "tsx src/dev/databricksGrants.ts",
     "databricks:run-job": "tsx src/dev/databricksRunJob.ts",
+    "databricks:status": "tsx src/dev/databricksStatus.ts",
     "databricks:sql": "tsx src/dev/databricksSql.ts",
     "public-query:smoke": "tsx src/dev/publicQuerySmoke.ts",
     "sandbox:smoke": "tsx src/dev/sqlSandboxSmoke.ts",

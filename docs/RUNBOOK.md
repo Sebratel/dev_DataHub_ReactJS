@@ -218,6 +218,24 @@ Os três primeiros são idempotentes: rodar de novo não duplica nada.
 dois jobs; `--resume` religa. Job pausado não roda e não custa, e a
 configuração fica de pé.
 
+### Acompanhar o piloto
+
+```bash
+npm run databricks:status --workspace apps/api
+```
+
+Responde a pergunta do critério de aceite — "os envios estão chegando e o
+`row_count` bate?" — em três partes: contagem gravada contra `count(*)` de
+agora; **manifesto no volume sem carga correspondente**; e como os dois jobs
+terminaram nas últimas execuções.
+
+A segunda parte é a que importa mais, porque é a falha silenciosa do desenho:
+o envio dá sucesso, o arquivo está lá, e a tabela não existe — foi o que
+aconteceria com o destino apontando para `/_dev`. Nada reclama sozinho.
+
+Ele acorda o SQL Warehouse, então custa alguns centavos. É para acompanhamento
+pontual, não para laço de monitoramento.
+
 **Ao conferir o service principal no console, olhe o Client ID, nunca o nome.**
 A tela "Add identity" transforma o UUID colado em NOME e gera um Client ID
 novo — é fácil acabar com dois service principals, o secret num e a permissão
