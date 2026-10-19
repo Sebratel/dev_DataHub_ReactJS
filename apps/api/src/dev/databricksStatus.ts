@@ -83,16 +83,28 @@ let problemas = 0
 // Compara o row_count gravado na carga com o count(*) de AGORA. Divergência
 // aqui significa que alguém (ou algo) mexeu na tabela por fora do pipeline.
 console.log('\n── Tabelas carregadas ──\n')
+// Compara contra `table_rows` (o tamanho da TABELA depois da carga), não
+// contra `row_count` — que em envio incremental é o tamanho do delta e
+// acusaria divergência em todo ciclo. Conjuntos carregados antes desta coluna
+// existir caem no row_count, que para eles era a mesma coisa.
 const cargas = await sql(`
-  select dataset_slug, table_name, max(row_count) as linhas, max(loaded_at) as quando,
-         count(*) as cargas
-    from ${CATALOGO}.landing.cargas_processadas
-   group by dataset_slug, table_name order by dataset_slug`)
+  with ultima as (
+    select dataset_slug, table_name, row_count, table_rows, mode, loaded_at,
+           row_number() over (partition by table_name order by loaded_at desc) as rn
+      from ${CATALOGO}.landing.cargas_processadas
+  )
+  select u.dataset_slug, u.table_name,
+         coalesce(u.table_rows, u.row_count) as linhas,
+         u.loaded_at as quando,
+         (select count(*) from ${CATALOGO}.landing.cargas_processadas c
+           where c.table_name = u.table_name) as cargas,
+         coalesce(u.mode, 'SNAPSHOT') as modo
+    from ultima u where u.rn = 1 order by u.dataset_slug`)
 
 if (!cargas.length) {
   console.log('  (nenhuma carga registrada)')
 } else {
-  for (const [slug, tabela, linhas, quando, nCargas] of cargas) {
+  for (const [slug, tabela, linhas, quando, nCargas, modo] of cargas) {
     let agora = '?'
     let bate = true
     try {
@@ -105,7 +117,7 @@ if (!cargas.length) {
     if (!bate) problemas++
     const marca = bate ? 'ok  ' : 'DIVERGE'
     console.log(`  ${marca} ${slug.padEnd(26)} ${String(linhas).padStart(8)} linha(s) ` +
-      `· na tabela ${agora} · ${nCargas} carga(s) · última ${String(quando).slice(0, 19)}`)
+      `· na tabela ${agora} · ${nCargas} carga(s) · ${modo} · última ${String(quando).slice(0, 19)}`)
   }
 }
 

@@ -109,7 +109,7 @@ try {
 
   const manifesto = await montarManifesto({
     runId, slug: escolhido.slug, layer: 'bronze', sourceConnection: 'dev',
-    mode: 'SNAPSHOT', dedupeKeys: [], sourceParts: cons.sourceParts, rowCount: cons.rowCount,
+    mode: 'SNAPSHOT', dedupeKeys: [], mergeKeys: [], sourceParts: cons.sourceParts, rowCount: cons.rowCount,
     columns: cons.columns, renamed: cons.renamed, warning: cons.warning,
     sourceTimezone: config.databricks.sourceTimezone, arquivos, extractedAt: agora,
   })

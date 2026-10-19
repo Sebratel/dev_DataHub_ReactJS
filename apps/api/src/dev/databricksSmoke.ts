@@ -15,7 +15,7 @@ import {
 } from '../modules/databricks/consolidate.js'
 import { deveRepetir, comRetentativa, DatabricksError } from '../modules/databricks/client.js'
 import { montarManifesto, sha256Arquivo } from '../modules/databricks/manifest.js'
-import { camadaDe, slugDeTabela } from '../modules/databricks/publish.js'
+import { camadaDe, slugDeTabela, decidirPartes } from '../modules/databricks/publish.js'
 import { join } from 'node:path'
 import { writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -132,11 +132,80 @@ console.log('\n3b. Coluna oculta fica fora do envio')
     lidoOculto.columns.join(', '))
 }
 
+// ── 3c. Delta: quais partes enviar ───────────────────────────────────────
+// A regra decide, a cada ciclo, entre mandar o conjunto inteiro e mandar só o
+// que chegou. Errar para o lado do delta é o perigoso: produz uma tabela que
+// parece certa e tem linhas a menos.
+console.log('\n3c. Decisão de delta (quais partes enviar)')
+{
+  const p = (...n: string[]) => n.map((x) => `C:\\lake\\sebratel\\x\\${x}`)
+  {
+    const d = decidirPartes(p('part-1.parquet'), null)
+    check('primeiro envio manda tudo', d.modo === 'SNAPSHOT' && d.partes === undefined, d.motivo)
+  }
+  {
+    const d = decidirPartes(p('part-1.parquet', 'part-2.parquet'), ['part-1.parquet'])
+    check('parte nova vira delta',
+      d.modo === 'INCREMENTAL' && d.partes?.length === 1
+      && d.partes[0].endsWith('part-2.parquet'), d.motivo)
+  }
+  {
+    // Compactação: as partes somem e nasce uma só. Mandar "o que é novo" aqui
+    // entregaria a parte compactada como se fosse delta, e o merge deixaria
+    // conviver as versões antigas que a compactação justamente colapsou.
+    const d = decidirPartes(p('part-compacted-9.parquet'), ['part-1.parquet', 'part-2.parquet'])
+    check('compactação força envio completo',
+      d.modo === 'SNAPSHOT' && d.partes === undefined, d.motivo)
+  }
+  {
+    const d = decidirPartes(p('part-1.parquet'), ['part-1.parquet'])
+    check('nada novo não vira delta vazio', d.modo === 'SNAPSHOT', d.motivo)
+  }
+  {
+    // Snapshot do lake: apaga tudo e escreve uma parte com nome novo.
+    const d = decidirPartes(p('part-novo.parquet'), ['part-velho.parquet'])
+    check('recarga completa força envio completo', d.modo === 'SNAPSHOT', d.motivo)
+  }
+}
+
+// ── 3d. Hash estável: a base do "não mudou, não envia" ───────────────────
+// Se o hash variasse entre duas consolidações da mesma entrada, o envio nunca
+// seria pulado e a economia inteira não existiria — sem nada falhar.
+console.log('\n3d. Hash do consolidado')
+{
+  const a = await consolidar({
+    tenantSlug: TENANT, slug: SLUG, dedupeKeys: ['id'],
+    recencyKeys: [{ key: 'Data Atualização', isDate: true }],
+    runId: randomUUID(), hhmm: '1000',
+  })
+  const b = await consolidar({
+    tenantSlug: TENANT, slug: SLUG, dedupeKeys: ['id'],
+    recencyKeys: [{ key: 'Data Atualização', isDate: true }],
+    runId: randomUUID(), hhmm: '1100', // run_id e hora diferentes de propósito
+  })
+  check('mesma entrada, mesmo hash', a.contentSha256 === b.contentSha256,
+    `${a.contentSha256.slice(0, 12)}… / ${b.contentSha256.slice(0, 12)}…`)
+  check('o hash não depende do nome do arquivo',
+    a.files[0] !== b.files[0] && a.contentSha256 === b.contentSha256)
+  check('as partes de origem são registradas',
+    a.sourceFiles.length === 3 && a.sourceFiles.every((f) => f.endsWith('.parquet')),
+    a.sourceFiles.join(', '))
+
+  const soUma = await consolidar({
+    tenantSlug: TENANT, slug: SLUG, dedupeKeys: ['id'],
+    recencyKeys: [{ key: 'Data Atualização', isDate: true }],
+    runId: randomUUID(), hhmm: '1200',
+    partes: [join(datasetDir(TENANT, SLUG), 'part-3.parquet')],
+  })
+  check('delta lê só as partes pedidas', soUma.rowCount === 1, String(soUma.rowCount))
+  check('e o hash do delta difere do total', soUma.contentSha256 !== a.contentSha256)
+}
+
 // ── 4. Manifesto e hash ──────────────────────────────────────────────────
 console.log('\n4. Manifesto e hash')
 const manifesto = await montarManifesto({
   runId, slug: SLUG, layer: 'bronze', sourceConnection: 'API_WebDeveloper',
-  mode: 'SNAPSHOT', dedupeKeys: ['id'], sourceParts: cons.sourceParts,
+  mode: 'SNAPSHOT', dedupeKeys: ['id'], mergeKeys: ['id'], sourceParts: cons.sourceParts,
   rowCount: cons.rowCount, columns: cons.columns, renamed: cons.renamed,
   sourceTimezone: 'America/Sao_Paulo',
   arquivos: [{ local: cons.files[0], volume: `/Volumes/x/y/bronze/${SLUG}/dt=2026-10-05/0800_${runId}.parquet` }],
@@ -220,12 +289,13 @@ console.log('\n7. Migration e UPDATE em Postgres (pglite)')
       updated_at timestamptz not null default now()
     );
   `)
-  const migration = readFileSync(
-    join(import.meta.dirname, '../db/migrations/034-databricks-publish.sql'), 'utf8')
-  let aplicou = true
-  let erroMigration = ''
-  try { await pg.exec(migration) } catch (e) { aplicou = false; erroMigration = (e as Error).message }
-  check('a migration 034 aplica', aplicou, erroMigration)
+  for (const nome of ['034-databricks-publish.sql', '035-databricks-incremental.sql']) {
+    const migration = readFileSync(join(import.meta.dirname, `../db/migrations/${nome}`), 'utf8')
+    let aplicou = true
+    let erroMigration = ''
+    try { await pg.exec(migration) } catch (e) { aplicou = false; erroMigration = (e as Error).message }
+    check(`a migration ${nome.slice(0, 3)} aplica`, aplicou, erroMigration)
+  }
 
   const dsId = (await pg.query<{ id: string }>(
     `insert into datasets (slug) values ('db-matrix') returning id`)).rows[0].id
@@ -277,8 +347,23 @@ console.log('\n7. Migration e UPDATE em Postgres (pglite)')
   check('status inválido no log é recusado', recusou)
 
   await pg.query(
-    `insert into databricks_sync_runs (id, dataset_id, dataset_slug, status, mode, row_count)
-     values (gen_random_uuid(), $1, 'db-matrix', 'SUCCESS', 'SNAPSHOT', 594302)`, [dsId])
+    `insert into databricks_sync_runs (id, dataset_id, dataset_slug, status, mode, row_count,
+                                       content_sha256, source_files, effective_mode)
+     values (gen_random_uuid(), $1, 'db-matrix', 'SUCCESS', 'INCREMENTAL', 594302,
+             'abc123', array['part-1.parquet','part-2.parquet'], 'INCREMENTAL')`, [dsId])
+  {
+    const r = (await pg.query<{ content_sha256: string; source_files: string[]; effective_mode: string }>(
+      `select content_sha256, source_files, effective_mode from databricks_sync_runs limit 1`)).rows[0]
+    check('o log guarda hash, partes e modo efetivo',
+      r.content_sha256 === 'abc123' && r.source_files.length === 2
+      && r.effective_mode === 'INCREMENTAL',
+      `${r.content_sha256} / ${r.source_files?.join(',')} / ${r.effective_mode}`)
+  }
+  let recusouModo = false
+  try {
+    await pg.query(`update databricks_sync_runs set effective_mode = 'MEIO'`)
+  } catch { recusouModo = true }
+  check('modo efetivo inválido é recusado', recusouModo)
   check('o log aceita um envio bem-sucedido',
     (await pg.query<{ n: number }>(`select count(*)::int as n from databricks_sync_runs`)).rows[0].n === 1)
 
