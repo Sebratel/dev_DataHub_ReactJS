@@ -8,7 +8,7 @@ import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
-import { enqueueSync } from '../sync/ingest.js'
+import { enqueueSync, syncQueueState } from '../sync/ingest.js'
 import {
   validateTransformSql, previewDerived, assertNoDerivedCycle, assertReferencesAllowed,
   auditDerivedCadence, referencedSlugs, type CadenceRow,
@@ -212,7 +212,12 @@ transformRouter.patch('/derived/:id', ...editorOnly, async (req, res) => {
 transformRouter.post('/derived/:id/materialize', ...editorOnly, async (req, res) => {
   const ds = await findEditable(req)
   if (!ds) return res.status(404).json({ error: 'Conjunto derivado não encontrado (ou você não é o dono).' })
+  const antes = syncQueueState(ds.id)
   void enqueueSync(ds.id)
   await audit(req, 'datasets.derived.materialize', { type: 'dataset', id: ds.slug })
-  res.status(202).json({ queued: true })
+  res.status(202).json({
+    queued: true,
+    alreadyQueued: antes.state !== 'idle',
+    queue: syncQueueState(ds.id),
+  })
 })

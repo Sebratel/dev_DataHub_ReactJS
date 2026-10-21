@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { SyncRun } from '@datahub/shared'
+import type { SyncQueueState } from '@datahub/shared'
 import { api } from '@/lib/api'
 
 export interface RawRun {
@@ -35,6 +36,10 @@ const STATUS_LABEL: Record<string, string> = {
 // se conhecem (o botão do menu de DatasetDetailPage e este painel).
 export function useSyncRuns(datasetId: string, onSynced?: () => void) {
   const [runs, setRuns] = useState<RawRun[]>([])
+  // A fila chega junto do historico, na mesma resposta: quem ESPERA ainda nao
+  // tem linha em sync_runs, entao `isRunning` sozinho nunca enxergava esse
+  // estado -- e era por isso que o botao continuava habilitado.
+  const [queue, setQueue] = useState<SyncQueueState | null>(null)
   // Lembra o topo anterior para chamar onSynced() só na TRANSIÇÃO
   // running -> terminal, não a cada poll ocioso.
   const prevTop = useRef<{ id: string; status: string } | null>(null)
@@ -43,9 +48,12 @@ export function useSyncRuns(datasetId: string, onSynced?: () => void) {
     let alive = true
     async function load() {
       try {
-        const r = await api<{ runs: RawRun[] }>(`/api/v1/datasets/${datasetId}/sync-runs`)
+        const r = await api<{ runs: RawRun[]; queue?: SyncQueueState }>(
+          `/api/v1/datasets/${datasetId}/sync-runs`,
+        )
         if (!alive) return
         setRuns(r.runs)
+        setQueue(r.queue ?? null)
         const top = r.runs[0]
         if (top && prevTop.current?.id === top.id && prevTop.current.status === 'running' && top.status !== 'running') {
           onSynced?.()
@@ -58,7 +66,11 @@ export function useSyncRuns(datasetId: string, onSynced?: () => void) {
     return () => { alive = false; clearInterval(t) }
   }, [datasetId, onSynced])
 
-  return { runs, isRunning: runs.some((r) => r.status === 'running') }
+  const isRunning = runs.some((r) => r.status === 'running')
+  // `setQueue` existe para o clique dar resposta IMEDIATA: a rota de disparo
+  // devolve a posicao, e esperar ate 3 s pelo proximo poll e tempo de sobra
+  // para alguem clicar outra vez.
+  return { runs, isRunning, queue, setQueue }
 }
 
 export default function RunsHistory({ runs }: { runs: RawRun[] }) {

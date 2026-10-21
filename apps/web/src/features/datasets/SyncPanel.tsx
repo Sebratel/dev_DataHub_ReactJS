@@ -10,7 +10,7 @@
 // uma passada para cada, e a identidade da linha junta as duas pontas.
 import { useEffect, useState } from 'react'
 import { Play, Loader2, Square, Fingerprint, Lock, Check } from 'lucide-react'
-import type { DatasetDetail, SyncSchedule } from '@datahub/shared'
+import type { SyncQueueState, DatasetDetail, SyncSchedule } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import RunsHistory, { useSyncRuns } from './RunsHistory'
@@ -48,6 +48,8 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
   // devolvia sinal nenhum — a tela ficava idêntica antes e depois, e a única
   // forma de saber era recarregar a página e conferir.
   const [salvo, setSalvo] = useState(false)
+  // true quando o clique nao mudou nada porque o conjunto ja estava na fila.
+  const [jaEstava, setJaEstava] = useState(false)
   // O agendamento que rege este conjunto, quando há. Buscado para a tela poder
   // DIZER a frequência em vez de só avisar que ela existe em outro lugar —
   // "controlado por um agendamento" obriga a sair daqui para saber qual.
@@ -59,7 +61,8 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
       .then((r) => setAgendamento(r.schedules.find((x) => x.id === id) ?? null))
       .catch(() => { /* sem a lista, o aviso genérico ainda serve */ })
   }, [dataset.sync?.scheduleId])
-  const { runs, isRunning: runningNow } = useSyncRuns(dataset.id, onSynced)
+  const { runs, isRunning: runningNow, queue, setQueue } = useSyncRuns(dataset.id, onSynced)
+  const naFila = queue?.state === 'queued'
 
   // O que está gravado hoje, na mesma forma do formulário. Comparar os dois é
   // o que responde "tem algo para salvar?" — e um botão que só habilita quando
@@ -117,9 +120,14 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     setBusy(true)
     setError(null)
     try {
-      await api(`/api/v1/datasets/${dataset.id}/sync`, { method: 'POST' })
-      // useSyncRuns pega o novo run sozinho no proximo poll (3s) -- nao
-      // precisa de um loadRuns() manual aqui.
+      const r = await api<{ alreadyQueued: boolean; queue: SyncQueueState }>(
+        `/api/v1/datasets/${dataset.id}/sync`, { method: 'POST' },
+      )
+      // A posicao vem na resposta do clique, e nao no proximo poll: ate 3 s de
+      // tela parada e tempo de sobra para alguem clicar de novo -- foi assim
+      // que uma pessoa enfileirou o mesmo conjunto varias vezes.
+      setQueue(r.queue)
+      setJaEstava(r.alreadyQueued)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao iniciar sincronização.')
     } finally {
@@ -378,11 +386,15 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
         {mode !== 'live' && (
           <button
             onClick={syncNow}
-            disabled={busy || runningNow}
+            // NA FILA tambem desabilita. Era o buraco: quem espera nao tem
+            // linha em sync_runs, entao `runningNow` era false e o botao
+            // continuava clicavel, sem nada na tela ter mudado.
+            disabled={busy || runningNow || naFila}
+            title={naFila ? 'Este conjunto ja esta na fila.' : undefined}
             className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-60"
           >
-            {runningNow ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            {runningNow ? 'Sincronizando…' : 'Sincronizar agora'}
+            {(runningNow || naFila) ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            {runningNow ? 'Sincronizando…' : naFila ? 'Na fila…' : 'Sincronizar agora'}
           </button>
         )}
         {runningNow && (
@@ -395,6 +407,32 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
           </button>
         )}
       </div>
+      {/* Onde o conjunto está na fila. A fila é sequencial no hub inteiro —
+          um conjunto por vez —, então "na fila" é o estado normal quando
+          alguém pede uma carga enquanto outra roda. Dizer isso, com a posição,
+          é o que evita o clique repetido. */}
+      {naFila && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <Loader2 size={13} className="animate-spin text-zinc-400" />
+          <span className="font-medium">
+            {queue!.position === 1 ? 'É o próximo da fila' : `${queue!.position}º na fila`}
+          </span>
+          <span className="text-zinc-500">
+            de {queue!.waiting} esperando
+            {queue!.busy && ' · uma carga está em andamento agora'}
+          </span>
+          {jaEstava && (
+            <span className="text-zinc-500">— você já tinha pedido; o clique não repetiu nada.</span>
+          )}
+        </div>
+      )}
+      {naFila && (
+        <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+          As cargas rodam uma de cada vez em toda a plataforma, para não disputar as bases de
+          produção. Esta entra assim que a anterior terminar — não precisa clicar de novo.
+        </p>
+      )}
+
       {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
       {dialogAberto && (

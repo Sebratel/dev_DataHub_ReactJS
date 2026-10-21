@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
-import { enqueueSync, requestCancel, resumeDataset } from './ingest.js'
+import { enqueueSync, requestCancel, resumeDataset, syncQueueState } from './ingest.js'
 import { applySyncConfig, type SyncConfigInput } from './syncConfig.js'
 import { requireMasterOnSource } from './masterGuard.js'
 
@@ -45,9 +45,17 @@ syncRouter.post('/:id/sync', ...adminOnly, async (req, res) => {
   // Sincronizar À MÃO retoma um conjunto pausado por falhas seguidas: quem
   // clicou acredita que a causa mudou, e a máquina não deve discordar.
   await resumeDataset(req.params.id)
+  // O estado ANTES de enfileirar diz se o clique foi o primeiro: enqueueSync
+  // recusa em silencio quem ja esta na fila, e sem isto a tela nao tem como
+  // distinguir "entrou agora" de "voce ja tinha clicado".
+  const antes = syncQueueState(req.params.id)
   void enqueueSync(req.params.id) // roda em background; acompanhe pelos runs
   await audit(req, 'datasets.sync', { type: 'dataset', id: row.slug })
-  res.status(202).json({ queued: true })
+  res.status(202).json({
+    queued: true,
+    alreadyQueued: antes.state !== 'idle',
+    queue: syncQueueState(req.params.id),
+  })
 })
 
 // Para (cancela) a sincronização em andamento deste conjunto. Cancelamento
@@ -68,5 +76,7 @@ syncRouter.get('/:id/sync-runs', ...adminOnly, async (req, res) => {
        from sync_runs where dataset_id = $1 order by started_at desc limit 20`,
     [req.params.id],
   )).rows
-  res.json({ runs })
+  // A fila viaja junto com o historico: o painel ja consulta esta rota a cada
+  // 3 s, entao a posicao chega sem polling novo nem requisicao a mais.
+  res.json({ runs, queue: syncQueueState(req.params.id) })
 })

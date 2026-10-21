@@ -145,6 +145,21 @@ export interface SyncRun {
   finishedAt: string | null
 }
 
+// Onde um conjunto está na fila de sincronização, que é sequencial no hub
+// inteiro. Quem ESPERA ainda não tem linha em sync_runs — a linha nasce quando
+// a carga começa —, então sem isto a tela não tinha como mostrar que o clique
+// surtiu efeito, e as pessoas clicavam de novo.
+export interface SyncQueueState {
+  /** 'running' = é este conjunto que está carregando agora. */
+  state: 'running' | 'queued' | 'idle'
+  /** Posição entre os que esperam, começando em 1. null fora da espera. */
+  position: number | null
+  /** Quantos conjuntos esperam na fila inteira, não só este. */
+  waiting: number
+  /** Há carga em andamento — deste conjunto ou de qualquer outro. */
+  busy: boolean
+}
+
 export interface DatasetDetail extends DatasetSummary {
   fields: AdminDatasetField[]
   // SQL do conjunto derivado — presente apenas para editores/admins.
