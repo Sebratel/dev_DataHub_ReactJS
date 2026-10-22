@@ -74,7 +74,17 @@ services:
       # a variavel fica na tela do Portainer parecendo configurada, e a API
       # nunca a ve. Vazio = herda ADMIN_EMAILS.
       MASTER_ADMIN_EMAILS: ${MASTER_ADMIN_EMAILS:-}
-      CONNECTIONS_SECRET: ${CONNECTIONS_SECRET:-}
+      # `:?` e nao `:-` de proposito. Com o padrao vazio, uma stack salva sem
+      # esta variavel (ou com o campo limpo por engano) subia NORMAL: a API
+      # ficava saudavel, o health check passava, e todas as conexoes
+      # cadastradas pela tela simplesmente deixavam de existir. Foi um
+      # incidente de tres dias e 20 conjuntos parados.
+      #
+      # Agora o deploy FALHA com esta mensagem. Perder o deploy e barulhento e
+      # se conserta em um minuto; perder as conexoes e silencioso e custou
+      # tres dias. Esta chave cifra as senhas das conexoes, as chaves de IA e
+      # os segredos do gateway: se ela mudar, nada disso se le de novo.
+      CONNECTIONS_SECRET: '${CONNECTIONS_SECRET:?defina CONNECTIONS_SECRET na stack. E a chave que cifra as senhas das conexoes, as chaves de IA e os segredos do gateway. Use a MESMA de antes, porque uma chave nova torna os cadastros existentes ilegiveis. Para gerar uma nova, openssl rand -base64 32}'
       DATAHUB_DB_HOST: datahub-db
       DATAHUB_DB_PORT: 5432
       DATAHUB_DB_DATABASE: ${DATAHUB_DB_DATABASE:-datahub}
