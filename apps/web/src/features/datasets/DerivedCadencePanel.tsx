@@ -17,7 +17,7 @@
 // falta de visibilidade.
 import { useState } from 'react'
 import { Loader2, Play } from 'lucide-react'
-import type { DatasetDetail } from '@datahub/shared'
+import type { DatasetDetail, SyncQueueState } from '@datahub/shared'
 import { api } from '@/lib/api'
 import RunsHistory, { useSyncRuns } from './RunsHistory'
 
@@ -36,7 +36,9 @@ export default function DerivedCadencePanel({ dataset, onSaved }: { dataset: Dat
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-  const { runs, isRunning: runningNow } = useSyncRuns(dataset.id, onSaved)
+  const [jaEstava, setJaEstava] = useState(false)
+  const { runs, isRunning: runningNow, queue, setQueue } = useSyncRuns(dataset.id, onSaved)
+  const naFila = queue?.state === 'queued'
 
   async function save() {
     setBusy(true)
@@ -61,10 +63,13 @@ export default function DerivedCadencePanel({ dataset, onSaved }: { dataset: Dat
     setBusy(true)
     setError(null)
     try {
-      await api(`/api/v1/datasets/derived/${dataset.id}/materialize`, { method: 'POST' })
-      // useSyncRuns pega o novo run sozinho no proximo poll (3s); quando ele
-      // terminar (sucesso ou erro), onSaved() recarrega o dataset e o erro
-      // completo aparece na tabela abaixo -- sem timeout as-cegas.
+      const r = await api<{ alreadyQueued: boolean; queue: SyncQueueState }>(
+        `/api/v1/datasets/derived/${dataset.id}/materialize`, { method: 'POST' },
+      )
+      // A posicao vem na resposta do clique: esperar o proximo poll deixaria
+      // ate 3 s de tela parada, que e tempo de sobra para clicar de novo.
+      setQueue(r.queue)
+      setJaEstava(r.alreadyQueued)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao iniciar a materialização.')
     } finally {
@@ -75,11 +80,12 @@ export default function DerivedCadencePanel({ dataset, onSaved }: { dataset: Dat
   const materializeButton = (
     <button
       onClick={() => void materializeNow()}
-      disabled={busy || runningNow}
+      disabled={busy || runningNow || naFila}
+      title={naFila ? 'Este conjunto ja esta na fila.' : undefined}
       className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-zinc-950 hover:bg-accent-hover disabled:opacity-60"
     >
-      {runningNow ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-      {runningNow ? 'Materializando…' : 'Materializar agora'}
+      {(runningNow || naFila) ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+      {runningNow ? 'Materializando…' : naFila ? 'Na fila…' : 'Materializar agora'}
     </button>
   )
 
@@ -144,6 +150,24 @@ export default function DerivedCadencePanel({ dataset, onSaved }: { dataset: Dat
         </p>
       )}
       {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+      {/* Posicao na fila. A fila e sequencial no hub inteiro, entao "na fila"
+          e o estado normal quando se pede recalculo com outra carga rodando.
+          Dizer isso, com a posicao, e o que evita o clique repetido. */}
+      {naFila && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <Loader2 size={13} className="animate-spin text-zinc-400" />
+          <span className="font-medium">
+            {queue!.position === 1 ? 'É o próximo da fila' : `${queue!.position}º na fila`}
+          </span>
+          <span className="text-zinc-500">
+            de {queue!.waiting} esperando
+            {queue!.busy && ' · uma carga está em andamento agora'}
+          </span>
+          {jaEstava && (
+            <span className="text-zinc-500">— você já tinha pedido; o clique não repetiu nada.</span>
+          )}
+        </div>
+      )}
       <RunsHistory runs={runs} />
     </div>
   )

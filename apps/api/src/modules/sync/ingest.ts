@@ -201,6 +201,45 @@ export function pendingSyncs(): string[] {
   return [...aguardando]
 }
 
+// ── Onde este conjunto está na fila ──────────────────────────────────────
+// Existe por um motivo concreto: quem clica em "Sincronizar agora" com a fila
+// ocupada não via NADA acontecer. A tela deduz "está rodando" das linhas de
+// sync_runs, e quem ESPERA ainda não tem linha nenhuma — a linha só nasce
+// quando a carga começa. Então o botão continuava habilitado, e as pessoas
+// clicavam de novo, e de novo.
+//
+// A fila já se defendia (enqueueSync recusa quem já está nela), mas o silêncio
+// fazia parecer que o clique não tinha funcionado.
+//
+// Decisão PURA, separada do estado do módulo, para poder ser testada sem
+// rodar carga nenhuma (ver dev/queueStateSmoke.ts).
+export interface SyncQueueState {
+  /** 'running' = é este que está carregando agora. */
+  state: 'running' | 'queued' | 'idle'
+  /** Posição entre os que ESPERAM, começando em 1. null fora da espera. */
+  position: number | null
+  /** Quantos conjuntos esperam na fila inteira (não só este). */
+  waiting: number
+  /** Há carga em andamento — deste conjunto ou de qualquer outro. */
+  busy: boolean
+}
+
+export function queueStateOf(
+  datasetId: string, esperando: readonly string[], rodando: string | null,
+): SyncQueueState {
+  const i = esperando.indexOf(datasetId)
+  return {
+    state: rodando === datasetId ? 'running' : i >= 0 ? 'queued' : 'idle',
+    position: i >= 0 ? i + 1 : null,
+    waiting: esperando.length,
+    busy: rodando !== null,
+  }
+}
+
+export function syncQueueState(datasetId: string): SyncQueueState {
+  return queueStateOf(datasetId, aguardando, runningDatasetId)
+}
+
 // Tira da fila quem ainda não começou. Sem `ids`, esvazia a fila inteira.
 // Não toca em quem JÁ está rodando — para isso existe o cancelamento
 // cooperativo (requestCancel), que interrompe entre os lotes.

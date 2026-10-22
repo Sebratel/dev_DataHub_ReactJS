@@ -65,7 +65,8 @@ jobs:
           set -e
           for s in routes:check perms:smoke env:smoke auth:smoke sandbox:smoke \
                    lake:smoke export:smoke public-query:smoke staging:smoke tz:smoke \
-                   autotune:smoke derived:smoke sqlconfig:smoke databricks:smoke ml:smoke; do
+                   autotune:smoke derived:smoke sqlconfig:smoke databricks:smoke ml:smoke \
+                   queue:smoke; do
             echo "::group::$s"
             npm run "$s"
             echo "::endgroup::"
