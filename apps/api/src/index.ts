@@ -13,7 +13,7 @@ import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging, faxinaLake } from './core/lake.js'
 import { closeOrphanRuns } from './modules/sync/ingest.js'
-import { reloadConnections } from './connectors/store.js'
+import { reloadConnections, avisoDeConexoes } from './connectors/store.js'
 import { reloadMasterAdmins } from './modules/auth/masterAdmins.js'
 import { ensureApiMetricsDataset, ensureApiSummaryDerived, ensureApiMetricsDashboard, ensureApiRuntimeWidget } from './modules/catalog/apiMetricsDataset.js'
 
@@ -81,8 +81,22 @@ if (isDbAvailable()) {
   // Masters concedidos pela tela — a checagem é contra um Set em memória.
   await reloadMasterAdmins().catch((e) =>
     console.warn(`[auth] carga inicial de masters falhou: ${(e as Error).message}`))
-  await reloadConnections().catch((e) =>
-    console.warn(`[connections] carga inicial falhou: ${(e as Error).message}`))
+  // A carga das conexões não pode mais ser silenciosa. Quando a chave falta ou
+  // mudou, a plataforma perde TODAS as conexões cadastradas pela tela e, sem
+  // isto, sobe saudável como se nada fosse — foi o que escondeu um incidente
+  // por três dias. Não derruba o boot de propósito: as fontes do ambiente
+  // (DB_*) seguem funcionando, e tirar a plataforma inteira do ar seria pior
+  // que o problema.
+  await reloadConnections()
+    .then((r) => {
+      const aviso = avisoDeConexoes(r)
+      if (aviso) {
+        console.error(`\n${'='.repeat(78)}\n[connections] ${aviso}\n${'='.repeat(78)}\n`)
+      } else if (r.carregadas) {
+        console.log(`[connections] ${r.carregadas} conexão(ões) cadastrada(s) carregada(s).`)
+      }
+    })
+    .catch((e) => console.warn(`[connections] carga inicial falhou: ${(e as Error).message}`))
   // Registro de upstreams do gateway no cache de processo (o proxy não pode ir
   // ao banco a cada requisição).
   await reloadUpstreams().catch((e) =>

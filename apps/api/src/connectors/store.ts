@@ -30,9 +30,52 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 48) || 'conexao'
 }
 
+// ── Diagnóstico da carga ─────────────────────────────────────────────────
+// Escrito depois de um incidente de três dias: um redeploy deixou a
+// CONNECTIONS_SECRET em branco na stack, `reloadConnections` desistiu no
+// primeiro `if` — um `return`, sem log —, a API subiu saudável, o health check
+// passou, e 20 conjuntos pararam de atualizar sem UMA linha que dissesse por
+// quê. A tela de Conexões avisava, mas ninguém tinha motivo para abri-la.
+//
+// A mensagem é decisão PURA para poder ser testada sem banco nem chave
+// (ver dev/connectionsBootSmoke.ts).
+export interface CargaDeConexoes {
+  /** Quantas linhas existem em source_connections. */
+  cadastradas: number
+  /** Quantas entraram no registry e estão utilizáveis. */
+  carregadas: number
+  /** A CONNECTIONS_SECRET está definida no ambiente? */
+  temChave: boolean
+}
+
+export function avisoDeConexoes(r: CargaDeConexoes): string | null {
+  if (!r.cadastradas) return null // instalação nova: nada a perder, nada a dizer
+  if (!r.temChave) {
+    return `CONNECTIONS_SECRET AUSENTE — ${r.cadastradas} conexão(ões) cadastrada(s) pela tela `
+      + 'NÃO foram carregadas, e todo conjunto que depende delas vai falhar. '
+      + 'Defina a MESMA chave de antes na stack e reinicie; com outra chave, as senhas '
+      + 'precisam ser digitadas de novo em Conexões.'
+  }
+  const perdidas = r.cadastradas - r.carregadas
+  if (perdidas > 0) {
+    return `${perdidas} de ${r.cadastradas} conexão(ões) não foram decifradas — `
+      + 'a CONNECTIONS_SECRET atual é DIFERENTE da que cifrou esses cadastros. '
+      + 'Reponha a chave anterior ou redigite as senhas em Conexões.'
+  }
+  return null
+}
+
 // (Re)carrega as conexões gerenciadas do banco para o registry em memória.
-export async function reloadConnections(): Promise<void> {
-  if (!isDbAvailable() || !hasSecret()) return // sem chave não dá pra descriptografar
+// Devolve o resumo para quem chama poder avisar (o boot escreve no log).
+export async function reloadConnections(): Promise<CargaDeConexoes> {
+  if (!isDbAvailable()) return { cadastradas: 0, carregadas: 0, temChave: hasSecret() }
+  // Sem chave não dá para descriptografar — mas CONTA o que ficou para trás,
+  // em vez de sair calado como antes.
+  if (!hasSecret()) {
+    const n = Number((await db.query('select count(*) n from source_connections')).rows[0]?.n ?? 0)
+    setDynamicConnectors([])
+    return { cadastradas: n, carregadas: 0, temChave: false }
+  }
   const rows = (await db.query('select * from source_connections')).rows
   const defs: ConnectorDef[] = []
   for (const r of rows) {
@@ -60,6 +103,7 @@ export async function reloadConnections(): Promise<void> {
     }
   }
   setDynamicConnectors(defs)
+  return { cadastradas: rows.length, carregadas: defs.length, temChave: true }
 }
 
 async function uniqueId(base: string): Promise<string> {

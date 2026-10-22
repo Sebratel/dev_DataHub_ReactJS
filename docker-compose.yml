@@ -74,7 +74,17 @@ services:
       # a variavel fica na tela do Portainer parecendo configurada, e a API
       # nunca a ve. Vazio = herda ADMIN_EMAILS.
       MASTER_ADMIN_EMAILS: ${MASTER_ADMIN_EMAILS:-}
-      CONNECTIONS_SECRET: ${CONNECTIONS_SECRET:-}
+      # `:?` e nao `:-` de proposito. Com o padrao vazio, uma stack salva sem
+      # esta variavel (ou com o campo limpo por engano) subia NORMAL: a API
+      # ficava saudavel, o health check passava, e todas as conexoes
+      # cadastradas pela tela simplesmente deixavam de existir. Foi um
+      # incidente de tres dias e 20 conjuntos parados.
+      #
+      # Agora o deploy FALHA com esta mensagem. Perder o deploy e barulhento e
+      # se conserta em um minuto; perder as conexoes e silencioso e custou
+      # tres dias. Esta chave cifra as senhas das conexoes, as chaves de IA e
+      # os segredos do gateway: se ela mudar, nada disso se le de novo.
+      CONNECTIONS_SECRET: '${CONNECTIONS_SECRET:?defina CONNECTIONS_SECRET na stack. E a chave que cifra as senhas das conexoes, as chaves de IA e os segredos do gateway. Use a MESMA de antes, porque uma chave nova torna os cadastros existentes ilegiveis. Para gerar uma nova, openssl rand -base64 32}'
       DATAHUB_DB_HOST: datahub-db
       DATAHUB_DB_PORT: 5432
       DATAHUB_DB_DATABASE: ${DATAHUB_DB_DATABASE:-datahub}
@@ -162,7 +172,12 @@ services:
       - datahub-lake:/app/data/lake
       - datahub-models:/app/.models
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://localhost:8790/api/health']
+      # 127.0.0.1 e nao localhost: no Alpine o `localhost` resolve ::1 antes de
+      # 127.0.0.1. Aqui funciona por sorte -- o `app.listen(porta)` sem host
+      # abre o socket em :: (dual-stack) --, mas bastaria alguem fixar
+      # '0.0.0.0' no listen para esta checagem quebrar sem motivo aparente.
+      # Foi o que derrubou o healthcheck do datahub-web (ver Dockerfile).
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/api/health']
       interval: 30s
       timeout: 3s
       retries: 3

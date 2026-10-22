@@ -46,7 +46,20 @@ COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 
 EXPOSE 80
 
+# 127.0.0.1 e nao localhost, de proposito.
+#
+# No Alpine (musl), `localhost` resolve ::1 ANTES de 127.0.0.1, e o wget do
+# busybox tenta so o primeiro endereco. O nginx aqui escuta `listen 80`, que e
+# IPv4 apenas -- entao a checagem batia em ::1, levava recusa de conexao e o
+# container ficava unhealthy enquanto servia tudo normalmente pela porta
+# publicada. Foram 32 checagens seguidas falhando antes de alguem reparar.
+#
+# A API nao tem esse problema com a MESMA linha de healthcheck porque o Node
+# abre o socket em :: (dual-stack) por padrao. A diferenca esta no servidor,
+# nao no wget.
+#
+# Fixar o IPv4 resolve sem mexer no que o nginx aceita de fora.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -qO- http://localhost/ >/dev/null 2>&1 || exit 1
+  CMD wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

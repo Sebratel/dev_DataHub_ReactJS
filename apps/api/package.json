@@ -21,6 +21,7 @@
     "tz:smoke": "tsx src/dev/timezoneSmoke.ts",
     "staging:smoke": "tsx src/dev/stagingSmoke.ts",
     "derived:smoke": "tsx src/dev/derivedCadenceSmoke.ts",
+    "connboot:smoke": "tsx src/dev/connectionsBootSmoke.ts",
     "queue:smoke": "tsx src/dev/queueStateSmoke.ts",
     "lake:smoke": "tsx src/dev/lakeRepairSmoke.ts",
     "databricks:smoke": "tsx src/dev/databricksSmoke.ts",
