@@ -47,6 +47,16 @@ if (config.masterAdminEmails.length) {
   )
 }
 
+// Desde a remoção do login legado (SEG-07), o ID token do Firebase é o ÚNICO
+// jeito de entrar. Sem o projeto, a API recusa toda sessão — e o sintoma
+// ("Sessão inválida" para todo mundo) não apontaria para a variável.
+if (!config.auth.firebaseProjectId) {
+  console.error(
+    '[auth] FIREBASE_PROJECT_ID vazio: NINGUÉM consegue entrar no Data Hub. O login antigo do ' +
+    'Google foi removido (SEG-07) e o Firebase é o único caminho. Defina VITE_FIREBASE_PROJECT_ID na stack.',
+  )
+}
+
 await runMigrations()
 // Remove JSONL de staging órfão de uma carga anterior morta na marra (evita
 // acúmulo de dezenas de GB no volume do lake). No boot não há sync rodando.

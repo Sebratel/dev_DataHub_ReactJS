@@ -29,7 +29,10 @@ const cfg = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
 }
 
-/** Firebase só entra em ação se estiver configurado — senão o app usa o GSI. */
+/**
+ * Sem estas variáveis no build não há login: o caminho antigo (GSI) foi
+ * removido (SEG-07). O deploy recusa subir sem elas (docker-compose.yml).
+ */
 export const firebaseEnabled = !!(cfg.apiKey && cfg.authDomain && cfg.projectId)
 
 let app: FirebaseApp | null = null

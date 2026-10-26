@@ -1,30 +1,21 @@
 // Fachada única de autenticação. O resto do app não sabe (nem precisa saber)
-// qual mecanismo está ativo.
+// como o login acontece.
 //
-// Dois caminhos convivem de propósito:
-//   firebase  quando VITE_FIREBASE_* está configurado. SDK no bundle, sessão
-//             persistida pelo próprio SDK, servidor conferindo a assinatura
-//             localmente.
-//   google    o caminho original (Google Identity Services). Continua aí para a
-//             virada não exigir janela de indisponibilidade: instalação sem as
-//             variáveis do Firebase segue funcionando exatamente como antes.
+// Um caminho só: Firebase Authentication (VITE_FIREBASE_*). SDK no bundle,
+// sessão persistida pelo próprio SDK, servidor conferindo a assinatura
+// localmente. O caminho antigo (Google Identity Services, access_token opaco)
+// foi removido junto com o lado do servidor que o aceitava (SEG-07, decisão
+// D-SEG-5 do comitê). Build sem as variáveis do Firebase não tem login — e o
+// deploy recusa subir assim (ver docker-compose.yml).
 import { useAuthStore } from './authStore'
-import {
-  firebaseEnabled, loginWithFirebase, firebaseToken, logoutFirebase, AuthNetworkError,
-} from './firebaseAuth'
-import { loginWithGoogle, refreshGoogleToken } from './googleAuth'
-
-export const authMode: 'firebase' | 'google' = firebaseEnabled ? 'firebase' : 'google'
+import { loginWithFirebase, firebaseToken, logoutFirebase, AuthNetworkError } from './firebaseAuth'
 
 export async function login(): Promise<string> {
-  if (authMode === 'firebase') {
-    const t = await loginWithFirebase()
-    // Guarda o último token bom: é o lastro quando a renovação não conseguir
-    // falar com o Google (ver currentToken).
-    useAuthStore.getState().setAccessToken(t)
-    return t
-  }
-  return loginWithGoogle()
+  const t = await loginWithFirebase()
+  // Guarda o último token bom: é o lastro quando a renovação não conseguir
+  // falar com o Google (ver currentToken).
+  useAuthStore.getState().setAccessToken(t)
+  return t
 }
 
 /**
@@ -39,8 +30,6 @@ export async function login(): Promise<string> {
  * se não servir mais, quem diz isso é o 401 do servidor, que é a autoridade.
  */
 export async function currentToken(): Promise<string | null> {
-  if (authMode !== 'firebase') return useAuthStore.getState().accessToken
-
   try {
     const t = await firebaseToken()
     if (t) useAuthStore.getState().setAccessToken(t)
@@ -63,7 +52,7 @@ export async function currentToken(): Promise<string | null> {
  */
 export async function refresh(): Promise<string | null> {
   try {
-    const t = authMode === 'firebase' ? await firebaseToken(true) : await refreshGoogleToken()
+    const t = await firebaseToken(true)
     if (t) useAuthStore.getState().setAccessToken(t)
     return t
   } catch {
@@ -72,6 +61,6 @@ export async function refresh(): Promise<string | null> {
 }
 
 export async function logoutProvider(): Promise<void> {
-  if (authMode === 'firebase') await logoutFirebase()
+  await logoutFirebase()
   useAuthStore.getState().logout()
 }

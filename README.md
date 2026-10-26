@@ -41,7 +41,9 @@ Mesmo fluxo do churn_mvp — stack por repositório:
 2. No Portainer: **Stacks → Add stack → Repository**, apontando para o repositório
    e branch `main` (compose file: `docker-compose.yml`).
 3. Preencha as **Environment variables** da stack (não vão para o git):
-   - `VITE_GOOGLE_CLIENT_ID`, `ALLOWED_DOMAIN`, `ADMIN_EMAILS`
+   - Login (obrigatórias — sem elas o deploy recusa subir): `VITE_FIREBASE_API_KEY`,
+     `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID` (e opcional `VITE_FIREBASE_APP_ID`)
+   - `ALLOWED_DOMAIN`, `ADMIN_EMAILS`, `MASTER_ADMIN_EMAILS`, `CONNECTIONS_SECRET`
    - `DATAHUB_DB_PASSWORD` (obrigatória — senha do banco de metadados)
    - Credenciais das fontes: `DB_ELLEVEN_*`, `DB_RADIUS_*`, `DB_MARIA_*`, `DB_AUTOISP_*`
    - Lake: `BUCKET_GCP_NAME`, `PATH_CREDENTIALS`
@@ -49,8 +51,9 @@ Mesmo fluxo do churn_mvp — stack por repositório:
      opcionais `AI_PROVIDER`, `AI_MODEL`)
    - Opcional: `WEB_PORT` (padrão 8082), `ETL_HOUR` (padrão 3)
 4. Deploy. A stack sobe `datahub-db` → `api` (migrations automáticas) → `web` (nginx).
-5. No Google Cloud Console, adicione a URL pública do web em
-   *Authorized JavaScript origins* do client OAuth.
+5. No console do Firebase (projeto próprio do Data Hub), em *Authentication ›
+   Settings › Authorized domains*, adicione o domínio público do web — sem isso
+   o popup de login é recusado com `auth/unauthorized-domain`.
 
 Redeploys puxam o branch e rebuildam as imagens (`pull_policy: build`). O volume
 `datahub-db-data` preserva o catálogo entre redeploys.

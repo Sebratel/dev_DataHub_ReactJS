@@ -15,14 +15,11 @@ COPY tsconfig.base.json ./
 COPY packages/shared ./packages/shared
 COPY apps/web ./apps/web
 
-# Variável de BUILD do Vite (embutida no bundle) — vem da stack do Portainer.
-ARG VITE_GOOGLE_CLIENT_ID=""
-ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
-
-# Firebase Authentication. Definidas = o login passa a usar o Firebase (SDK no
-# bundle, nada baixado de accounts.google.com em tempo de execucao). Vazias = o
-# app segue no Google Identity Services, como antes. Nao sao segredo: valores de
-# projeto Firebase sao publicos por design e ficam visiveis no bundle.
+# Firebase Authentication: o UNICO login do Data Hub (o Google Identity Services
+# saiu no SEG-07). Variaveis de BUILD do Vite, embutidas no bundle, vindas da
+# stack do Portainer. Aqui ficam com padrao vazio para o CI conseguir montar a
+# imagem; quem exige o valor e o docker-compose.yml, que recusa o deploy sem
+# elas. Nao sao segredo: valores de projeto Firebase sao publicos por design.
 ARG VITE_FIREBASE_API_KEY=""
 ARG VITE_FIREBASE_AUTH_DOMAIN=""
 ARG VITE_FIREBASE_PROJECT_ID=""

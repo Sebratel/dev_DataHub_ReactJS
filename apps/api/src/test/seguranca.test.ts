@@ -95,6 +95,31 @@ describe('T-FUN-01 login e papéis', () => {
     const r = await anon.get('/api/v1/datasets')
     assert.equal(r.status, 401)
   })
+
+  // SEG-07 (D-SEG-5, R3): o login legado aceitava o access_token opaco do
+  // Google conferindo só DE QUEM ele era (userinfo), não PARA QUAL APP foi
+  // emitido. Aqui o "Google" responde que o token é de um e-mail do domínio —
+  // exatamente o que o caminho legado aceitava.
+  it('SEG-07 access_token opaco (login legado) é recusado, sem consultar o Google', async () => {
+    const original = globalThis.fetch
+    let consultou = false
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (url.includes('googleapis.com/oauth2')) {
+        consultou = true
+        return new Response(JSON.stringify({ email: USERS.viewer, email_verified: true, name: 'outro-app' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return original(input, init)
+    }) as typeof fetch
+    try {
+      const r = await original(`${baseUrl}/api/v1/auth/me`, { headers: { Authorization: 'Bearer ya29.token-emitido-para-outro-app' } })
+      assert.equal(r.status, 401)
+      assert.equal(consultou, false, 'a API ainda consulta o userinfo do Google')
+    } finally {
+      globalThis.fetch = original
+    }
+  })
 })
 
 // ── T-SEG-06 · Escalada de papel ───────────────────────────────────────────

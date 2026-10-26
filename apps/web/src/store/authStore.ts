@@ -4,7 +4,7 @@ import type { SessionUser } from '@datahub/shared'
 
 interface AuthState {
   user: SessionUser | null
-  // access_token do Google — Bearer nas chamadas ao backend (/api).
+  // Último ID token do Firebase — Bearer nas chamadas ao backend (/api).
   accessToken: string | null
   setUser: (u: SessionUser | null) => void
   setAccessToken: (t: string | null) => void
