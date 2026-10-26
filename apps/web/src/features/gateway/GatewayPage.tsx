@@ -436,7 +436,14 @@ function UpstreamDialog({ initial, isAdmin, onClose, onSaved }: {
           <div className="min-w-0">
             <h2 className="text-[13px] font-semibold">{isEdit ? 'Editar upstream' : 'Novo upstream'}</h2>
             <p className="text-[10.5px] text-zinc-500">
-              {isAdmin ? 'Entra já aprovado.' : 'Entra como pendente até um administrador aprovar.'}
+              {!isEdit
+                ? (isAdmin ? 'Entra já aprovado.' : 'Entra como pendente até um administrador aprovar.')
+                : initial!.status === 'active' && !isAdmin
+                  // SEG-04: a aprovação cobre destino, credencial e métodos.
+                  ? 'Mudar endereço, autenticação, segredo ou métodos devolve o upstream para aprovação — ele sai do ar até um administrador aprovar de novo.'
+                  : initial!.status === 'active'
+                    ? 'Sua edição vale como a nova aprovação.'
+                    : 'Segue pendente até um administrador aprovar.'}
             </p>
           </div>
           <button onClick={onClose} aria-label="Fechar" className="ml-auto rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800">

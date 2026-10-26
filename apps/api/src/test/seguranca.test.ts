@@ -419,21 +419,51 @@ describe('T-SEG-11 upstream redirecionado', () => {
     assert.equal(r.body.upstream.status, 'pending')
   })
 
-  it('T-SEG-11 mudar o endereço de um upstream aprovado o devolve para pendente', {
-    todo: 'SEG-04: o editor troca a base_url de um upstream aprovado e ele segue ativo, levando a credencial.',
-  }, async () => {
-    const e = as('editor')
-    const c = await e.post('/api/v1/gateway/upstreams', {
-      slug: 'teste-aprovado', name: 'TESTE-COMITE aprovado', baseUrl: 'http://127.0.0.1:9/interno',
+  // Upstream aprovado com credencial — o alvo de todos os casos abaixo.
+  async function aprovado(slug: string, aprovador: 'admin' | 'master' = 'admin') {
+    const c = await as('editor').post('/api/v1/gateway/upstreams', {
+      slug, name: `TESTE-COMITE ${slug}`, baseUrl: 'http://127.0.0.1:9/interno',
       authMode: 'header', authHeader: 'X-Chave', secret: 'credencial-do-upstream',
     })
-    const id = c.body.upstream.id
-    assert.equal((await as('admin').post(`/api/v1/gateway/upstreams/${id}/review`, { status: 'active' })).status, 200)
-    const ed = await e.put(`/api/v1/gateway/upstreams/${id}`, {
-      slug: 'teste-aprovado', name: 'TESTE-COMITE aprovado', baseUrl: 'http://atacante.exemplo/coleta',
-      authMode: 'header', authHeader: 'X-Chave',
+    const id = c.body.upstream.id as string
+    assert.equal((await as(aprovador).post(`/api/v1/gateway/upstreams/${id}/review`, { status: 'active' })).status, 200)
+    return id
+  }
+  const edita = (who: 'editor' | 'admin', id: string, slug: string, over: Record<string, unknown> = {}) =>
+    as(who).put(`/api/v1/gateway/upstreams/${id}`, {
+      slug, name: `TESTE-COMITE ${slug}`, baseUrl: 'http://127.0.0.1:9/interno',
+      authMode: 'header', authHeader: 'X-Chave', ...over,
     })
+
+  it('T-SEG-11 mudar o endereço de um upstream aprovado o devolve para pendente', async () => {
+    const id = await aprovado('teste-aprovado')
+    const ed = await edita('editor', id, 'teste-aprovado', { baseUrl: 'http://atacante.exemplo/coleta' })
     assert.equal(ed.status, 200)
     assert.equal(ed.body.upstream.status, 'pending')
+    assert.deepEqual(ed.body.reaprovar, ['endereço'])
+  })
+
+  it('T-SEG-11 trocar o segredo ou ampliar os métodos também devolve para pendente', async () => {
+    const id1 = await aprovado('teste-segredo-novo')
+    const s = await edita('editor', id1, 'teste-segredo-novo', { secret: 'outra-credencial' })
+    assert.equal(s.body.upstream.status, 'pending')
+    const id2 = await aprovado('teste-metodos')
+    const m = await edita('editor', id2, 'teste-metodos', { methods: ['GET', 'DELETE'] })
+    assert.equal(m.body.upstream.status, 'pending')
+  })
+
+  it('T-SEG-11 mudar só o nome mantém o upstream no ar', async () => {
+    const id = await aprovado('teste-so-nome')
+    const ed = await edita('editor', id, 'teste-so-nome', { name: 'TESTE-COMITE outro nome', description: 'nova' })
+    assert.equal(ed.body.upstream.status, 'active')
+  })
+
+  it('T-SEG-11 a edição do admin vale como nova aprovação, e o registro diz quem aprovou', async () => {
+    // Aprovado pelo master; o admin muda o destino. Sem a correção, o registro
+    // seguiria dizendo que o master aprovou um endereço que ele nunca viu.
+    const id = await aprovado('teste-admin-edita', 'master')
+    const ed = await edita('admin', id, 'teste-admin-edita', { baseUrl: 'http://127.0.0.1:9/novo' })
+    assert.equal(ed.body.upstream.status, 'active')
+    assert.equal(ed.body.upstream.reviewedBy, USERS.admin)
   })
 })
