@@ -39,7 +39,8 @@ const OPS: Record<string, string> = {
 }
 const AGGS = new Set(['sum', 'avg', 'min', 'max', 'count', 'count_distinct'])
 const GRAINS = new Set(['year', 'quarter', 'month', 'day'])
-const MASK = '•••'
+// Exportada: o SQL livre do notebook mascara com o MESMO valor (SEG-02).
+export const MASK = '•••'
 const MAX_LIMIT = 10_000
 
 const qid = (s: string) => '"' + s.replace(/"/g, '') + '"'

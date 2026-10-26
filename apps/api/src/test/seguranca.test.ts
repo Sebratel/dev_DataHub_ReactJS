@@ -264,20 +264,110 @@ describe('T-SEG-04 leitura de arquivo por SQL livre', () => {
   })
 })
 
-// ── T-SEG-02 · Máscara no notebook (SEG-02, aberto) ────────────────────────
+// ── T-SEG-02 / 03 · Máscara e export no notebook (SEG-02, D-SEG-2) ─────────
 describe('T-SEG-02 máscara no SQL livre', () => {
-  it('T-SEG-02 notebook do viewer: campo sensível mascarado ou recusado', {
-    todo: 'SEG-02: o SQL livre lê o Parquet completo — o CPF sai em claro para o viewer.',
-  }, async () => {
-    const r = await as('viewer').post('/api/v1/notebooks/run', { sql: 'select cpf from teste_comite_aberto' })
-    assert.ok(r.status >= 400 || r.body.rows.every((x: { cpf: string }) => x.cpf === MASK))
+  const run = (who: 'viewer' | 'admin', sql: string) => as(who).post('/api/v1/notebooks/run', { sql })
+
+  it('T-SEG-02 notebook do viewer: campo sensível mascarado', async () => {
+    const r = await run('viewer', 'select cpf from teste_comite_aberto')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.equal(r.body.rows.length, 3)
+    assert.ok(r.body.rows.every((x: { cpf: string }) => x.cpf === MASK), JSON.stringify(r.body.rows))
   })
 
-  it('T-SEG-02 notebook do viewer: select * não traz a coluna oculta', {
-    todo: 'SEG-02: a ingestão grava as colunas ocultas no lake e o SQL livre as devolve.',
-  }, async () => {
-    const r = await as('viewer').post('/api/v1/notebooks/run', { sql: 'select * from teste_comite_aberto' })
+  it('T-SEG-02 notebook do viewer: select * não traz a coluna oculta', async () => {
+    const r = await run('viewer', 'select * from teste_comite_aberto')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.ok(!r.body.columns.includes('senha_interna'))
     assert.ok(!JSON.stringify(r.body).includes('oculto-'))
+    assert.ok(!JSON.stringify(r.body).includes('111.111.111-11'))
+  })
+
+  it('T-SEG-02 o viewer não reconstrói o sensível por filtro, ordem ou função', async () => {
+    // Filtro pelo valor real: a coluna que ele enxerga JÁ é a máscara, então nada casa.
+    const f = await run('viewer', `select cliente from teste_comite_aberto where cpf = '111.111.111-11'`)
+    assert.equal(f.status, 200)
+    assert.equal(f.body.rows.length, 0, 'o filtro pelo CPF real achou a linha')
+    // Ordem: todos valem a máscara; a ordem não carrega nada do CPF.
+    const o = await run('viewer', 'select cliente, cpf from teste_comite_aberto order by cpf desc, cliente')
+    assert.deepEqual(o.body.rows.map((x: { cliente: string }) => x.cliente), ['ana', 'bia', 'caio'])
+    const g = await run('viewer', 'select count(distinct cpf) as n, max(length(cpf)) as l from teste_comite_aberto')
+    assert.equal(Number(g.body.rows[0].n), 1)
+    assert.equal(Number(g.body.rows[0].l), MASK.length)
+  })
+
+  it('T-SEG-02 a proteção vale também pelo slug entre aspas e dentro de CTE própria', async () => {
+    const r = await run('viewer',
+      `with base as (select * from "teste-comite-aberto") select b.cpf from base b join teste_comite_aberto t on t.id = b.id`)
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.ok(r.body.rows.every((x: { cpf: string }) => x.cpf === MASK))
+  })
+
+  it('T-SEG-02 admin: sensível em claro (como na tela), oculto ausente', async () => {
+    const r = await run('admin', 'select * from teste_comite_aberto order by id')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.equal(r.body.rows[0].cpf, '111.111.111-11')
+    assert.ok(!r.body.columns.includes('senha_interna'))
+    assert.ok(!JSON.stringify(r.body).includes('oculto-'))
+  })
+
+  it('T-SEG-02 SQL sem conjunto nenhum segue funcionando', async () => {
+    const r = await run('viewer', 'select 1 as um')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.equal(Number(r.body.rows[0].um), 1)
+  })
+})
+
+describe('T-SEG-03 export do notebook', () => {
+  const exporta = (who: 'viewer' | 'viewer2', sql: string) =>
+    as(who).post('/api/v1/notebooks/export', { sql, notebook: 'teste-export' })
+
+  before(async () => {
+    // Privado, com concessão de LEITURA ao viewer, mas sem exportação.
+    await seedDataset({
+      slug: 'teste-comite-sem-export',
+      visibility: 'private',
+      owner: 'editor2',
+      fields: [{ key: 'id', type: 'number' }, { key: 'contrato' }],
+      rowsSql: `select * from (values (1, 'C-1'), (2, 'C-2')) t(id, contrato)`,
+    })
+    const g = await as('editor2').post('/api/v1/admin/datasets/teste-comite-sem-export/grants',
+      { email: USERS.viewer, canExport: false })
+    assert.equal(g.status, 201, JSON.stringify(g.body))
+  })
+
+  it('T-SEG-03 sem permissão de exportar: lê no notebook, mas o export é recusado', async () => {
+    assert.equal((await as('viewer').post('/api/v1/notebooks/run', { sql: 'select * from teste_comite_sem_export' })).status, 200)
+    const r = await exporta('viewer', 'select * from teste_comite_sem_export')
+    assert.equal(r.status, 403)
+    assert.ok(!JSON.stringify(r.body).includes('C-1'))
+  })
+
+  it('T-SEG-03 um join com um conjunto sem exportação também é recusado', async () => {
+    const r = await exporta('viewer',
+      'select a.cliente, s.contrato from teste_comite_aberto a join teste_comite_sem_export s on s.id = a.id')
+    assert.equal(r.status, 403)
+  })
+
+  it('T-SEG-03 com permissão: o CSV sai do servidor, mascarado e sem a oculta', async () => {
+    const r = await exporta('viewer', 'select * from teste_comite_aberto')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.match(r.headers.get('content-type') ?? '', /text\/csv/)
+    const csv = String(r.body)
+    assert.equal(csv.trim().split(/\r?\n/).length, 4, 'cabeçalho + 3 linhas')
+    assert.ok(csv.includes(MASK))
+    assert.ok(!csv.includes('111.111.111-11'))
+    assert.ok(!csv.includes('senha_interna') && !csv.includes('oculto-'))
+  })
+
+  it('T-SEG-03 a exportação do notebook fica na auditoria, com os conjuntos e as linhas', async () => {
+    const ev = await waitFor(async () => (await db.query(
+      `select detail from audit_logs where user_email = $1 and action = 'notebooks.export' order by created_at desc limit 1`,
+      [USERS.viewer])).rows[0])
+    assert.ok(ev, 'nenhum notebooks.export do viewer na auditoria')
+    const detail = typeof ev!.detail === 'string' ? JSON.parse(ev!.detail) : ev!.detail
+    assert.equal(detail.rows, 3)
+    assert.deepEqual(detail.datasets, ['teste-comite-aberto'])
   })
 })
 

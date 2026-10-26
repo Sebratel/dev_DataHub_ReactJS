@@ -17,10 +17,10 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import { config } from '../../core/config.js'
 import { duckQuery } from '../query/duck.js'
 import {
-  lakeRefs, compileLakeSql, validateTransformSql, assertReferencesAllowed,
+  lakeRefs, compileLakeSql, compileNotebookSql, validateTransformSql, assertReferencesAllowed,
 } from '../transform/derive.js'
 import { enqueueSync } from '../sync/ingest.js'
-import type { AccessUser } from '../../core/access.js'
+import { canExport, type AccessUser } from '../../core/access.js'
 
 export const notebooksRouter = Router()
 
@@ -329,6 +329,16 @@ notebooksRouter.delete('/:slug/shares', ...authed, async (req, res) => {
 // Não precisa que a célula esteja salva: o editor executa enquanto se digita.
 // Por isso a permissão é conferida SEMPRE aqui, sobre o SQL que chegou agora —
 // nunca sobre o que estava guardado.
+// Mesma preparação para executar e para exportar: permissão de leitura sobre o
+// SQL que chegou agora e a compilação COM máscara e sem colunas ocultas
+// (SEG-02) — ver compileNotebookSql.
+async function prepararCelula(user: AccessUser, sql: string) {
+  validateTransformSql(sql)
+  await assertReferencesAllowed(user.tenant, sql, user)
+  const refs = await lakeRefs(user.tenant, { user })
+  return compileNotebookSql(sql, refs, { admin: user.roles.includes('admin') })
+}
+
 notebooksRouter.post('/run', ...authed, async (req, res) => {
   const sql = String(req.body?.sql ?? '').trim()
   if (!sql) return res.status(400).json({ error: 'Célula vazia.' })
@@ -336,10 +346,7 @@ notebooksRouter.post('/run', ...authed, async (req, res) => {
   const started = Date.now()
 
   try {
-    validateTransformSql(sql)
-    await assertReferencesAllowed(req.user!.tenant, sql, req.user!)
-    const refs = await lakeRefs(req.user!.tenant, { user: req.user! })
-    const wrapped = await compileLakeSql(sql, refs)
+    const { sql: wrapped } = await prepararCelula(req.user!, sql)
 
     // Pede uma linha a mais que o limite: é assim que dá para dizer "há mais"
     // com honestidade, sem contar o total (que custaria uma segunda varredura).
@@ -357,6 +364,54 @@ notebooksRouter.post('/run', ...authed, async (req, res) => {
     })
   } catch (e) {
     res.status(400).json({ error: (e as Error).message, ms: Date.now() - started })
+  }
+})
+
+// ── Exportar o resultado de uma célula (SEG-02 / T-SEG-03) ────────────────
+// Antes o CSV era montado no NAVEGADOR com as linhas já na tela, e ninguém
+// conferia a permissão de exportar: o mesmo viewer que recebia 403 no
+// explorador baixava o arquivo pelo notebook. Agora o servidor reexecuta a
+// célula e exige a permissão de exportar em TODO conjunto que o SQL cita — o
+// resultado de um join carrega dado dos dois. Fica na auditoria como as
+// exportações do explorador, com os conjuntos e o número de linhas.
+//
+// O teto é o da célula (o mesmo limite da execução): o botão exporta o que a
+// célula mostra, como antes. Exportação grande é o explorador, em streaming.
+notebooksRouter.post('/export', ...authed, async (req, res) => {
+  const sql = String(req.body?.sql ?? '').trim()
+  if (!sql) return res.status(400).json({ error: 'Célula vazia.' })
+  const limit = Math.min(Math.max(1, Number(req.body?.limit) || 500), MAX_CELL_ROWS)
+
+  try {
+    const { sql: wrapped, datasets } = await prepararCelula(req.user!, sql)
+    const negados: string[] = []
+    for (const d of datasets) if (!(await canExport(req.user!, String(d.id)))) negados.push(d.slug)
+    if (negados.length) {
+      return res.status(403).json({
+        error: `Você não tem permissão para exportar: ${negados.join(', ')}. ` +
+          'Peça ao dono do conjunto a concessão com exportação.',
+      })
+    }
+
+    const result = await duckQuery(
+      `select * from (${wrapped}) as __nb limit ${limit}`,
+      [],
+      { timeoutMs: config.duck.queryTimeoutMs, adhoc: true },
+    )
+    const esc = (v: unknown) => {
+      if (v === null || v === undefined) return ''
+      const s = String(v)
+      return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+    }
+    const lines = [result.columns.join(';')]
+    for (const row of result.rows) lines.push(result.columns.map((c) => esc(row[c])).join(';'))
+
+    await audit(req, 'notebooks.export', { type: 'notebook', id: String(req.body?.notebook ?? '') || 'avulso' },
+      { format: 'csv', rows: result.rows.length, datasets: datasets.map((d) => d.slug) })
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.send('﻿' + lines.join('\r\n'))
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
   }
 })
 

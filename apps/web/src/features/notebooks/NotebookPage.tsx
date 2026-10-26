@@ -19,7 +19,7 @@ import {
 import type {
   Notebook, NotebookCell, NotebookCatalogEntry, NotebookRunResult,
 } from '@datahub/shared'
-import { api, ApiError } from '@/lib/api'
+import { api, apiBlob, ApiError } from '@/lib/api'
 import { useConfirm } from '@/components/Dialogs'
 import { useAuthStore } from '@/store/authStore'
 import { Card, CardHead } from '@/components/ui/Card'
@@ -312,18 +312,28 @@ export default function NotebookPage() {
     }
   }
 
-  function exportCsv(cell: NotebookCell, result: NotebookRunResult) {
-    const esc = (v: unknown) => {
-      const s = v === null || v === undefined ? '' : String(v)
-      return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  // Exportar passa pelo SERVIDOR (SEG-02 / T-SEG-03): ele confere a permissão
+  // de exportar de cada conjunto citado e registra na auditoria. Antes o CSV
+  // nascia aqui, das linhas já na tela, sem checagem nenhuma — quem recebia 403
+  // no explorador baixava o mesmo dado por esta porta.
+  async function exportCsv(cell: NotebookCell) {
+    try {
+      const blob = await apiBlob('/api/v1/notebooks/export', {
+        method: 'POST',
+        body: JSON.stringify({ sql: cell.source, limit: 500, notebook: slug }),
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${slug}-${cell.id}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setState((s) => ({
+        ...s,
+        [cell.id]: { ...s[cell.id], running: false, result: s[cell.id]?.result ?? null, error: (e as ApiError).message },
+      }))
     }
-    const csv = [result.columns.join(';'), ...result.rows.map((r) => result.columns.map((c) => esc(r[c])).join(';'))].join('\r\n')
-    const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${slug}-${cell.id}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
   }
 
   if (loading) {
@@ -517,7 +527,7 @@ export default function NotebookPage() {
                   {cell.kind === 'sql' && (
                     <>
                       {st?.result && st.result.rows.length > 0 && (
-                        <button onClick={() => exportCsv(cell, st.result!)} title="Exportar CSV"
+                        <button onClick={() => void exportCsv(cell)} title="Exportar CSV"
                           className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800">
                           <Download size={13} />
                         </button>
