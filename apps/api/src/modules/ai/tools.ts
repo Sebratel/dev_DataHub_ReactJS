@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Tools da IA (docs §12). A IA NUNCA escreve SQL: ela consulta o catálogo e
 // monta QueryDef, executado pelo MESMO compilador/permissões do usuário
-// logado — a IA só vê o que ele pode ver.
+// logado — a IA só vê o que ele pode ver, e nunca um campo sensível em claro,
+// nem quando quem pergunta é admin (SEG-05).
 // ─────────────────────────────────────────────────────────────────────────
 import type { QueryDef, SessionUser, FieldType } from '@datahub/shared'
 import { db } from '../../db/pool.js'
@@ -247,9 +248,13 @@ async function executeQueryDef(def: QueryDef, user: SessionUser) {
     `select slug, agg, field_key as "fieldKey", filters from metrics where dataset_id = $1`,
     [ds.id],
   )).rows
-  const admin = user.roles.includes('admin')
+  // SEMPRE como não-admin, inclusive para admin (D-SEG-4 do comitê, SEG-05):
+  // tudo o que esta função devolve vai para o provedor de IA, fora da empresa.
+  // O acesso continua sendo o do usuário (loadDataset); a máscara é que não
+  // depende mais do papel — campo sensível sai mascarado e não serve de
+  // filtro, agrupamento nem ordenação, como na API pública.
   const compiled = compileQuery(def, fields, {
-    admin,
+    admin: false,
     glob: parquetGlob(dir),
     metrics: metrics as never,
   })

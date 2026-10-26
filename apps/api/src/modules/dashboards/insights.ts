@@ -127,12 +127,24 @@ export async function generateInsight(
     [w.dataset_id],
   )).rows as { key: string; type: FieldType; sensitive: boolean; label: string }[]
 
-  // Mesmo caminho do /query: campos sensíveis mascarados para não-admin.
-  const compiled = compileQuery(
-    { ...def, dataset: w.dataset_slug },
-    fields,
-    { admin: user.roles.includes('admin'), glob: parquetGlob(datasetDir(user.tenant, w.dataset_slug)) },
-  )
+  // SEMPRE como não-admin, mesmo para admin (D-SEG-4 do comitê, SEG-05): estas
+  // linhas vão para o provedor de IA, fora da empresa. O gráfico na tela segue
+  // mostrando o que o papel permite; só o que sai para a IA é mascarado.
+  let compiled: ReturnType<typeof compileQuery>
+  try {
+    compiled = compileQuery(
+      { ...def, dataset: w.dataset_slug },
+      fields,
+      { admin: false, glob: parquetGlob(datasetDir(user.tenant, w.dataset_slug)) },
+    )
+  } catch (e) {
+    // Para um admin, o gráfico que agrupa por um campo sensível funciona na
+    // tela e só falha aqui — então o erro tem de dizer por quê.
+    const msg = (e as Error).message
+    throw new Error(/sensível/.test(msg)
+      ? `A IA não recebe dado pessoal, nem para administradores, e este gráfico depende de um campo sensível. ${msg}`
+      : msg)
+  }
   const result = await duckQuery(compiled.sql, compiled.params, { timeoutMs: 30_000, adhoc: true })
 
   if (!result.rows.length) {

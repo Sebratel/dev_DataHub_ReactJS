@@ -281,6 +281,44 @@ describe('T-SEG-02 máscara no SQL livre', () => {
   })
 })
 
+// ── T-SEG-14 · IA e dado pessoal (SEG-05) ──────────────────────────────────
+// Sem provedor no teste: a ferramenta da IA é chamada direto, e o que ela
+// devolve é exatamente o que iria para o provedor.
+describe('T-SEG-14 IA e dado pessoal', () => {
+  const sessao = (who: 'admin' | 'viewer') => ({
+    email: USERS[who], name: who, roles: [who], tenant: 'sebratel', master: false, masterConfigured: true,
+  })
+
+  it('T-SEG-14 o que a IA recebe vem mascarado também para o admin', async () => {
+    const { executeTool } = await import('../modules/ai/tools.js')
+    for (const who of ['admin', 'viewer'] as const) {
+      const r = await executeTool('run_query', { dataset: 'teste-comite-aberto', select: ['cliente', 'cpf'] }, sessao(who))
+      assert.ok(!r.isError, `${who}: ${r.content}`)
+      const { rows } = JSON.parse(r.content) as { rows: { cpf: string }[] }
+      assert.equal(rows.length, 3)
+      assert.ok(rows.every((x) => x.cpf === MASK), `${who} recebeu o CPF em claro`)
+      assert.ok(!r.content.includes('111.111.111-11'))
+    }
+  })
+
+  it('T-SEG-14 nem o admin filtra ou agrupa pelo sensível pela IA (não vira oráculo)', async () => {
+    const { executeTool } = await import('../modules/ai/tools.js')
+    const f = await executeTool('run_query', {
+      dataset: 'teste-comite-aberto', select: ['cliente'], filters: [{ field: 'cpf', op: 'starts_with', value: '111' }],
+    }, sessao('admin'))
+    assert.equal(f.isError, true)
+    const g = await executeTool('run_query', {
+      dataset: 'teste-comite-aberto', select: ['cpf', { agg: 'count', as: 'n' }], groupBy: ['cpf'],
+    }, sessao('admin'))
+    assert.equal(g.isError, true)
+  })
+
+  it('T-SEG-14 a tela do admin segue mostrando o sensível (a regra muda só para a IA)', async () => {
+    const r = await as('admin').post('/api/v1/datasets/teste-comite-aberto/query', { select: ['cpf'] })
+    assert.ok(r.body.rows.some((x: { cpf: string }) => x.cpf === '111.111.111-11'))
+  })
+})
+
 // ── T-SEG-13 · Segredos não voltam à tela ──────────────────────────────────
 describe('T-SEG-13 segredos não voltam à tela', () => {
   it('T-SEG-13 senha de conexão não volta na listagem', async () => {
