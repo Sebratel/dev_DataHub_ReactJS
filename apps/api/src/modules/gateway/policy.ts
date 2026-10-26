@@ -30,13 +30,27 @@ export interface Consumer {
 
 export interface Denied { status: number; error: string; retryAfterSec?: number }
 
-// Token do consumidor: querystring (links compartilháveis) ou header (padrão).
+// Token do consumidor: SÓ pelo cabeçalho X-Api-Token (SEG-06, decisão da R3 do
+// comitê). Na URL ele ficava gravado no log de acesso do proxy, no histórico
+// do navegador e no cabeçalho Referer de qualquer link aberto a partir dali.
 export function readToken(req: Request): string {
-  return String(req.query.token ?? req.headers['x-api-token'] ?? '')
+  const h = req.headers['x-api-token']
+  return String((Array.isArray(h) ? h[0] : h) ?? '').trim()
+}
+
+export const TOKEN_NA_URL =
+  'O token não é mais aceito na URL (?token=): ali ele fica gravado em log de acesso, ' +
+  'no histórico do navegador e no cabeçalho Referer. Envie o token no cabeçalho X-Api-Token.'
+
+// Quem ainda manda ?token= recebe um 401 que diz o que mudou e como resolver.
+// Sem isto, a resposta seria "token ausente" — e quem depura iria conferir o
+// token, que está certo, em vez da forma de enviá-lo.
+export function tokenNaUrl(req: Request): Denied | null {
+  return req.query.token !== undefined ? { status: 401, error: TOKEN_NA_URL } : null
 }
 
 export async function authenticateConsumer(token: string): Promise<Consumer | Denied> {
-  if (!token) return { status: 401, error: 'Token ausente (?token=… ou header X-Api-Token).' }
+  if (!token) return { status: 401, error: 'Token ausente: envie no cabeçalho X-Api-Token.' }
   const row = (await db.query(
     `select c.*, t.slug as tenant_slug from api_credentials c
       join tenants t on t.id = c.tenant_id where c.token_hash = $1`,

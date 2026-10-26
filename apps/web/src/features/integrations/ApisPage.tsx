@@ -133,7 +133,7 @@ function ProductCard({ p, isAdmin, ownEmail, onEdit, onDelete, onToggle }: {
   const origin = window.location.origin
   const isGet = p.method === 'GET'
   const url = isGet ? `${origin}/api/public/v1/p/${p.slug}` : `${origin}/api/public/v1/w/${p.slug}`
-  const pag = p.pagination === 'page' ? '&page=1' : '&offset=0'
+  const pag = p.pagination === 'page' ? '?page=1' : '?offset=0'
   // Exemplo de valor por tipo, para snippet e teste.
   const sample = (c: ApiProductColumn) => (c.type === 'number' ? 0 : c.type === 'bool' ? true : c.type === 'date' ? '2026-01-31' : 'exemplo')
   const jsonOf = (cols: ApiProductColumn[]) => `{ ${cols.map((c) => `"${c.col}": ${JSON.stringify(sample(c))}`).join(', ')} }`
@@ -143,9 +143,10 @@ function ProductCard({ p, isAdmin, ownEmail, onEdit, onDelete, onToggle }: {
   const bodyJson = p.writeOp === 'update'
     ? `{ "set": ${jsonOf(setCols)}, "where": ${jsonOf(keyCols)} }`
     : p.writeOp === 'delete' ? `{ "where": ${jsonOf(keyCols)} }` : jsonOf(setCols)
+  // O token vai no cabeçalho X-Api-Token: na URL ele é recusado (SEG-06).
   const snippet = isGet
-    ? `curl "${url}?token=SEU_TOKEN${pag}"`
-    : `curl -X ${p.method} "${url}?token=SEU_TOKEN" \\\n  -H "Content-Type: application/json" \\\n  -d '${bodyJson}'`
+    ? `curl -H "X-Api-Token: SEU_TOKEN" "${url}${pag}"`
+    : `curl -X ${p.method} "${url}" \\\n  -H "X-Api-Token: SEU_TOKEN" \\\n  -H "Content-Type: application/json" \\\n  -d '${bodyJson}'`
 
   async function runTest() {
     setTesting(true); setTestOut(null)

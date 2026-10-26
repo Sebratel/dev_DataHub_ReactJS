@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Integrações: tokens de acesso + API pública de leitura.
 //   Só admin:     GET/POST/PATCH/DELETE /api/v1/credentials  (gestão de tokens)
-//   Público:      GET  /public/v1/datasets/:slug/rows?token=…&format=csv|json
+//   Público:      GET  /public/v1/datasets/:slug/rows?format=csv|json
 //                 POST /public/v1/datasets/:slug/query   (QueryDef → resultado)
-// O token é exibido UMA única vez na criação; só o hash é guardado.
+// O token é exibido UMA única vez na criação; só o hash é guardado. Ele chega
+// SÓ pelo cabeçalho X-Api-Token — na URL é recusado (SEG-06).
 // A API pública roda como NÃO-admin: sensíveis mascarados, ocultos fora.
 // ─────────────────────────────────────────────────────────────────────────
 import { Router } from 'express'
@@ -18,7 +19,7 @@ import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 import { executeWrite, type WriteColumn } from '../../connectors/writeProducts.js'
 import {
-  admit, isDenied, readToken, recordCall, requestIdOf, sendDenied, type Consumer,
+  admit, isDenied, readToken, recordCall, requestIdOf, sendDenied, tokenNaUrl, type Consumer,
 } from '../gateway/policy.js'
 
 function requireDb(_req: Request, res: Response, next: NextFunction): void {
@@ -166,7 +167,7 @@ function publicGate(req: Request, res: Response, next: NextFunction): void {
   res.setHeader('X-Request-Id', requestId)
 
   res.on('finish', () => {
-    const locals = res.locals as { consumer?: Consumer; dataSlug?: string; rows?: number }
+    const locals = res.locals as { consumer?: Consumer; dataSlug?: string; rows?: number; erro?: string }
     recordCall({
       checkType: 'public',
       requestId,
@@ -179,12 +180,18 @@ function publicGate(req: Request, res: Response, next: NextFunction): void {
       datasetSlug: locals.dataSlug ?? null,
       rows: locals.rows ?? null,
       bytes: Number(res.getHeader('content-length')) || 0,
-      error: res.statusCode >= 400 ? `HTTP ${res.statusCode}` : null,
+      error: res.statusCode >= 400 ? (locals.erro ?? `HTTP ${res.statusCode}`) : null,
       ip: req.ip ?? null,
     })
   })
 
   if (!isDbAvailable()) { res.status(503).json({ error: 'Serviço indisponível.' }); return }
+
+  // SEG-06: token só pelo cabeçalho. A recusa fica na telemetria com motivo
+  // próprio, para achar quem ainda não migrou ("Saúde das APIs": erro = token
+  // na URL, com o IP de origem).
+  const naUrl = tokenNaUrl(req)
+  if (naUrl) { res.locals.erro = 'token na URL'; return sendDenied(res, naUrl) }
 
   void admit(readToken(req)).then((result) => {
     if (isDenied(result)) return sendDenied(res, result)

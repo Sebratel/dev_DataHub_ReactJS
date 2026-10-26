@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, anon, idToken, seedDataset, shutdown, db, USERS, PROJECT, baseUrl } from './harness.js'
+import { as, anon, idToken, seedDataset, shutdown, db, waitFor, USERS, PROJECT, baseUrl } from './harness.js'
 
 const MASK = '•••'
 let lakePrivadoFile = ''
@@ -400,12 +400,31 @@ describe('T-SEG-08..10, T-SEG-16 tokens', () => {
     assert.equal((await as('admin').get('/api/v1/gateway/usage')).status, 200)
   })
 
-  it('T-SEG-10 token na URL (?token=) não é aceito', {
-    todo: 'SEG-06: ?token= é aceito — vai para log do nginx, histórico e Referer.',
-  }, async () => {
+  it('T-SEG-10 token na URL (?token=) não é aceito, e a recusa diz como enviar', async () => {
     const r = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE url', datasetSlugs: ['teste-comite-aberto'] })
     const viaUrl = await anon.get(`/api/public/v1/datasets/teste-comite-aberto/rows?token=${r.body.token}`)
     assert.equal(viaUrl.status, 401)
+    assert.match(viaUrl.body.error, /X-Api-Token/)
+    assert.ok(!JSON.stringify(viaUrl.body).includes('ana'), 'devolveu dados')
+    // Também com o cabeçalho junto: o token na URL já vazou para o log, e
+    // aceitar ensinaria o cliente a continuar mandando.
+    const ambos = await anon.get(`/api/public/v1/datasets/teste-comite-aberto/rows?token=${r.body.token}`, r.body.token)
+    assert.equal(ambos.status, 401)
+    const q = await anon.post(`/api/public/v1/datasets/teste-comite-aberto/query?token=${r.body.token}`, { select: ['cliente'] })
+    assert.equal(q.status, 401)
+  })
+
+  it('T-SEG-10 a recusa por token na URL fica na telemetria com motivo próprio', async () => {
+    await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows?token=qualquer')
+    const linha = await waitFor(async () => (await db.query(
+      `select error from api_call_metrics where error = 'token na URL' limit 1`)).rows[0], 5_000)
+    assert.ok(linha, 'a recusa não aparece na telemetria — não daria para achar quem falta migrar')
+  })
+
+  it('T-SEG-10 gateway: token do Data Hub só pelo cabeçalho', async () => {
+    const r = await anon.get('/api/public/v1/gw/qualquer/x?token=dhub_nao_vale')
+    assert.equal(r.status, 401)
+    assert.match(r.body.error, /X-Api-Token/)
   })
 
   it('T-SEG-16 cota de 5 por dia: a 6ª chamada recebe 429', async () => {

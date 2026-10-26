@@ -170,8 +170,27 @@ export default function IntegrationsPage() {
 
   // Template generico (com placeholders), nao a URL de um conjunto real --
   // troque {SEU_DATASET} e {SEU_TOKEN} pelos valores reais ao usar.
-  const restUrl = `${window.location.host}/api/public/v1/datasets/{SEU_DATASET}/rows?token={SEU_TOKEN}`
-  const csvUrl = `${restUrl}&format=csv`
+  //
+  // O token vai SÓ no cabeçalho X-Api-Token (SEG-06): na URL ele é recusado,
+  // porque ficava em log de acesso, histórico do navegador e Referer.
+  const rowsUrl = `${window.location.origin}/api/public/v1/datasets/{SEU_DATASET}/rows`
+  const examples = [
+    {
+      key: 'rest', title: 'API REST (JSON paginado)',
+      hint: 'Suporta ?limit= e ?offset= — ideal para scripts e apps. O token vai no cabeçalho, nunca na URL.',
+      code: `curl -H "X-Api-Token: {SEU_TOKEN}" "${rowsUrl}?limit=1000&offset=0"`,
+    },
+    {
+      key: 'csv', title: 'Exportação CSV',
+      hint: 'No Excel: Dados → Da Web → Avançado, com o cabeçalho X-Api-Token. O IMPORTDATA do Google Sheets não envia cabeçalho: no Sheets, use o Apps Script (UrlFetchApp com headers).',
+      code: `curl -H "X-Api-Token: {SEU_TOKEN}" "${rowsUrl}?format=csv"`,
+    },
+    {
+      key: 'pbi', title: 'Power BI (Power Query)',
+      hint: 'Obter Dados → Consulta em Branco → Editor Avançado. Em Fonte de dados, use o acesso Anônimo: quem autentica é o cabeçalho.',
+      code: `Json.Document(Web.Contents("${rowsUrl}", [Headers = [#"X-Api-Token" = "{SEU_TOKEN}"], Query = [limit = "100000"]]))[rows]`,
+    },
+  ]
 
   const inputCls = 'w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[12px] dark:border-zinc-700 dark:bg-zinc-950'
   const iconBtn = 'rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-40 dark:hover:bg-zinc-800 dark:hover:text-zinc-200'
@@ -398,18 +417,15 @@ export default function IntegrationsPage() {
       <Card className="mt-2.5">
         <CardHead icon={Link2} title="Como conectar" sub="troque {SEU_DATASET} e {SEU_TOKEN} pelos valores reais" />
         <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {[
-            { title: 'API REST (JSON paginado)', hint: 'Suporta ?limit= e ?offset= — ideal para scripts e apps.', url: restUrl, key: 'rest' },
-            { title: 'Exportação CSV', hint: 'Abre direto no Excel/Sheets. No Sheets: =IMPORTDATA("url"). No Excel: Dados → Da Web.', url: csvUrl, key: 'csv' },
-          ].map((ex) => (
+          {examples.map((ex) => (
             <div key={ex.key} className="grid items-center gap-2 p-3 lg:grid-cols-[260px_minmax(0,1fr)]">
               <div className="min-w-0">
                 <p className="text-[12px] font-medium">{ex.title}</p>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">{ex.hint}</p>
               </div>
               <div className="flex min-w-0 items-center gap-1.5">
-                <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-lg bg-zinc-50 px-2.5 py-1.5 font-mono text-[11px] dark:bg-zinc-950">{ex.url}</code>
-                <button onClick={() => copy(ex.url, ex.key)} className={iconBtn} title="Copiar URL">
+                <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-lg bg-zinc-50 px-2.5 py-1.5 font-mono text-[11px] dark:bg-zinc-950">{ex.code}</code>
+                <button onClick={() => copy(ex.code, ex.key)} className={iconBtn} title="Copiar">
                   {copied === ex.key ? <Check size={14} /> : <Copy size={14} />}
                 </button>
               </div>
