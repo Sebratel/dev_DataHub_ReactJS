@@ -323,7 +323,7 @@ describe('T-FUN-12 token e API pública', () => {
   let id = ''
 
   before(async () => {
-    const r = await as('editor').post('/api/v1/credentials', {
+    const r = await as('admin').post('/api/v1/credentials', {
       name: 'TESTE-COMITE token', datasetSlugs: ['teste-comite-aberto'], expiresInDays: 7,
     })
     assert.equal(r.status, 201)
@@ -354,7 +354,7 @@ describe('T-FUN-12 token e API pública', () => {
   })
 
   it('T-FUN-12 depois de revogar: 401', async () => {
-    assert.equal((await as('editor').patch(`/api/v1/credentials/${id}`, { revoked: true })).status, 200)
+    assert.equal((await as('admin').patch(`/api/v1/credentials/${id}`, { revoked: true })).status, 200)
     const r = await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows', token)
     assert.equal(r.status, 401)
   })
@@ -365,42 +365,51 @@ describe('T-FUN-12 token e API pública', () => {
 })
 
 // ── T-SEG-08 / 09 / 10 / 16 · Tokens (SEG-03, SEG-06) ──────────────────────
+// D-SEG-3 (R3): criar, ver, editar e revogar token é só de admin. O escopo
+// vazio continua valendo "todos" — conforme pela visão de negócio, porque só
+// quem já lê tudo consegue emiti-lo.
 describe('T-SEG-08..10, T-SEG-16 tokens', () => {
-  it('T-SEG-08 token com escopo vazio NÃO lê conjunto privado de outra pessoa', {
-    todo: 'SEG-03: escopo vazio libera todos os conjuntos, inclusive privados de terceiros.',
-  }, async () => {
+  it('T-SEG-08 editor não cria token (só admins têm token)', async () => {
     const r = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE escopo vazio', datasetSlugs: [] })
-    const lido = await anon.get('/api/public/v1/datasets/teste-comite-privado/rows', r.body.token)
-    assert.notEqual(lido.status, 200, 'leu o conjunto privado de outra pessoa')
-    assert.ok(!JSON.stringify(lido.body).includes('SEGREDO-FOLHA'))
+    assert.equal(r.status, 403)
+    assert.equal(r.body.token, undefined)
   })
 
-  it('T-SEG-09 o viewer vê só os próprios tokens', {
-    todo: 'SEG-03: qualquer usuário logado lista todos os tokens, com dono e escopo.',
-  }, async () => {
-    const r = await as('viewer').get('/api/v1/credentials')
-    assert.equal(r.status, 200)
-    assert.ok(r.body.credentials.every((c: { owner_email: string }) => c.owner_email === USERS.viewer))
+  it('T-SEG-09 viewer e editor não listam tokens', async () => {
+    for (const who of ['viewer', 'editor'] as const) {
+      const r = await as(who).get('/api/v1/credentials')
+      assert.equal(r.status, 403, who)
+      assert.ok(!JSON.stringify(r.body).includes('TESTE-COMITE'), `${who} viu nomes de token`)
+    }
   })
 
-  it('T-SEG-09 um editor não altera o escopo do token de outro editor', {
-    todo: 'SEG-03: o PATCH de token não confere o dono — qualquer editor amplia o escopo de qualquer token.',
-  }, async () => {
-    const r = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE do editor', datasetSlugs: ['teste-comite-aberto'] })
-    const patch = await as('editor2').patch(`/api/v1/credentials/${r.body.id}`, { datasetSlugs: [] })
-    assert.equal(patch.status, 403)
+  it('T-SEG-09 editor não altera, não revoga e não exclui token de ninguém', async () => {
+    const t = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE do admin', datasetSlugs: ['teste-comite-aberto'] })
+    assert.equal(t.status, 201)
+    const e = as('editor')
+    assert.equal((await e.patch(`/api/v1/credentials/${t.body.id}`, { datasetSlugs: [] })).status, 403)
+    assert.equal((await e.patch(`/api/v1/credentials/${t.body.id}`, { revoked: true })).status, 403)
+    assert.equal((await e.del(`/api/v1/credentials/${t.body.id}`)).status, 403)
+    const row = (await db.query('select dataset_slugs, revoked from api_credentials where id = $1', [t.body.id])).rows[0]
+    assert.deepEqual(row.dataset_slugs, ['teste-comite-aberto'], 'o escopo mudou')
+    assert.equal(row.revoked, false)
+  })
+
+  it('T-SEG-09 o consumo por token do gateway também é só de admin', async () => {
+    assert.equal((await as('editor').get('/api/v1/gateway/usage')).status, 403)
+    assert.equal((await as('admin').get('/api/v1/gateway/usage')).status, 200)
   })
 
   it('T-SEG-10 token na URL (?token=) não é aceito', {
     todo: 'SEG-06: ?token= é aceito — vai para log do nginx, histórico e Referer.',
   }, async () => {
-    const r = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE url', datasetSlugs: ['teste-comite-aberto'] })
+    const r = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE url', datasetSlugs: ['teste-comite-aberto'] })
     const viaUrl = await anon.get(`/api/public/v1/datasets/teste-comite-aberto/rows?token=${r.body.token}`)
     assert.equal(viaUrl.status, 401)
   })
 
   it('T-SEG-16 cota de 5 por dia: a 6ª chamada recebe 429', async () => {
-    const t = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE cota', datasetSlugs: ['teste-comite-aberto'] })
+    const t = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE cota', datasetSlugs: ['teste-comite-aberto'] })
     const pol = await as('admin').put(`/api/v1/gateway/credentials/${t.body.id}/policy`, { quotaPerDay: 5 })
     assert.equal(pol.status, 200, JSON.stringify(pol.body))
     const status: number[] = []

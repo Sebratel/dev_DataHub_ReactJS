@@ -43,8 +43,10 @@ const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('pt-BR')
 export default function IntegrationsPage() {
   const user = useAuthStore((s) => s.user)
   const confirm = useConfirm()
-  const canEdit = !!user?.roles.some((r) => r === 'admin' || r === 'editor')
+  // Token é só de admin (D-SEG-3 do comitê): ver, criar, editar e revogar. Os
+  // demais veem como conectar e a quem pedir — o backend recusa o resto.
   const isAdmin = !!user?.roles.includes('admin')
+  const canEdit = isAdmin
 
   const [credentials, setCredentials] = useState<Credential[] | null>(null)
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
@@ -68,14 +70,13 @@ export default function IntegrationsPage() {
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar.'))
   }
   useEffect(() => {
+    if (!isAdmin) return
     load()
     api<{ datasets: DatasetSummary[] }>('/api/v1/datasets')
       .then((r) => setDatasets(r.datasets.filter((d) => d.lastSyncAt))).catch(() => {})
-    if (isAdmin) {
-      api<{ products: (WriteProduct & { kind: string; status: string })[] }>('/api/v1/products')
-        .then((r) => setWriteProducts(r.products.filter((p) => p.kind === 'write' && p.status === 'active')))
-        .catch(() => {})
-    }
+    api<{ products: (WriteProduct & { kind: string; status: string })[] }>('/api/v1/products')
+      .then((r) => setWriteProducts(r.products.filter((p) => p.kind === 'write' && p.status === 'active')))
+      .catch(() => {})
   }, [isAdmin])
 
   function openCreate() {
@@ -103,8 +104,7 @@ export default function IntegrationsPage() {
         const r = await api<{ token: string }>('/api/v1/credentials', {
           method: 'POST',
           body: JSON.stringify({
-            name: fName, datasetSlugs: fSlugs,
-            writeSlugs: isAdmin ? fWriteSlugs : [],
+            name: fName, datasetSlugs: fSlugs, writeSlugs: fWriteSlugs,
             expiresInDays: fDays || undefined,
           }),
         })
@@ -113,9 +113,7 @@ export default function IntegrationsPage() {
         await api(`/api/v1/credentials/${form.id}`, {
           method: 'PATCH',
           body: JSON.stringify({
-            name: fName, datasetSlugs: fSlugs,
-            // Só admin pode mandar este campo — o backend recusa dos demais.
-            ...(isAdmin ? { writeSlugs: fWriteSlugs } : {}),
+            name: fName, datasetSlugs: fSlugs, writeSlugs: fWriteSlugs,
             // 0 = "sem validade" é uma escolha, não "não mexer".
             expiresInDays: fDays || null,
           }),
@@ -296,7 +294,8 @@ export default function IntegrationsPage() {
         </Card>
       )}
 
-      {/* Tokens existentes */}
+      {/* Tokens existentes — só admin vê (D-SEG-3) */}
+      {isAdmin ? (
       <Card>
         <CardHead icon={Plug} title="Tokens" sub={credentials ? String(credentials.length) : undefined} />
         {credentials === null && !error ? (
@@ -325,7 +324,6 @@ export default function IntegrationsPage() {
             </thead>
             <tbody>
               {credentials?.map((c) => {
-                const mine = c.owner_email === user?.email || isAdmin
                 const expired = !!c.expires_at && new Date(c.expires_at).getTime() < Date.now()
                 const busy = busyId === c.id
                 const escopo = c.dataset_slugs.length ? c.dataset_slugs.join(', ') : 'todos os conjuntos'
@@ -370,13 +368,10 @@ export default function IntegrationsPage() {
                             title={c.revoked ? 'Reativar token' : 'Revogar — para de funcionar, mas fica no histórico'}>
                             {c.revoked ? <RotateCcw size={13} strokeWidth={1.6} /> : <Ban size={13} strokeWidth={1.6} />}
                           </button>
-                          {/* Excluir é definitivo: só o dono ou um admin. Os demais revogam. */}
-                          {mine && (
-                            <button onClick={() => void remove(c)} disabled={busy} title="Excluir definitivamente"
-                              className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-40 dark:hover:bg-crit/10 dark:hover:text-crit-dark">
-                              <Trash2 size={13} strokeWidth={1.6} />
-                            </button>
-                          )}
+                          <button onClick={() => void remove(c)} disabled={busy} title="Excluir definitivamente"
+                            className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-crit-soft hover:text-crit disabled:opacity-40 dark:hover:bg-crit/10 dark:hover:text-crit-dark">
+                            <Trash2 size={13} strokeWidth={1.6} />
+                          </button>
                         </span>
                       )}
                     </Td>
@@ -387,6 +382,17 @@ export default function IntegrationsPage() {
           </DataGrid>
         )}
       </Card>
+      ) : (
+        <Card>
+          <CardHead icon={Plug} title="Tokens" />
+          <p className="px-3 py-4 text-[12px] leading-relaxed text-zinc-500">
+            Tokens de integração são emitidos pelo time de dados (administradores): um token lê
+            os conjuntos do escopo dele por fora da sua sessão, e por isso fica com quem administra a
+            plataforma. Para integrar um sistema, peça a um administrador e diga quais conjuntos ele
+            precisa ler.
+          </p>
+        </Card>
+      )}
 
       {/* Exemplos de uso */}
       <Card className="mt-2.5">

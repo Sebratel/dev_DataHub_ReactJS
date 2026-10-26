@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Integrações: tokens de acesso + API pública de leitura.
-//   Autenticado:  GET/POST/PATCH/DELETE /api/v1/credentials  (gestão de tokens)
+//   Só admin:     GET/POST/PATCH/DELETE /api/v1/credentials  (gestão de tokens)
 //   Público:      GET  /public/v1/datasets/:slug/rows?token=…&format=csv|json
 //                 POST /public/v1/datasets/:slug/query   (QueryDef → resultado)
 // O token é exibido UMA única vez na criação; só o hash é guardado.
@@ -27,10 +27,21 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
 }
 const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 
-// ─── Gestão de tokens (autenticado) ────────────────────────────
+// ─── Gestão de tokens (só admin) ────────────────────────────────
+// Decisão D-SEG-3 do comitê (R3, SEG-03 / T-SEG-09): token de integração é
+// coisa do time de dados — os admins. Ver, criar, editar, revogar e excluir,
+// tudo só admin. Antes, qualquer editor criava token (inclusive de escopo
+// vazio, que lê TODOS os conjuntos, privados de terceiros incluídos), qualquer
+// logado listava todos com dono e escopo, e qualquer editor ampliava o escopo
+// do token de outra pessoa.
+//
+// O escopo vazio continua significando "todos os conjuntos" de propósito: só
+// quem já lê tudo (admin) consegue emiti-lo. A validade segue opcional — o
+// comitê decidiu não mudá-la.
 export const credentialsRouter = Router()
+const adminOnly = [requireAuth({ role: 'admin' }), requireDb]
 
-credentialsRouter.get('/', requireAuth(), requireDb, async (req, res) => {
+credentialsRouter.get('/', ...adminOnly, async (req, res) => {
   const rows = (await db.query(
     `select c.id, c.name, c.dataset_slugs, c.write_slugs, c.owner_email, c.revoked, c.last_used_at, c.expires_at, c.created_at
        from api_credentials c join tenants t on t.id = c.tenant_id
@@ -40,11 +51,10 @@ credentialsRouter.get('/', requireAuth(), requireDb, async (req, res) => {
   res.json({ credentials: rows })
 })
 
-credentialsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
+credentialsRouter.post('/', ...adminOnly, async (req, res) => {
   const { name, datasetSlugs, writeSlugs, expiresInDays } = req.body ?? {}
   if (!name) return res.status(400).json({ error: 'Informe um nome para o token.' })
-  // Escopo de escrita só admin concede (leitura pode editor).
-  const writes = Array.isArray(writeSlugs) && req.user!.roles.includes('admin') ? writeSlugs : []
+  const writes = Array.isArray(writeSlugs) ? writeSlugs : []
   const token = `dhub_${randomBytes(24).toString('base64url')}`
   const expiresAt = Number(expiresInDays) > 0
     ? new Date(Date.now() + Number(expiresInDays) * 86_400_000).toISOString()
@@ -71,7 +81,7 @@ credentialsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (r
 //              limpar a tela depois que a integração morreu.
 // Antes só existia "revogar" (disfarçado de DELETE), e por isso a lista só
 // crescia.
-credentialsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
+credentialsRouter.patch('/:id', ...adminOnly, async (req, res) => {
   const cur = (await db.query(
     `select c.* from api_credentials c join tenants t on t.id = c.tenant_id
       where c.id = $1 and t.slug = $2`,
@@ -82,11 +92,6 @@ credentialsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, asyn
   const { name, datasetSlugs, writeSlugs, expiresInDays, revoked } = req.body ?? {}
   if (name !== undefined && !String(name).trim()) {
     return res.status(400).json({ error: 'O nome não pode ficar vazio.' })
-  }
-  // Escopo de ESCRITA só admin mexe — mesma regra da criação. Um editor que
-  // edita o token não pode se autoconceder escrita por esta porta.
-  if (writeSlugs !== undefined && !req.user!.roles.includes('admin')) {
-    return res.status(403).json({ error: 'Só um administrador altera as APIs de escrita de um token.' })
   }
 
   // expiresInDays: ausente = não mexe; null = sem validade; N = N dias a partir
@@ -126,25 +131,19 @@ credentialsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, asyn
   }
 })
 
-// Exclusão DEFINITIVA. Restrita ao dono ou admin: revogar é reversível e
-// qualquer editor pode fazer, mas apagar o token de outra pessoa não.
+// Exclusão DEFINITIVA (só admin, como o resto da gestão de tokens).
 //
 // As FKs já estavam preparadas para isto: a contagem de quota some junto
 // (on delete cascade) e a telemetria sobrevive perdendo só a atribuição
 // (on delete set null) — o nome do consumidor continua gravado em cada
 // chamada, então os painéis de uso histórico não mudam.
-credentialsRouter.delete('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
+credentialsRouter.delete('/:id', ...adminOnly, async (req, res) => {
   const cur = (await db.query(
-    `select c.id, c.name, c.owner_email from api_credentials c join tenants t on t.id = c.tenant_id
+    `select c.id, c.name from api_credentials c join tenants t on t.id = c.tenant_id
       where c.id = $1 and t.slug = $2`,
     [req.params.id, req.user!.tenant],
   )).rows[0]
   if (!cur) return res.status(404).json({ error: 'Token não encontrado.' })
-  if (cur.owner_email !== req.user!.email && !req.user!.roles.includes('admin')) {
-    return res.status(403).json({
-      error: 'Só quem criou o token (ou um administrador) pode excluí-lo. Você pode revogá-lo.',
-    })
-  }
   await db.query('delete from api_credentials where id = $1', [req.params.id])
   await audit(req, 'credentials.delete', { type: 'credential', id: req.params.id }, { name: cur.name })
   res.json({ ok: true })

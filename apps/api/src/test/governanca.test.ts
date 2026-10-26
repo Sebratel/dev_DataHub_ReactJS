@@ -236,7 +236,7 @@ describe('T-MON-02..05 monitoramento', () => {
   })
 
   it('T-MON-05 uso do token atualiza o "último uso"', async () => {
-    const t = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE uso', datasetSlugs: ['teste-comite-aberto'] })
+    const t = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE uso', datasetSlugs: ['teste-comite-aberto'] })
     assert.equal((await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows?limit=1', t.body.token)).status, 200)
     const usado = await waitFor(async () =>
       (await db.query('select last_used_at from api_credentials where id = $1', [t.body.id])).rows[0]?.last_used_at)
@@ -246,7 +246,7 @@ describe('T-MON-02..05 monitoramento', () => {
   it('T-MON-05 a recusa por cota (429) fica ligada ao token', {
     todo: 'MON-07: a linha do 429 na telemetria sai sem o token que a causou.',
   }, async () => {
-    const t = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE 429', datasetSlugs: ['teste-comite-aberto'] })
+    const t = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE 429', datasetSlugs: ['teste-comite-aberto'] })
     await as('admin').put(`/api/v1/gateway/credentials/${t.body.id}/policy`, { quotaPerDay: 1 })
     await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows?limit=1', t.body.token)
     assert.equal((await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows?limit=1', t.body.token)).status, 429)
