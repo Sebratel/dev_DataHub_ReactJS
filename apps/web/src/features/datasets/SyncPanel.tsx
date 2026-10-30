@@ -9,9 +9,11 @@
 // nada, em SQL); escolher 'created' nunca trazia edição. Agora são duas chaves,
 // uma passada para cada, e a identidade da linha junta as duas pontas.
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Play, Loader2, Square, Fingerprint, Lock, Check } from 'lucide-react'
 import type { SyncQueueState, DatasetDetail, SyncSchedule } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { CADENCE_LABEL, scheduleRhythm } from '@/lib/schedules'
 import { useAuthStore } from '@/store/authStore'
 import RunsHistory, { useSyncRuns } from './RunsHistory'
 import DedupeKeysDialog from './DedupeKeysDialog'
@@ -22,17 +24,26 @@ const MODE_LABEL: Record<string, string> = {
   incremental: 'Incremental (só novidades, por watermark)',
 }
 
-const CADENCE_LABEL: Record<string, string> = {
-  daily: 'Diária (janela da madrugada)',
-  hourly: 'De hora em hora',
-  manual: 'Manual (só sob demanda)',
+// As cadências de relógio fixo que um conjunto de FONTE pode ter. 'cascade' é
+// só de calculado e não entra aqui.
+const FIXED_CADENCES = ['daily', 'hourly', 'manual'] as const
+
+// A frequência é UM campo com dois tipos de valor: uma cadência fixa
+// ('hourly') ou um agendamento ('sched:<id>'). Antes eram dois lugares — o
+// <select> daqui e a tela de Agendamentos —, e o conjunto num agendamento
+// perdia o campo: a frequência era a única parte da regra que não se mudava
+// na página do próprio conjunto.
+const SCHED = 'sched:'
+function frequencyOf(sync: DatasetDetail['sync']): string {
+  if (sync?.cadence === 'schedule' && sync.scheduleId) return SCHED + sync.scheduleId
+  return sync?.cadence ?? 'daily'
 }
 
 export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetail; onSynced: () => void }) {
   const [mode, setMode] = useState(dataset.sync?.mode ?? 'live')
   const [incKey, setIncKey] = useState(dataset.sync?.incrementalKey ?? '')
   const [incKey2, setIncKey2] = useState(dataset.sync?.incrementalKey2 ?? '')
-  const [cadence, setCadence] = useState(dataset.sync?.cadence ?? 'daily')
+  const [freq, setFreq] = useState(frequencyOf(dataset.sync))
   const [since, setSince] = useState(dataset.sync?.since ?? '')
   const [sinceDays, setSinceDays] = useState(dataset.sync?.sinceDays?.toString() ?? '')
   // Piso fixo e piso relativo são o mesmo campo conceitual — a tela escolhe um.
@@ -50,17 +61,17 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
   const [salvo, setSalvo] = useState(false)
   // true quando o clique nao mudou nada porque o conjunto ja estava na fila.
   const [jaEstava, setJaEstava] = useState(false)
-  // O agendamento que rege este conjunto, quando há. Buscado para a tela poder
-  // DIZER a frequência em vez de só avisar que ela existe em outro lugar —
-  // "controlado por um agendamento" obriga a sair daqui para saber qual.
-  const [agendamento, setAgendamento] = useState<SyncSchedule | null>(null)
+  // Os agendamentos entram como opções do campo Frequência. Sem a lista (falha
+  // de rede), o campo ainda mostra o agendamento atual — ver a opção de
+  // reserva no <select>. Recarrega quando o conjunto troca de agendamento,
+  // para a contagem de "outros conjuntos" sair certa.
+  const [agendamentos, setAgendamentos] = useState<SyncSchedule[]>([])
   useEffect(() => {
-    const id = dataset.sync?.scheduleId
-    if (!id) { setAgendamento(null); return }
     api<{ schedules: SyncSchedule[] }>('/api/v1/schedules')
-      .then((r) => setAgendamento(r.schedules.find((x) => x.id === id) ?? null))
-      .catch(() => { /* sem a lista, o aviso genérico ainda serve */ })
+      .then((r) => setAgendamentos(r.schedules))
+      .catch(() => { /* o campo segue com as cadências fixas e o valor atual */ })
   }, [dataset.sync?.scheduleId])
+  const agendamentoDe = (f: string) => f.startsWith(SCHED) ? agendamentos.find((s) => SCHED + s.id === f) ?? null : null
   const { runs, isRunning: runningNow, queue, setQueue } = useSyncRuns(dataset.id, onSynced)
   const naFila = queue?.state === 'queued'
 
@@ -71,14 +82,15 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     mode: dataset.sync?.mode ?? 'live',
     incKey: dataset.sync?.incrementalKey ?? '',
     incKey2: dataset.sync?.incrementalKey2 ?? '',
-    cadence: dataset.sync?.cadence ?? 'daily',
+    freq: frequencyOf(dataset.sync),
     since: dataset.sync?.since ?? '',
     sinceDays: dataset.sync?.sinceDays?.toString() ?? '',
     dedupe: dataset.sync?.dedupeKeys ?? [],
     lag: (dataset.sync?.watermarkLagMinutes ?? 0).toString(),
   })
-  const atual = JSON.stringify({ mode, incKey, incKey2, cadence, since, sinceDays, dedupe, lag })
+  const atual = JSON.stringify({ mode, incKey, incKey2, freq, since, sinceDays, dedupe, lag })
   const alterado = gravado !== atual
+  const freqGravada = frequencyOf(dataset.sync)
 
   async function saveConfig() {
     setBusy(true)
@@ -87,15 +99,18 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
     try {
       await api(`/api/v1/datasets/${dataset.id}/sync-config`, {
         method: 'PATCH',
-        // Cadencia 'schedule' e' controlada pela tela de Agendamentos -- nao
-        // reenvia o valor aqui, senao um clique em "Salvar configuracao" por
-        // outro motivo (mudar o modo, por exemplo) e recusado pelo backend
-        // (que so aceita daily/hourly/manual nesta rota).
+        // Uma frequência só vai ao servidor: a cadência fixa OU o agendamento.
+        // As duas juntas são recusadas, e a troca acontece na mesma gravação
+        // do resto da regra — não há janela com o conjunto meio configurado.
+        // A frequência só é enviada quando MUDOU: uma cadência fora da lista
+        // (estado antigo, ex.: 'cascade') não é recusada por quem só veio
+        // mudar o modo.
         body: JSON.stringify({
           syncMode: mode,
           incrementalKey: incKey || null,
           incrementalKey2: incKey2 || null,
-          syncCadence: dataset.sync?.cadence === 'schedule' ? undefined : cadence,
+          syncCadence: freq !== freqGravada && !freq.startsWith(SCHED) ? freq : undefined,
+          scheduleId: freq !== freqGravada && freq.startsWith(SCHED) ? freq.slice(SCHED.length) : undefined,
           // Um piso só: o backend recusa os dois preenchidos.
           syncSince: sinceMode === 'fixed' ? (since || null) : null,
           syncSinceDays: sinceMode === 'relative' ? (sinceDays || null) : null,
@@ -188,7 +203,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
             <Lock size={14} className="mt-0.5 shrink-0 text-zinc-400" />
             <p className="text-xs leading-relaxed text-zinc-500">
               Somente o <strong>administrador master</strong> altera como uma fonte atualiza — modo, chaves,
-              identidade da linha e cadência mexem na carga sobre os bancos de produção. Você continua podendo
+              identidade da linha e frequência mexem na carga sobre os bancos de produção. Você continua podendo
               <strong> sincronizar agora</strong> e acompanhar o histórico. Conjuntos calculados seguem liberados.
             </p>
           </div>
@@ -262,33 +277,37 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
             </div>
           </div>
         )}
-        {mode !== 'live' && dataset.sync?.cadence === 'schedule' && (
-          // Cadencia 'schedule' NAO tem opcao no dropdown abaixo -- se ele
-          // renderizasse mesmo assim, o <select> ficaria com um valor que
-          // nao bate com nenhuma <option>, e salvar sem mexer em nada
-          // sobrescreveria silenciosamente o agendamento em lote por engano.
-          <p className="max-w-[260px] rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-            {agendamento ? (
-              <>
-                Sincroniza <strong>a cada {agendamento.intervalMinutes} min</strong>, das{' '}
-                {agendamento.startTime} às {agendamento.endTime}, pelo agendamento{' '}
-                <strong>{agendamento.name}</strong> — que rege vários conjuntos de uma vez.
-                Mudar a frequência é em Administração › Agendamentos.
-              </>
-            ) : (
-              <>Controlado por um agendamento em lote. Gerencie em Administração › Agendamentos.</>
-            )}
-          </p>
-        )}
-        {mode !== 'live' && dataset.sync?.cadence !== 'schedule' && (
+        {mode !== 'live' && (
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-zinc-500">Cadência (com que frequência sincroniza sozinho)</span>
-            <select value={cadence} onChange={(e) => setCadence(e.target.value as typeof cadence)} className={ctrl}>
-              {Object.entries(CADENCE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            <span className="mb-1 block text-xs text-zinc-500">Frequência (de quanto em quanto tempo sincroniza sozinho)</span>
+            <select value={freq} onChange={(e) => setFreq(e.target.value)} className={`${ctrl} max-w-[460px]`}>
+              {FIXED_CADENCES.map((c) => <option key={c} value={c}>{CADENCE_LABEL[c]}</option>)}
+              {/* Valor gravado que não está entre as opções (agendamento que
+                  a lista não trouxe, cadência antiga). Sem esta opção o
+                  <select> mostraria a primeira da lista como se fosse a atual. */}
+              {!FIXED_CADENCES.some((c) => c === freq) && !agendamentoDe(freq) && (
+                <option value={freq}>{freq.startsWith(SCHED) ? 'Agendamento atual' : CADENCE_LABEL[freq] ?? freq}</option>
+              )}
+              {agendamentos.length > 0 && (
+                <optgroup label="Agendamentos (valem para vários conjuntos)">
+                  {agendamentos.map((s) => (
+                    <option key={s.id} value={SCHED + s.id}>{s.name} — {scheduleRhythm(s)}</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </label>
         )}
       </div>
+
+      {mode !== 'live' && <FrequencyNote
+        freq={freq}
+        gravada={freqGravada}
+        agendamento={agendamentoDe(freq)}
+        anterior={agendamentoDe(freqGravada)}
+        snapshot={mode === 'snapshot'}
+        rowCount={dataset.rowCount}
+      />}
 
       {mode === 'incremental' && incKey && (
         <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
@@ -334,7 +353,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
                   max={10080}
                   value={lag}
                   onChange={(e) => setLag(e.target.value)}
-                  title="Quanto o corte volta no tempo a cada sincronização. Não muda de quanto em quanto tempo ela roda — isso é a cadência."
+                  title="Quanto o corte volta no tempo a cada sincronização. Não muda de quanto em quanto tempo ela roda — isso é a frequência."
                   className={`${ctrl} w-24`}
                 />
                 <span className="text-xs text-zinc-500">min</span>
@@ -358,7 +377,7 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
                 não ajuda. Dizer o que ela faz em uma frase, aqui do lado, custa
                 menos que uma pergunta. */}
             A <strong>folga</strong> não muda de quanto em quanto tempo a sincronização roda (isso é a
-            cadência): ela faz cada execução reler os últimos minutos, para que uma edição que chegue com
+            frequência): ela faz cada execução reler os últimos minutos, para que uma edição que chegue com
             carimbo atrasado não fique atrás do corte. <strong>0 min</strong> desliga.
           </p>
         </div>
@@ -450,6 +469,47 @@ export default function SyncPanel({ dataset, onSynced }: { dataset: DatasetDetai
       )}
 
       <RunsHistory runs={runs} />
+    </div>
+  )
+}
+
+// O que a frequência escolhida significa, dito do lado do campo: quem mais
+// segue o mesmo agendamento, o que acontece ao sair dele, e quando a escolha
+// pesa na produção. O caso que motivou: um snapshot de quase 2 milhões de
+// linhas num agendamento de 5 minutos, relendo a tabela inteira o dia todo.
+function FrequencyNote({ freq, gravada, agendamento, anterior, snapshot, rowCount }: {
+  freq: string
+  gravada: string
+  agendamento: SyncSchedule | null
+  anterior: SyncSchedule | null
+  snapshot: boolean
+  rowCount: number | null
+}) {
+  const outros = agendamento ? (agendamento.datasetCount ?? 0) - (freq === gravada ? 1 : 0) : 0
+  const frequente = freq === 'hourly' || freq.startsWith(SCHED)
+  if (!agendamento && !(anterior && freq !== gravada) && !(snapshot && frequente)) return null
+  return (
+    <div className="mt-2 grid max-w-3xl gap-1.5">
+      {agendamento && (
+        <p className="text-xs leading-relaxed text-zinc-500">
+          Segue o agendamento <strong>{agendamento.name}</strong> — {scheduleRhythm(agendamento)}.
+          {outros > 0 && <> Outros {outros} conjunto(s) seguem o mesmo agendamento.</>}{' '}
+          Mudar o horário dele muda todos os conjuntos que o seguem; isso é em{' '}
+          <Link to="/admin/schedules" className="text-info hover:underline dark:text-info-dark">Agendamentos</Link>.
+        </p>
+      )}
+      {anterior && freq !== gravada && (
+        <p className="text-xs leading-relaxed text-zinc-500">
+          Ao salvar, este conjunto sai do agendamento <strong>{anterior.name}</strong>.
+        </p>
+      )}
+      {snapshot && frequente && (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+          Em snapshot, cada execução relê a tabela inteira na fonte
+          {rowCount != null && <> (hoje, {rowCount.toLocaleString('pt-BR')} linhas)</>}. Com esta frequência,
+          isso se repete várias vezes por dia contra a produção — prefira incremental.
+        </p>
+      )}
     </div>
   )
 }

@@ -366,6 +366,34 @@ export interface SyncSchedule {
   sourceCount?: number
 }
 
+// ── Regra de atualização em vigor (GET /datasets/sync-rules) ──────────────
+// Uma linha por conjunto, com a regra inteira — modo, chaves, identidade,
+// folga e frequência — e a última execução. É a visão que faltava: a regra é
+// gravada por três telas e nenhuma mostrava o quadro de todos.
+export interface SyncRuleField { key: string; label: string }
+export interface SyncRuleRow {
+  id: string
+  slug: string
+  name: string
+  kind: 'source' | 'derived'
+  /** null para calculado (não lê de fonte). */
+  connectionName: string | null
+  table: string | null
+  mode: 'live' | 'snapshot' | 'incremental'
+  incrementalKey: SyncRuleField | null
+  incrementalKey2: SyncRuleField | null
+  dedupeKeys: SyncRuleField[]
+  watermarkLagMinutes: number
+  cadence: 'daily' | 'hourly' | 'manual' | 'cascade' | 'schedule'
+  schedule: SyncSchedule | null
+  /** Preenchido quando o conjunto foi pausado por falhas seguidas. */
+  pausedReason: string | null
+  rowCount: number | null
+  lastRun: { status: string; rows: number; startedAt: string | null; finishedAt: string | null; error: string | null } | null
+  /** Execuções iniciadas nas últimas 24 h — é a carga real sobre a fonte. */
+  runs24h: number
+}
+
 export const WEEKDAY_LABELS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'] as const
 
 // Usada nos DOIS lados (agendador no servidor, timer de auto-atualizacao no

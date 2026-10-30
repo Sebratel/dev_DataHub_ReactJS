@@ -16,6 +16,9 @@ export interface SyncConfigInput {
   incrementalKey?: string | null
   incrementalKey2?: string | null
   syncCadence?: 'daily' | 'hourly' | 'manual' | null
+  /** Passa a seguir este agendamento nomeado. Alternativa à `syncCadence`:
+   *  a frequência é UMA escolha na tela, e as duas juntas são recusadas. */
+  scheduleId?: string | null
   syncSince?: string | null
   syncSinceDays?: number | string | null
   dedupeKeys?: unknown
@@ -27,7 +30,7 @@ export interface SyncConfigResult {
   /** Campos efetivamente gravados — vai para a auditoria. */
   applied: {
     syncMode: string; incrementalKey: string | null; incrementalKey2: string | null
-    syncCadence: string | null; since: string | null; sinceDays: number | null
+    syncCadence: string | null; scheduleId: string | null; since: string | null; sinceDays: number | null
     dedupe: string[]; lag: number
   }
   /** true quando a mudança invalidou o progresso e a próxima carga recomeça. */
@@ -40,12 +43,27 @@ export interface SyncConfigResult {
 
 export async function applySyncConfig(datasetId: string, input: SyncConfigInput): Promise<SyncConfigResult> {
   const { syncMode, incrementalKey, incrementalKey2, syncCadence, syncSince, syncSinceDays, dedupeKeys, watermarkLagMinutes } = input
+  const scheduleId = input.scheduleId ? String(input.scheduleId) : null
 
   if (!['live', 'snapshot', 'incremental'].includes(syncMode)) {
     throw new Error('syncMode deve ser live, snapshot ou incremental.')
   }
   if (syncCadence != null && !['daily', 'hourly', 'manual'].includes(syncCadence)) {
     throw new Error('syncCadence deve ser daily, hourly ou manual.')
+  }
+  if (scheduleId && syncCadence != null) {
+    throw new Error('Escolha uma frequência só: cadência fixa OU agendamento.')
+  }
+  // O agendamento precisa ser do MESMO inquilino do conjunto. O formato é
+  // conferido antes: um id malformado chegaria ao Postgres como erro de cast,
+  // com texto técnico, em vez de "não encontrado".
+  if (scheduleId) {
+    const doTenant = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(scheduleId)
+      && (await db.query(
+        `select 1 from sync_schedules s join datasets d on d.tenant_id = s.tenant_id
+          where d.id = $1 and s.id = $2`, [datasetId, scheduleId],
+      )).rowCount
+    if (!doTenant) throw new Error('Agendamento não encontrado.')
   }
 
   const incremental = syncMode === 'incremental'
@@ -122,10 +140,16 @@ export async function applySyncConfig(datasetId: string, input: SyncConfigInput)
     // Sair do agendamento é o comportamento correto aqui, e não um efeito
     // colateral: pedir cadência fixa a um conjunto que segue agendamento é
     // pedir para ele parar de seguir o agendamento.
+    //
+    // O caminho inverso ($12) grava o par inteiro na mesma linha, que é o que
+    // a constraint pede. Antes, entrar num agendamento só existia em outra
+    // tela (Agendamentos/assign), e a frequência de um conjunto era a única
+    // parte da regra que não se mudava na página dele.
     `update datasets set
        sync_mode = $2, incremental_key = $3, incremental_key_2 = $4,
-       sync_cadence = coalesce($5, sync_cadence),
-       schedule_id = case when $5 is null then schedule_id else null end,
+       sync_cadence = case when $12::uuid is not null then 'schedule' else coalesce($5, sync_cadence) end,
+       schedule_id = case when $12::uuid is not null then $12::uuid
+                          when $5 is null then schedule_id else null end,
        sync_since = $6, sync_since_days = $7,
        dedupe_keys = $8, watermark_lag_minutes = $9,
        -- Salvar a configuração é ação humana: retoma um conjunto pausado por
@@ -136,14 +160,14 @@ export async function applySyncConfig(datasetId: string, input: SyncConfigInput)
        updated_at = now()
      where id = $1 returning slug`,
     [datasetId, syncMode, key1 || null, key2 || null,
-     syncCadence ?? null, since, sinceDays, dedupe, lag, reset1, reset2],
+     syncCadence ?? null, since, sinceDays, dedupe, lag, reset1, reset2, scheduleId],
   )).rows[0]
 
   return {
     slug: String(row.slug),
     applied: {
       syncMode, incrementalKey: key1 || null, incrementalKey2: key2 || null,
-      syncCadence: syncCadence ?? null, since, sinceDays, dedupe, lag,
+      syncCadence: scheduleId ? 'schedule' : syncCadence ?? null, scheduleId, since, sinceDays, dedupe, lag,
     },
     watermarkReset: reset1 || reset2,
     detachedFromSchedule: syncCadence != null && current.schedule_id != null,

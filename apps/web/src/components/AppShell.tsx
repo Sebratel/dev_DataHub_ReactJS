@@ -15,7 +15,7 @@ import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, Plug, ShieldCheck, ScrollText,
   Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Radio, Brain, NotebookText, Sparkle,
-  CalendarClock, Wand2,
+  CalendarClock, Wand2, ListChecks,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
@@ -57,6 +57,7 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
     items: [
       { to: '/admin/monitor', label: 'Monitoramento', icon: Activity, role: 'admin' },
       { to: '/admin/connections', label: 'Conexões', icon: Database, role: 'admin' },
+      { to: '/admin/sync-rules', label: 'Regras de atualização', icon: ListChecks, role: 'admin' },
       { to: '/admin/schedules', label: 'Agendamentos', icon: CalendarClock, role: 'admin' },
       { to: '/admin/autotune', label: 'Padronizar atualização', icon: Wand2, role: 'admin' },
       { to: '/admin/ai-providers', label: 'Provedores de IA', icon: Sparkle, role: 'admin' },
@@ -74,7 +75,7 @@ const CRUMB: Record<string, string> = {
   audit: 'Auditoria', derived: 'Calculado', new: 'Novo', apis: 'APIs', explore: 'Explorador',
   gateway: 'Gateway', models: 'Modelos', notebooks: 'Notebooks',
   'ai-providers': 'Provedores de IA', schedules: 'Agendamentos',
-  autotune: 'Padronizar atualização',
+  autotune: 'Padronizar atualização', 'sync-rules': 'Regras de atualização',
 }
 
 function NavItem({ to, label, icon: Icon, end }: NavEntry) {

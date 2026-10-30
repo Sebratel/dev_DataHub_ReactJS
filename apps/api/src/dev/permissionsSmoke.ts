@@ -93,6 +93,8 @@ const EXPECTED: Record<string, Record<string, Level>> = {
     'GET /sync-queue': 'admin',
     // Tirar da fila é operação (como "Parar"), não mudança de regra.
     'POST /sync-queue/cancel': 'admin',
+    // Leitura da regra em vigor de todos, só do banco do hub.
+    'GET /sync-rules': 'admin',
   },
   // Só as rotas de MASTER do accessRouter entram na tabela: as demais (times,
   // concessões, auditoria) são de admin e têm guard próprio por rota, fora do
