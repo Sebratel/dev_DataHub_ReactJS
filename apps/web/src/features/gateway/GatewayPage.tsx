@@ -63,7 +63,11 @@ export default function GatewayPage() {
     try {
       const [u, g] = await Promise.all([
         api<{ upstreams: GatewayUpstream[]; secretConfigured: boolean }>('/api/v1/gateway/upstreams'),
-        api<{ usage: GatewayUsage[] }>('/api/v1/gateway/usage'),
+        // Consumo por token é só de admin (D-SEG-3): para os demais a rota
+        // responde 403, e pedi-la derrubaria a página inteira neste Promise.all.
+        isAdmin
+          ? api<{ usage: GatewayUsage[] }>('/api/v1/gateway/usage')
+          : Promise.resolve({ usage: [] as GatewayUsage[] }),
       ])
       setUpstreams(u.upstreams)
       setSecretConfigured(u.secretConfigured)
@@ -73,7 +77,7 @@ export default function GatewayPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [isAdmin])
 
   useEffect(() => { void load() }, [load])
 
@@ -113,8 +117,11 @@ export default function GatewayPage() {
   const kpis: Kpi[] = [
     { label: 'Upstreams ativos', icon: Webhook, value: String(active.length), foot: `${upstreams.length} cadastrado(s)` },
     { label: 'Aguardando aprovação', icon: ShieldCheck, value: String(pending.length), foot: pending.length ? 'não respondem ainda' : 'nada na fila' },
-    { label: 'Chamadas hoje', icon: Activity, value: callsToday.toLocaleString('pt-BR'), foot: `${consumersToday} consumidor(es) ativo(s)` },
-    { label: 'Tokens sem limite', icon: Gauge, value: String(unlimited), foot: unlimited ? 'sem quota nem rate limit' : 'todos com política' },
+    // Os dois de consumo vêm dos tokens: só fazem sentido (e só chegam) para admin.
+    ...(isAdmin ? [
+      { label: 'Chamadas hoje', icon: Activity, value: callsToday.toLocaleString('pt-BR'), foot: `${consumersToday} consumidor(es) ativo(s)` },
+      { label: 'Tokens sem limite', icon: Gauge, value: String(unlimited), foot: unlimited ? 'sem quota nem rate limit' : 'todos com política' },
+    ] : []),
   ]
 
   return (
@@ -279,10 +286,11 @@ export default function GatewayPage() {
             )}
           </Card>
 
-          {/* Consumidores: quem chama, quanto já gastou e qual o teto */}
+          {/* Consumidores: quem chama, quanto já gastou e qual o teto. Só admin. */}
+          {isAdmin && (
           <Card>
             <CardHead icon={Users} title="Consumidores" sub="consumo de hoje">
-              {isAdmin && <span className="text-[10.5px] text-zinc-400">clique para definir limites</span>}
+              <span className="text-[10.5px] text-zinc-400">clique para definir limites</span>
             </CardHead>
             {usage.length === 0 ? (
               <p className="px-3 py-6 text-center text-[12px] text-zinc-500">
@@ -306,7 +314,7 @@ export default function GatewayPage() {
                     const pct = quota ? (calls / quota) * 100 : 0
                     const noPolicy = !quota && !c.rate_limit_per_min
                     return (
-                      <Tr key={c.id} onClick={isAdmin ? () => setPolicyFor(c) : undefined}>
+                      <Tr key={c.id} onClick={() => setPolicyFor(c)}>
                         <Td><span className="text-[12px] font-medium">{c.name}</span></Td>
                         <Td right muted>{calls.toLocaleString('pt-BR')}</Td>
                         <Td>
@@ -336,6 +344,7 @@ export default function GatewayPage() {
               </DataGrid>
             )}
           </Card>
+          )}
         </div>
       )}
 
@@ -436,7 +445,14 @@ function UpstreamDialog({ initial, isAdmin, onClose, onSaved }: {
           <div className="min-w-0">
             <h2 className="text-[13px] font-semibold">{isEdit ? 'Editar upstream' : 'Novo upstream'}</h2>
             <p className="text-[10.5px] text-zinc-500">
-              {isAdmin ? 'Entra já aprovado.' : 'Entra como pendente até um administrador aprovar.'}
+              {!isEdit
+                ? (isAdmin ? 'Entra já aprovado.' : 'Entra como pendente até um administrador aprovar.')
+                : initial!.status === 'active' && !isAdmin
+                  // SEG-04: a aprovação cobre destino, credencial e métodos.
+                  ? 'Mudar endereço, autenticação, segredo ou métodos devolve o upstream para aprovação — ele sai do ar até um administrador aprovar de novo.'
+                  : initial!.status === 'active'
+                    ? 'Sua edição vale como a nova aprovação.'
+                    : 'Segue pendente até um administrador aprovar.'}
             </p>
           </div>
           <button onClick={onClose} aria-label="Fechar" className="ml-auto rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800">

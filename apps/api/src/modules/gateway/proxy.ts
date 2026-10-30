@@ -23,7 +23,7 @@ import { Router, raw } from 'express'
 import type { Request, Response } from 'express'
 import { Readable } from 'node:stream'
 import { isDbAvailable } from '../../db/pool.js'
-import { admit, isDenied, readToken, recordCall, requestIdOf, sendDenied } from './policy.js'
+import { admit, isDenied, readToken, recordCall, requestIdOf, sendDenied, tokenNaUrl } from './policy.js'
 import { resolveUpstream, upstreamAuthHeader } from './upstreams.js'
 
 // Corpo máximo aceito no proxy. Gateway não é canal de upload em massa.
@@ -91,8 +91,14 @@ gatewayProxyRouter.use('/:slug', async (req: Request, res: Response) => {
 
   if (!isDbAvailable()) return fail(503, 'Serviço indisponível.')
 
-  // 1. Consumidor + limites.
-  const consumer = await admit(readToken(req))
+  // 1. Consumidor + limites. O token do Data Hub vem SÓ do cabeçalho (SEG-06).
+  //    Diferente da API de conjuntos, aqui um `token` na query pode ser
+  //    parâmetro legítimo da API de trás — ele segue para lá como sempre. A
+  //    recusa explicativa só entra quando falta o cabeçalho.
+  const token = readToken(req)
+  const naUrl = token ? null : tokenNaUrl(req)
+  if (naUrl) return fail(naUrl.status, naUrl.error)
+  const consumer = await admit(token)
   if (isDenied(consumer)) {
     recordCall({
       checkType: 'gateway', requestId, method, endpoint, status: consumer.status,

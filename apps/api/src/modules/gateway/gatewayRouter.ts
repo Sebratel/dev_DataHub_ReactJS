@@ -41,11 +41,18 @@ gatewayRouter.post('/upstreams', ...editorOnly, async (req, res) => {
   } catch (e) { fail(res, e) }
 })
 
+// Editar um upstream APROVADO mudando endereço, credencial ou métodos o devolve
+// para a fila quando quem edita não é admin (SEG-04). A resposta diz o que
+// motivou, para a tela explicar por que ele saiu do ar.
 gatewayRouter.put('/upstreams/:id', ...editorOnly, async (req, res) => {
   try {
-    const up = await updateUpstream(req.user!.tenant, req.params.id, req.body as UpstreamInput)
-    await audit(req, 'gateway.upstream.update', { type: 'upstream', id: up.id }, { slug: up.slug })
-    res.json({ upstream: up })
+    const { upstream: up, reaprovar } = await updateUpstream(
+      req.user!.tenant, req.params.id, req.body as UpstreamInput,
+      { email: req.user!.email, admin: req.user!.roles.includes('admin') },
+    )
+    await audit(req, 'gateway.upstream.update', { type: 'upstream', id: up.id },
+      { slug: up.slug, baseUrl: up.baseUrl, status: up.status, reaprovar })
+    res.json({ upstream: up, reaprovar })
   } catch (e) { fail(res, e) }
 })
 
@@ -104,8 +111,9 @@ gatewayRouter.put('/credentials/:id/policy', ...adminOnly, async (req, res) => {
   } catch (e) { fail(res, e) }
 })
 
-// Consumo do dia — alimenta a tela de tokens ("quanto já gastei do meu teto").
-gatewayRouter.get('/usage', ...editorOnly, async (req, res) => {
+// Consumo do dia por token. Só admin: lista o nome, a cota e o limite de cada
+// token, e token é assunto só de admin (D-SEG-3 / T-SEG-09).
+gatewayRouter.get('/usage', ...adminOnly, async (req, res) => {
   const rows = (await db.query(
     `select c.id, c.name, c.rate_limit_per_min, c.quota_per_day, c.upstream_slugs,
             coalesce(u.calls, 0) as calls_today

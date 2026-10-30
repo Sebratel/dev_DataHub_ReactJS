@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, anon, idToken, seedDataset, shutdown, db, USERS, PROJECT, baseUrl } from './harness.js'
+import { as, anon, idToken, seedDataset, shutdown, db, waitFor, USERS, PROJECT, baseUrl } from './harness.js'
 
 const MASK = '•••'
 let lakePrivadoFile = ''
@@ -94,6 +94,31 @@ describe('T-FUN-01 login e papéis', () => {
   it('T-FUN-01 sem token: 401', async () => {
     const r = await anon.get('/api/v1/datasets')
     assert.equal(r.status, 401)
+  })
+
+  // SEG-07 (D-SEG-5, R3): o login legado aceitava o access_token opaco do
+  // Google conferindo só DE QUEM ele era (userinfo), não PARA QUAL APP foi
+  // emitido. Aqui o "Google" responde que o token é de um e-mail do domínio —
+  // exatamente o que o caminho legado aceitava.
+  it('SEG-07 access_token opaco (login legado) é recusado, sem consultar o Google', async () => {
+    const original = globalThis.fetch
+    let consultou = false
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = input instanceof Request ? input.url : String(input)
+      if (url.includes('googleapis.com/oauth2')) {
+        consultou = true
+        return new Response(JSON.stringify({ email: USERS.viewer, email_verified: true, name: 'outro-app' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return original(input, init)
+    }) as typeof fetch
+    try {
+      const r = await original(`${baseUrl}/api/v1/auth/me`, { headers: { Authorization: 'Bearer ya29.token-emitido-para-outro-app' } })
+      assert.equal(r.status, 401)
+      assert.equal(consultou, false, 'a API ainda consulta o userinfo do Google')
+    } finally {
+      globalThis.fetch = original
+    }
   })
 })
 
@@ -264,20 +289,148 @@ describe('T-SEG-04 leitura de arquivo por SQL livre', () => {
   })
 })
 
-// ── T-SEG-02 · Máscara no notebook (SEG-02, aberto) ────────────────────────
+// ── T-SEG-02 / 03 · Máscara e export no notebook (SEG-02, D-SEG-2) ─────────
 describe('T-SEG-02 máscara no SQL livre', () => {
-  it('T-SEG-02 notebook do viewer: campo sensível mascarado ou recusado', {
-    todo: 'SEG-02: o SQL livre lê o Parquet completo — o CPF sai em claro para o viewer.',
-  }, async () => {
-    const r = await as('viewer').post('/api/v1/notebooks/run', { sql: 'select cpf from teste_comite_aberto' })
-    assert.ok(r.status >= 400 || r.body.rows.every((x: { cpf: string }) => x.cpf === MASK))
+  const run = (who: 'viewer' | 'admin', sql: string) => as(who).post('/api/v1/notebooks/run', { sql })
+
+  it('T-SEG-02 notebook do viewer: campo sensível mascarado', async () => {
+    const r = await run('viewer', 'select cpf from teste_comite_aberto')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.equal(r.body.rows.length, 3)
+    assert.ok(r.body.rows.every((x: { cpf: string }) => x.cpf === MASK), JSON.stringify(r.body.rows))
   })
 
-  it('T-SEG-02 notebook do viewer: select * não traz a coluna oculta', {
-    todo: 'SEG-02: a ingestão grava as colunas ocultas no lake e o SQL livre as devolve.',
-  }, async () => {
-    const r = await as('viewer').post('/api/v1/notebooks/run', { sql: 'select * from teste_comite_aberto' })
+  it('T-SEG-02 notebook do viewer: select * não traz a coluna oculta', async () => {
+    const r = await run('viewer', 'select * from teste_comite_aberto')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.ok(!r.body.columns.includes('senha_interna'))
     assert.ok(!JSON.stringify(r.body).includes('oculto-'))
+    assert.ok(!JSON.stringify(r.body).includes('111.111.111-11'))
+  })
+
+  it('T-SEG-02 o viewer não reconstrói o sensível por filtro, ordem ou função', async () => {
+    // Filtro pelo valor real: a coluna que ele enxerga JÁ é a máscara, então nada casa.
+    const f = await run('viewer', `select cliente from teste_comite_aberto where cpf = '111.111.111-11'`)
+    assert.equal(f.status, 200)
+    assert.equal(f.body.rows.length, 0, 'o filtro pelo CPF real achou a linha')
+    // Ordem: todos valem a máscara; a ordem não carrega nada do CPF.
+    const o = await run('viewer', 'select cliente, cpf from teste_comite_aberto order by cpf desc, cliente')
+    assert.deepEqual(o.body.rows.map((x: { cliente: string }) => x.cliente), ['ana', 'bia', 'caio'])
+    const g = await run('viewer', 'select count(distinct cpf) as n, max(length(cpf)) as l from teste_comite_aberto')
+    assert.equal(Number(g.body.rows[0].n), 1)
+    assert.equal(Number(g.body.rows[0].l), MASK.length)
+  })
+
+  it('T-SEG-02 a proteção vale também pelo slug entre aspas e dentro de CTE própria', async () => {
+    const r = await run('viewer',
+      `with base as (select * from "teste-comite-aberto") select b.cpf from base b join teste_comite_aberto t on t.id = b.id`)
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.ok(r.body.rows.every((x: { cpf: string }) => x.cpf === MASK))
+  })
+
+  it('T-SEG-02 admin: sensível em claro (como na tela), oculto ausente', async () => {
+    const r = await run('admin', 'select * from teste_comite_aberto order by id')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.equal(r.body.rows[0].cpf, '111.111.111-11')
+    assert.ok(!r.body.columns.includes('senha_interna'))
+    assert.ok(!JSON.stringify(r.body).includes('oculto-'))
+  })
+
+  it('T-SEG-02 SQL sem conjunto nenhum segue funcionando', async () => {
+    const r = await run('viewer', 'select 1 as um')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.equal(Number(r.body.rows[0].um), 1)
+  })
+})
+
+describe('T-SEG-03 export do notebook', () => {
+  const exporta = (who: 'viewer' | 'viewer2', sql: string) =>
+    as(who).post('/api/v1/notebooks/export', { sql, notebook: 'teste-export' })
+
+  before(async () => {
+    // Privado, com concessão de LEITURA ao viewer, mas sem exportação.
+    await seedDataset({
+      slug: 'teste-comite-sem-export',
+      visibility: 'private',
+      owner: 'editor2',
+      fields: [{ key: 'id', type: 'number' }, { key: 'contrato' }],
+      rowsSql: `select * from (values (1, 'C-1'), (2, 'C-2')) t(id, contrato)`,
+    })
+    const g = await as('editor2').post('/api/v1/admin/datasets/teste-comite-sem-export/grants',
+      { email: USERS.viewer, canExport: false })
+    assert.equal(g.status, 201, JSON.stringify(g.body))
+  })
+
+  it('T-SEG-03 sem permissão de exportar: lê no notebook, mas o export é recusado', async () => {
+    assert.equal((await as('viewer').post('/api/v1/notebooks/run', { sql: 'select * from teste_comite_sem_export' })).status, 200)
+    const r = await exporta('viewer', 'select * from teste_comite_sem_export')
+    assert.equal(r.status, 403)
+    assert.ok(!JSON.stringify(r.body).includes('C-1'))
+  })
+
+  it('T-SEG-03 um join com um conjunto sem exportação também é recusado', async () => {
+    const r = await exporta('viewer',
+      'select a.cliente, s.contrato from teste_comite_aberto a join teste_comite_sem_export s on s.id = a.id')
+    assert.equal(r.status, 403)
+  })
+
+  it('T-SEG-03 com permissão: o CSV sai do servidor, mascarado e sem a oculta', async () => {
+    const r = await exporta('viewer', 'select * from teste_comite_aberto')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.match(r.headers.get('content-type') ?? '', /text\/csv/)
+    const csv = String(r.body)
+    assert.equal(csv.trim().split(/\r?\n/).length, 4, 'cabeçalho + 3 linhas')
+    assert.ok(csv.includes(MASK))
+    assert.ok(!csv.includes('111.111.111-11'))
+    assert.ok(!csv.includes('senha_interna') && !csv.includes('oculto-'))
+  })
+
+  it('T-SEG-03 a exportação do notebook fica na auditoria, com os conjuntos e as linhas', async () => {
+    const ev = await waitFor(async () => (await db.query(
+      `select detail from audit_logs where user_email = $1 and action = 'notebooks.export' order by created_at desc limit 1`,
+      [USERS.viewer])).rows[0])
+    assert.ok(ev, 'nenhum notebooks.export do viewer na auditoria')
+    const detail = typeof ev!.detail === 'string' ? JSON.parse(ev!.detail) : ev!.detail
+    assert.equal(detail.rows, 3)
+    assert.deepEqual(detail.datasets, ['teste-comite-aberto'])
+  })
+})
+
+// ── T-SEG-14 · IA e dado pessoal (SEG-05) ──────────────────────────────────
+// Sem provedor no teste: a ferramenta da IA é chamada direto, e o que ela
+// devolve é exatamente o que iria para o provedor.
+describe('T-SEG-14 IA e dado pessoal', () => {
+  const sessao = (who: 'admin' | 'viewer') => ({
+    email: USERS[who], name: who, roles: [who], tenant: 'sebratel', master: false, masterConfigured: true,
+  })
+
+  it('T-SEG-14 o que a IA recebe vem mascarado também para o admin', async () => {
+    const { executeTool } = await import('../modules/ai/tools.js')
+    for (const who of ['admin', 'viewer'] as const) {
+      const r = await executeTool('run_query', { dataset: 'teste-comite-aberto', select: ['cliente', 'cpf'] }, sessao(who))
+      assert.ok(!r.isError, `${who}: ${r.content}`)
+      const { rows } = JSON.parse(r.content) as { rows: { cpf: string }[] }
+      assert.equal(rows.length, 3)
+      assert.ok(rows.every((x) => x.cpf === MASK), `${who} recebeu o CPF em claro`)
+      assert.ok(!r.content.includes('111.111.111-11'))
+    }
+  })
+
+  it('T-SEG-14 nem o admin filtra ou agrupa pelo sensível pela IA (não vira oráculo)', async () => {
+    const { executeTool } = await import('../modules/ai/tools.js')
+    const f = await executeTool('run_query', {
+      dataset: 'teste-comite-aberto', select: ['cliente'], filters: [{ field: 'cpf', op: 'starts_with', value: '111' }],
+    }, sessao('admin'))
+    assert.equal(f.isError, true)
+    const g = await executeTool('run_query', {
+      dataset: 'teste-comite-aberto', select: ['cpf', { agg: 'count', as: 'n' }], groupBy: ['cpf'],
+    }, sessao('admin'))
+    assert.equal(g.isError, true)
+  })
+
+  it('T-SEG-14 a tela do admin segue mostrando o sensível (a regra muda só para a IA)', async () => {
+    const r = await as('admin').post('/api/v1/datasets/teste-comite-aberto/query', { select: ['cpf'] })
+    assert.ok(r.body.rows.some((x: { cpf: string }) => x.cpf === '111.111.111-11'))
   })
 })
 
@@ -323,7 +476,7 @@ describe('T-FUN-12 token e API pública', () => {
   let id = ''
 
   before(async () => {
-    const r = await as('editor').post('/api/v1/credentials', {
+    const r = await as('admin').post('/api/v1/credentials', {
       name: 'TESTE-COMITE token', datasetSlugs: ['teste-comite-aberto'], expiresInDays: 7,
     })
     assert.equal(r.status, 201)
@@ -354,7 +507,7 @@ describe('T-FUN-12 token e API pública', () => {
   })
 
   it('T-FUN-12 depois de revogar: 401', async () => {
-    assert.equal((await as('editor').patch(`/api/v1/credentials/${id}`, { revoked: true })).status, 200)
+    assert.equal((await as('admin').patch(`/api/v1/credentials/${id}`, { revoked: true })).status, 200)
     const r = await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows', token)
     assert.equal(r.status, 401)
   })
@@ -365,42 +518,70 @@ describe('T-FUN-12 token e API pública', () => {
 })
 
 // ── T-SEG-08 / 09 / 10 / 16 · Tokens (SEG-03, SEG-06) ──────────────────────
+// D-SEG-3 (R3): criar, ver, editar e revogar token é só de admin. O escopo
+// vazio continua valendo "todos" — conforme pela visão de negócio, porque só
+// quem já lê tudo consegue emiti-lo.
 describe('T-SEG-08..10, T-SEG-16 tokens', () => {
-  it('T-SEG-08 token com escopo vazio NÃO lê conjunto privado de outra pessoa', {
-    todo: 'SEG-03: escopo vazio libera todos os conjuntos, inclusive privados de terceiros.',
-  }, async () => {
+  it('T-SEG-08 editor não cria token (só admins têm token)', async () => {
     const r = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE escopo vazio', datasetSlugs: [] })
-    const lido = await anon.get('/api/public/v1/datasets/teste-comite-privado/rows', r.body.token)
-    assert.notEqual(lido.status, 200, 'leu o conjunto privado de outra pessoa')
-    assert.ok(!JSON.stringify(lido.body).includes('SEGREDO-FOLHA'))
+    assert.equal(r.status, 403)
+    assert.equal(r.body.token, undefined)
   })
 
-  it('T-SEG-09 o viewer vê só os próprios tokens', {
-    todo: 'SEG-03: qualquer usuário logado lista todos os tokens, com dono e escopo.',
-  }, async () => {
-    const r = await as('viewer').get('/api/v1/credentials')
-    assert.equal(r.status, 200)
-    assert.ok(r.body.credentials.every((c: { owner_email: string }) => c.owner_email === USERS.viewer))
+  it('T-SEG-09 viewer e editor não listam tokens', async () => {
+    for (const who of ['viewer', 'editor'] as const) {
+      const r = await as(who).get('/api/v1/credentials')
+      assert.equal(r.status, 403, who)
+      assert.ok(!JSON.stringify(r.body).includes('TESTE-COMITE'), `${who} viu nomes de token`)
+    }
   })
 
-  it('T-SEG-09 um editor não altera o escopo do token de outro editor', {
-    todo: 'SEG-03: o PATCH de token não confere o dono — qualquer editor amplia o escopo de qualquer token.',
-  }, async () => {
-    const r = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE do editor', datasetSlugs: ['teste-comite-aberto'] })
-    const patch = await as('editor2').patch(`/api/v1/credentials/${r.body.id}`, { datasetSlugs: [] })
-    assert.equal(patch.status, 403)
+  it('T-SEG-09 editor não altera, não revoga e não exclui token de ninguém', async () => {
+    const t = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE do admin', datasetSlugs: ['teste-comite-aberto'] })
+    assert.equal(t.status, 201)
+    const e = as('editor')
+    assert.equal((await e.patch(`/api/v1/credentials/${t.body.id}`, { datasetSlugs: [] })).status, 403)
+    assert.equal((await e.patch(`/api/v1/credentials/${t.body.id}`, { revoked: true })).status, 403)
+    assert.equal((await e.del(`/api/v1/credentials/${t.body.id}`)).status, 403)
+    const row = (await db.query('select dataset_slugs, revoked from api_credentials where id = $1', [t.body.id])).rows[0]
+    assert.deepEqual(row.dataset_slugs, ['teste-comite-aberto'], 'o escopo mudou')
+    assert.equal(row.revoked, false)
   })
 
-  it('T-SEG-10 token na URL (?token=) não é aceito', {
-    todo: 'SEG-06: ?token= é aceito — vai para log do nginx, histórico e Referer.',
-  }, async () => {
-    const r = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE url', datasetSlugs: ['teste-comite-aberto'] })
+  it('T-SEG-09 o consumo por token do gateway também é só de admin', async () => {
+    assert.equal((await as('editor').get('/api/v1/gateway/usage')).status, 403)
+    assert.equal((await as('admin').get('/api/v1/gateway/usage')).status, 200)
+  })
+
+  it('T-SEG-10 token na URL (?token=) não é aceito, e a recusa diz como enviar', async () => {
+    const r = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE url', datasetSlugs: ['teste-comite-aberto'] })
     const viaUrl = await anon.get(`/api/public/v1/datasets/teste-comite-aberto/rows?token=${r.body.token}`)
     assert.equal(viaUrl.status, 401)
+    assert.match(viaUrl.body.error, /X-Api-Token/)
+    assert.ok(!JSON.stringify(viaUrl.body).includes('ana'), 'devolveu dados')
+    // Também com o cabeçalho junto: o token na URL já vazou para o log, e
+    // aceitar ensinaria o cliente a continuar mandando.
+    const ambos = await anon.get(`/api/public/v1/datasets/teste-comite-aberto/rows?token=${r.body.token}`, r.body.token)
+    assert.equal(ambos.status, 401)
+    const q = await anon.post(`/api/public/v1/datasets/teste-comite-aberto/query?token=${r.body.token}`, { select: ['cliente'] })
+    assert.equal(q.status, 401)
+  })
+
+  it('T-SEG-10 a recusa por token na URL fica na telemetria com motivo próprio', async () => {
+    await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows?token=qualquer')
+    const linha = await waitFor(async () => (await db.query(
+      `select error from api_call_metrics where error = 'token na URL' limit 1`)).rows[0], 5_000)
+    assert.ok(linha, 'a recusa não aparece na telemetria — não daria para achar quem falta migrar')
+  })
+
+  it('T-SEG-10 gateway: token do Data Hub só pelo cabeçalho', async () => {
+    const r = await anon.get('/api/public/v1/gw/qualquer/x?token=dhub_nao_vale')
+    assert.equal(r.status, 401)
+    assert.match(r.body.error, /X-Api-Token/)
   })
 
   it('T-SEG-16 cota de 5 por dia: a 6ª chamada recebe 429', async () => {
-    const t = await as('editor').post('/api/v1/credentials', { name: 'TESTE-COMITE cota', datasetSlugs: ['teste-comite-aberto'] })
+    const t = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE cota', datasetSlugs: ['teste-comite-aberto'] })
     const pol = await as('admin').put(`/api/v1/gateway/credentials/${t.body.id}/policy`, { quotaPerDay: 5 })
     assert.equal(pol.status, 200, JSON.stringify(pol.body))
     const status: number[] = []
@@ -419,21 +600,51 @@ describe('T-SEG-11 upstream redirecionado', () => {
     assert.equal(r.body.upstream.status, 'pending')
   })
 
-  it('T-SEG-11 mudar o endereço de um upstream aprovado o devolve para pendente', {
-    todo: 'SEG-04: o editor troca a base_url de um upstream aprovado e ele segue ativo, levando a credencial.',
-  }, async () => {
-    const e = as('editor')
-    const c = await e.post('/api/v1/gateway/upstreams', {
-      slug: 'teste-aprovado', name: 'TESTE-COMITE aprovado', baseUrl: 'http://127.0.0.1:9/interno',
+  // Upstream aprovado com credencial — o alvo de todos os casos abaixo.
+  async function aprovado(slug: string, aprovador: 'admin' | 'master' = 'admin') {
+    const c = await as('editor').post('/api/v1/gateway/upstreams', {
+      slug, name: `TESTE-COMITE ${slug}`, baseUrl: 'http://127.0.0.1:9/interno',
       authMode: 'header', authHeader: 'X-Chave', secret: 'credencial-do-upstream',
     })
-    const id = c.body.upstream.id
-    assert.equal((await as('admin').post(`/api/v1/gateway/upstreams/${id}/review`, { status: 'active' })).status, 200)
-    const ed = await e.put(`/api/v1/gateway/upstreams/${id}`, {
-      slug: 'teste-aprovado', name: 'TESTE-COMITE aprovado', baseUrl: 'http://atacante.exemplo/coleta',
-      authMode: 'header', authHeader: 'X-Chave',
+    const id = c.body.upstream.id as string
+    assert.equal((await as(aprovador).post(`/api/v1/gateway/upstreams/${id}/review`, { status: 'active' })).status, 200)
+    return id
+  }
+  const edita = (who: 'editor' | 'admin', id: string, slug: string, over: Record<string, unknown> = {}) =>
+    as(who).put(`/api/v1/gateway/upstreams/${id}`, {
+      slug, name: `TESTE-COMITE ${slug}`, baseUrl: 'http://127.0.0.1:9/interno',
+      authMode: 'header', authHeader: 'X-Chave', ...over,
     })
+
+  it('T-SEG-11 mudar o endereço de um upstream aprovado o devolve para pendente', async () => {
+    const id = await aprovado('teste-aprovado')
+    const ed = await edita('editor', id, 'teste-aprovado', { baseUrl: 'http://atacante.exemplo/coleta' })
     assert.equal(ed.status, 200)
     assert.equal(ed.body.upstream.status, 'pending')
+    assert.deepEqual(ed.body.reaprovar, ['endereço'])
+  })
+
+  it('T-SEG-11 trocar o segredo ou ampliar os métodos também devolve para pendente', async () => {
+    const id1 = await aprovado('teste-segredo-novo')
+    const s = await edita('editor', id1, 'teste-segredo-novo', { secret: 'outra-credencial' })
+    assert.equal(s.body.upstream.status, 'pending')
+    const id2 = await aprovado('teste-metodos')
+    const m = await edita('editor', id2, 'teste-metodos', { methods: ['GET', 'DELETE'] })
+    assert.equal(m.body.upstream.status, 'pending')
+  })
+
+  it('T-SEG-11 mudar só o nome mantém o upstream no ar', async () => {
+    const id = await aprovado('teste-so-nome')
+    const ed = await edita('editor', id, 'teste-so-nome', { name: 'TESTE-COMITE outro nome', description: 'nova' })
+    assert.equal(ed.body.upstream.status, 'active')
+  })
+
+  it('T-SEG-11 a edição do admin vale como nova aprovação, e o registro diz quem aprovou', async () => {
+    // Aprovado pelo master; o admin muda o destino. Sem a correção, o registro
+    // seguiria dizendo que o master aprovou um endereço que ele nunca viu.
+    const id = await aprovado('teste-admin-edita', 'master')
+    const ed = await edita('admin', id, 'teste-admin-edita', { baseUrl: 'http://127.0.0.1:9/novo' })
+    assert.equal(ed.body.upstream.status, 'active')
+    assert.equal(ed.body.upstream.reviewedBy, USERS.admin)
   })
 })

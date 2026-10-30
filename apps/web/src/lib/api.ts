@@ -35,6 +35,16 @@ async function doFetch(path: string, init: RequestInit, token: string | null): P
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return (await request(path, init)).json() as Promise<T>
+}
+
+// Para resposta que não é JSON (o CSV exportado pelo notebook): mesma sessão,
+// mesma renovação e mesmo erro legível — só o corpo volta como arquivo.
+export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  return (await request(path, init)).blob()
+}
+
+async function request(path: string, init: RequestInit): Promise<Response> {
   const token = await currentToken()
   let res = await doFetch(path, init, token)
 
@@ -56,5 +66,5 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (res.status === 401 && token) useAuthStore.getState().logout()
     throw new ApiError(res.status, message, body)
   }
-  return res.json() as Promise<T>
+  return res
 }

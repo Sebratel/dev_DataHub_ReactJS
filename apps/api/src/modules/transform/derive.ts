@@ -14,6 +14,7 @@ import {
   partEmEscrita, concluiParte, descartaParte,
 } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
+import { MASK } from '../query/compile.js'
 import { assertReadOnly, stripNoise } from '../../core/guard.js'
 import { accessibleDatasetIds, type AccessUser } from '../../core/access.js'
 import { publicarDataset } from '../databricks/publish.js'
@@ -35,6 +36,8 @@ export function validateTransformSql(sql: string): void {
 }
 
 export interface LakeRef {
+  /** Id do conjunto — preciso para ler o catálogo (campos, permissão de exportar). */
+  id?: string
   slug: string
   glob: string
 }
@@ -73,7 +76,7 @@ export async function lakeRefs(tenantSlug: string, opts: LakeRefOptions = {}): P
     if (opts.excludeSlug && slug === opts.excludeSlug) continue
     if (allowed && !allowed.has(String(r.id))) continue
     const dir = datasetDir(tenantSlug, slug)
-    if (listParquet(dir).length) refs.push({ slug, glob: parquetGlob(dir) })
+    if (listParquet(dir).length) refs.push({ id: String(r.id), slug, glob: parquetGlob(dir) })
   }
   return refs
 }
@@ -293,7 +296,9 @@ function walkAst(node: unknown, visit: (n: AstNode) => void): void {
   for (const v of Object.values(node as AstNode)) walkAst(v, visit)
 }
 
-export async function assertSafeLakeSql(userSql: string, refs: LakeRef[]): Promise<void> {
+// Devolve os nomes de tabela citados (minúsculos) — slugs, apelidos e CTEs do
+// próprio SQL. É a lista exata do que o DuckDB vai ligar, lida da árvore.
+export async function assertSafeLakeSql(userSql: string, refs: LakeRef[]): Promise<Set<string>> {
   const body = userSql.trim().replace(/;\s*$/, '')
   const res = await duckQuery('select json_serialize_sql(?::varchar) as ast', [body], { adhoc: true })
   const ast = JSON.parse(String(res.rows[0]?.ast ?? '{}')) as AstNode
@@ -315,10 +320,12 @@ export async function assertSafeLakeSql(userSql: string, refs: LakeRef[]): Promi
   }
 
   const allowed = new Set(refs.flatMap((r) => [r.slug, r.slug.replace(/-/g, '_')]).map((s) => s.toLowerCase()))
+  const citados = new Set<string>()
   walkAst(ast, (n) => {
     if (n.type === 'BASE_TABLE') {
       const name = String(n.table_name ?? '')
       const lower = name.toLowerCase()
+      citados.add(lower)
       if (n.schema_name || n.catalog_name || PATHLIKE.test(name)) {
         throw new Error(
           `Referência não permitida no SQL: "${[n.catalog_name, n.schema_name, name].filter(Boolean).join('.')}". ` +
@@ -341,6 +348,7 @@ export async function assertSafeLakeSql(userSql: string, refs: LakeRef[]): Promi
       }
     }
   })
+  return citados
 }
 
 // ÚNICA porta para executar SQL de usuário sobre o lake: valida pela árvore e
@@ -368,6 +376,76 @@ function buildLakeSql(userSql: string, refs: LakeRef[]): string {
   }
   const body = userSql.trim().replace(/;\s*$/, '')
   return `with ${ctes.join(',\n     ')}\nselect * from (\n${body}\n) as __derivado`
+}
+
+// ── Máscara e colunas ocultas no SQL do NOTEBOOK (SEG-02 / D-SEG-2) ───────
+// O Parquet do lake tem TODAS as colunas da fonte, inclusive as que o
+// catálogo marca como ocultas ou sensíveis. A consulta estruturada (telas,
+// API, IA) respeita as marcas porque monta o SELECT a partir do catálogo; o
+// SQL livre lia o arquivo direto, e o notebook devolvia o CPF em claro ao
+// viewer e a coluna oculta a qualquer um.
+//
+// Aqui a proteção mora na PRÓPRIA CTE de cada conjunto: em vez de
+// `select * from read_parquet(…)`, ela projeta só os campos visíveis do
+// catálogo, com o sensível já trocado pela máscara para quem não é admin. Como
+// o SQL do usuário só enxerga a CTE, a regra vale para select *, where, order
+// by e join sem reescrever o SQL dele — e não há ordenação nem filtro "pela
+// coluna crua", porque a coluna crua não existe para ele.
+//
+// Igual à tela: oculto não existe para ninguém (nem admin); sensível sai
+// mascarado para quem não é admin. Um join PELO campo sensível vira produto
+// cartesiano para não-admin (todos valem a máscara) — juntar por id, não por
+// CPF; o tempo limite da pista ad hoc segura o custo.
+//
+// Só entram CTEs dos conjuntos que o SQL de fato cita (lidos da árvore). Fora
+// economizar uma leitura de esquema por conjunto do tenant, isso fecha a porta:
+// se algum dia a árvore deixar escapar uma referência, ela falha com "tabela
+// não existe" em vez de cair numa CTE sem proteção.
+export interface NotebookSql {
+  sql: string
+  /** Conjuntos citados — para a checagem de exportação e a auditoria. */
+  datasets: LakeRef[]
+}
+
+const qidLake = (s: string) => '"' + s.replace(/"/g, '') + '"'
+
+async function projecaoProtegida(r: LakeRef, admin: boolean): Promise<string> {
+  const campos = (await db.query(
+    `select key, sensitive, hidden from dataset_fields where dataset_id = $1 order by sort_order`,
+    [r.id],
+  )).rows as { key: string; sensitive: boolean; hidden: boolean }[]
+  // O que o arquivo tem de fato: um campo novo no catálogo antes da próxima
+  // carga não pode derrubar toda consulta ao conjunto.
+  const noArquivo = new Set((await duckQuery(
+    `describe select * from read_parquet('${r.glob}')`, [], { adhoc: true },
+  )).rows.map((c) => String(c.column_name)))
+  const cols = campos
+    .filter((f) => !f.hidden && noArquivo.has(f.key))
+    .map((f) => (f.sensitive && !admin ? `'${MASK}' as ${qidLake(f.key)}` : qidLake(f.key)))
+  if (!cols.length) throw new Error(`O conjunto "${r.slug}" não tem campos visíveis no catálogo.`)
+  return `select ${cols.join(', ')} from read_parquet('${r.glob}')`
+}
+
+export async function compileNotebookSql(
+  userSql: string, refs: LakeRef[], opts: { admin: boolean },
+): Promise<NotebookSql> {
+  validateTransformSql(userSql)
+  const citados = await assertSafeLakeSql(userSql, refs)
+  const usados = refs.filter((r) =>
+    citados.has(r.slug.toLowerCase()) || citados.has(r.slug.replace(/-/g, '_').toLowerCase()))
+  const body = userSql.trim().replace(/;\s*$/, '')
+  if (!usados.length) return { sql: `select * from (\n${body}\n) as __derivado`, datasets: [] }
+
+  const ctes: string[] = []
+  for (const r of usados) {
+    ctes.push(`"${r.slug}" as (${await projecaoProtegida(r, opts.admin)})`)
+    const alias = r.slug.replace(/-/g, '_')
+    if (alias !== r.slug) ctes.push(`"${alias}" as (select * from "${r.slug}")`)
+  }
+  return {
+    sql: `with ${ctes.join(',\n     ')}\nselect * from (\n${body}\n) as __derivado`,
+    datasets: usados,
+  }
 }
 
 // Erro de "tabela não existe" do DuckDB → mensagem que explica as 3 causas

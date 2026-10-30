@@ -333,9 +333,9 @@ Cada credencial gera automaticamente endpoint + token + doc + exemplo:
 
 | Integração | Mecanismo MVP |
 |---|---|
-| API REST | `GET /public/v1/datasets/:slug/rows?token=…` (paginado, JSON) |
+| API REST | `GET /public/v1/datasets/:slug/rows` com o token no header `X-Api-Token` (paginado, JSON). Token na URL (`?token=`) é recusado desde a R3 do comitê (SEG-06): ficava em log de acesso, histórico e Referer |
 | API REST — consulta agregada | `POST /public/v1/datasets/:slug/query` com um `QueryDef` no corpo (header `X-Api-Token`): o lake agrega e devolve só o resultado (≤ 10 mil linhas), em vez de o consumidor baixar o conjunto inteiro. Mesmo compilador e permissões do painel, como não-admin. Além do QueryDef dos painéis: `{field, grain}` em select/groupBy (período `year`/`quarter`/`month`/`day`, saindo como `AAAA-MM-DD` do início), `{agg: 'count'}` sem campo (contagem de linhas), `orNull` num filtro (aceita também o campo vazio) e `withTotal` (com groupBy, `total` = nº de grupos). Smoke: `npm run public-query:smoke --workspace apps/api` |
-| Excel / Google Sheets | Mesmo endpoint em CSV (`Accept: text/csv`) — Sheets via `IMPORTDATA`/Apps Script |
+| Excel / Google Sheets | Mesmo endpoint em CSV (`Accept: text/csv`) — Excel via Dados › Da Web › Avançado (header); Sheets via Apps Script (`UrlFetchApp` com headers), já que o `IMPORTDATA` não envia header |
 | Power BI / Looker | Endpoint JSON paginado (Web connector) no MVP; OData na v1.0 |
 | MCP | Servidor MCP expondo `search_datasets`, `get_schema`, `run_query` — mesmo contrato das tools da IA |
 

@@ -178,10 +178,44 @@ export async function createUpstream(
   return publicView(toEntry({ ...row, tenant_slug: tenantSlug }))
 }
 
+// O que a aprovação de um upstream cobre: PARA ONDE a credencial guardada vai,
+// QUAL credencial e COM QUAIS métodos. Mudar qualquer um desses é pedir outra
+// coisa, e a aprovação anterior não vale para ela (SEG-04). Nome, descrição,
+// tempo limite e cabeçalhos repassados não mexem nisso.
+export function destinoMudou(
+  cur: { base_url: string; auth_mode: string | null; auth_header: string | null; methods: string[] | null },
+  input: UpstreamInput,
+): string[] {
+  const mudou: string[] = []
+  if (cur.base_url !== input.baseUrl) mudou.push('endereço')
+  if ((cur.auth_mode ?? 'none') !== (input.authMode ?? 'none')) mudou.push('autenticação')
+  if ((cur.auth_header ?? null) !== (input.authHeader?.trim() || null)) mudou.push('cabeçalho da credencial')
+  // Ausente = mantém (ver UpstreamInput); presente, mesmo vazio, é troca.
+  if (input.secret !== undefined) mudou.push('segredo')
+  const norm = (m: string[] | null | undefined) => [...(m ?? ['GET'])].sort().join(',')
+  if (norm(cur.methods) !== norm(input.methods)) mudou.push('métodos')
+  return mudou
+}
+
 export async function updateUpstream(
   tenantSlug: string, id: string, input: UpstreamInput,
-): Promise<Upstream> {
+  actor: { email: string; admin: boolean },
+): Promise<{ upstream: Upstream; reaprovar: string[] }> {
   validateInput(input)
+  const cur = (await db.query(
+    `select u.base_url, u.auth_mode, u.auth_header, u.methods, u.status
+       from gateway_upstreams u join tenants t on t.id = u.tenant_id
+      where u.id = $1 and t.slug = $2`,
+    [id, tenantSlug],
+  )).rows[0]
+  if (!cur) throw new Error('Upstream não encontrado.')
+
+  // Upstream APROVADO cujo destino mudou: quem não é admin devolve para a fila
+  // (antes, ele seguia ativo e a credencial guardada ia para o endereço novo).
+  // Admin é quem aprova, então a edição dele vale como a nova aprovação, e o
+  // registro passa a dizer quem aprovou ESTE destino, não o anterior.
+  const mudou = cur.status === 'active' ? destinoMudou(cur, input) : []
+
   // secret: undefined = mantém; '' = remove; string = troca.
   const secretSql = input.secret === undefined
     ? 'auth_secret_enc'
@@ -194,6 +228,13 @@ export async function updateUpstream(
   const base = params.length
   params.push(input.methods ?? ['GET'], input.timeoutMs ?? 15_000,
     input.stripPrefix !== false, input.forwardHeaders ?? [])
+  let statusSql = 'status = u.status'
+  if (mudou.length && actor.admin) {
+    params.push(actor.email) // só entra quando citado: parâmetro sobrando é erro no Postgres
+    statusSql = `reviewed_by = $${params.length}, reviewed_at = now()`
+  } else if (mudou.length) {
+    statusSql = `status = 'pending', reviewed_by = null, reviewed_at = null`
+  }
 
   const row = (await db.query(
     `update gateway_upstreams u set
@@ -201,6 +242,7 @@ export async function updateUpstream(
        auth_mode = $7, auth_header = $8, auth_secret_enc = ${secretSql},
        methods = $${base + 1}, timeout_ms = $${base + 2},
        strip_prefix = $${base + 3}, forward_headers = $${base + 4},
+       ${statusSql},
        updated_at = now()
      from tenants t
      where u.id = $1 and u.tenant_id = t.id and t.slug = $2
@@ -209,7 +251,10 @@ export async function updateUpstream(
   )).rows[0]
   if (!row) throw new Error('Upstream não encontrado.')
   await reloadUpstreams()
-  return publicView(toEntry({ ...row, tenant_slug: tenantSlug }))
+  return {
+    upstream: publicView(toEntry({ ...row, tenant_slug: tenantSlug })),
+    reaprovar: mudou.length && !actor.admin ? mudou : [],
+  }
 }
 
 export async function reviewUpstream(

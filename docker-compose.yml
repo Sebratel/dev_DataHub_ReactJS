@@ -11,11 +11,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Firebase e o UNICO login desde a remocao do login legado (SEG-07): sem
+      # estas tres, o bundle sai sem login nenhum e ninguem entra. Entao o
+      # deploy FALHA aqui, com a mensagem, em vez de subir uma tela de login
+      # que nao funciona. O APP_ID segue opcional (o SDK funciona sem ele).
       args:
-        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
-        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
-        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
-        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+        VITE_FIREBASE_API_KEY: '${VITE_FIREBASE_API_KEY:?defina VITE_FIREBASE_API_KEY na stack. O login do Data Hub e so pelo Firebase, e sem ela ninguem entra}'
+        VITE_FIREBASE_AUTH_DOMAIN: '${VITE_FIREBASE_AUTH_DOMAIN:?defina VITE_FIREBASE_AUTH_DOMAIN na stack. O login do Data Hub e so pelo Firebase, e sem ela ninguem entra}'
+        VITE_FIREBASE_PROJECT_ID: '${VITE_FIREBASE_PROJECT_ID:?defina VITE_FIREBASE_PROJECT_ID na stack. O login do Data Hub e so pelo Firebase, e sem ela ninguem entra}'
         VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
         VITE_ALLOWED_DOMAIN: ${ALLOWED_DOMAIN:-sebratel.com.br}
     image: datahub-web:latest
@@ -63,10 +66,10 @@ services:
       # de Brasília fecharia, de fato, às 16:00.
       TZ: ${TZ:-America/Sao_Paulo}
       ALLOWED_DOMAIN: ${ALLOWED_DOMAIN:-sebratel.com.br}
-      # Mesmo projeto do bundle do web. Definido = a API aceita ID token do
-      # Firebase, conferindo a assinatura localmente (sem chamar o Google a
-      # cada login). Vazio = só o caminho antigo.
-      FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+      # Mesmo projeto do bundle do web: a API confere a assinatura do ID token
+      # do Firebase localmente, e o emissor e o publico precisam ser este
+      # projeto. E o unico caminho de login (SEG-07), entao vazio recusa o deploy.
+      FIREBASE_PROJECT_ID: '${VITE_FIREBASE_PROJECT_ID:?defina VITE_FIREBASE_PROJECT_ID na stack. O login do Data Hub e so pelo Firebase, e sem ela ninguem entra}'
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # ADMIN MASTER — unico que altera COMO as FONTES atualizam. Precisa estar
       # AQUI: este bloco lista as variaveis uma a uma, entao o que for definido

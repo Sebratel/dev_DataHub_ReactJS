@@ -1,19 +1,18 @@
-// Auth: aceita DOIS formatos de credencial no header Bearer, escolhidos pelo
-// formato do próprio token:
+// Auth: a credencial do header Bearer é o ID token do Firebase (JWT), com a
+// assinatura conferida AQUI — chave pública do Google em cache, emissor,
+// público (o projeto do Data Hub), expiração e e-mail verificado. Não fala com
+// a rede a cada login: é o caminho que continua funcionando quando a saída
+// para o Google está bloqueada, e é o padrão que o HUBBI já usa.
 //
-//   ID token do Firebase (JWT, três partes)  → assinatura conferida AQUI, com a
-//     chave pública do Google em cache. Não fala com a rede a cada login: é o
-//     caminho que continua funcionando quando a saída para o Google está
-//     bloqueada, e é o padrão que o HUBBI já usa.
+// O caminho legado (access_token opaco do Google, validado no userinfo) foi
+// REMOVIDO (SEG-07, decisão D-SEG-5 da R3 do comitê): o userinfo diz de quem é
+// o token, mas não para qual aplicativo ele foi emitido. Um token que a pessoa
+// entregou a QUALQUER outro app Google servia aqui, se o e-mail fosse do
+// domínio. Hoje um token opaco simplesmente não é aceito.
 //
-//   access_token do Google (opaco)  → validado no userinfo do Google. Caminho
-//     original, mantido para não exigir janela de indisponibilidade na virada:
-//     enquanto alguém estiver com uma aba antiga aberta, o token dela continua
-//     valendo.
-//
-// Nos dois casos, o e-mail precisa ser do domínio permitido. No primeiro login o
-// usuário é criado no tenant padrão; e-mails em ADMIN_EMAILS ganham papel admin,
-// demais viewer. Se o banco de metadados estiver fora, autentica só pelo domínio
+// O e-mail precisa ser do domínio permitido. No primeiro login o usuário é
+// criado no tenant padrão; e-mails em ADMIN_EMAILS ganham papel admin, demais
+// viewer. Se o banco de metadados estiver fora, autentica só pelo domínio
 // (degradado).
 import type { Request, Response, NextFunction } from 'express'
 import type { SessionUser } from '@datahub/shared'
@@ -24,21 +23,6 @@ import { isMaster, anyMasterConfigured } from './masterAdmins.js'
 
 const tokenCache = new Map<string, { user: SessionUser; exp: number }>()
 const TOKEN_TTL_MS = 5 * 60 * 1000
-
-interface GoogleProfile {
-  email?: string
-  email_verified?: boolean
-  name?: string
-  picture?: string
-}
-
-async function fetchGoogleProfile(token: string): Promise<GoogleProfile | null> {
-  const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!r.ok) return null
-  return (await r.json()) as GoogleProfile
-}
 
 // Cria/atualiza o usuário no tenant padrão e devolve seus papéis.
 async function provisionUser(p: { email: string; name: string; picture?: string }): Promise<SessionUser> {
@@ -76,10 +60,9 @@ async function provisionUser(p: { email: string; name: string; picture?: string 
 }
 
 // Um ID token do Firebase é um JWT: três partes separadas por ponto, a
-// primeira decodificando para um cabeçalho JSON com "alg". O access_token do
-// Google é opaco e não tem essa forma. É o bastante para escolher o caminho —
-// e a validação de cada um é estrita, então um palpite errado só resulta em
-// 401, nunca em acesso indevido.
+// primeira decodificando para um cabeçalho JSON com "alg". O que não tem essa
+// forma (o access_token opaco do login legado, por exemplo) é recusado aqui,
+// sem gastar a verificação de assinatura.
 function looksLikeJwt(token: string): boolean {
   const parts = token.split('.')
   if (parts.length !== 3) return false
@@ -93,23 +76,10 @@ async function getUserFromToken(token: string): Promise<SessionUser | null> {
   const cached = tokenCache.get(token)
   if (cached && cached.exp > Date.now()) return cached.user
 
-  let email: string
-  let name: string | undefined
-  let picture: string | undefined
-
-  if (looksLikeJwt(token)) {
-    const claims = await verifyFirebaseIdToken(token)
-    if (!claims || !claims.emailVerified) return null
-    email = claims.email
-    name = claims.name
-    picture = claims.picture
-  } else {
-    const p = await fetchGoogleProfile(token)
-    if (!p?.email || p.email_verified === false) return null
-    email = p.email.toLowerCase()
-    name = p.name
-    picture = p.picture
-  }
+  if (!looksLikeJwt(token)) return null
+  const claims = await verifyFirebaseIdToken(token)
+  if (!claims || !claims.emailVerified) return null
+  const { email, name, picture } = claims
 
   if (!email.endsWith('@' + config.allowedDomain)) return null
 
