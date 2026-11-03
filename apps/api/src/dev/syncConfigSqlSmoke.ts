@@ -61,12 +61,14 @@ const sched = (await pg.query<{ id: string }>(
   `insert into sync_schedules (name) values ('1x ao dia') returning id`,
 )).rows[0]
 
-// O UPDATE exatamente como está em syncConfig.ts.
+// O UPDATE exatamente como está em syncConfig.ts (sem as colunas de pausa,
+// que esta tabela mínima só ganha mais abaixo).
 const UPDATE = `
   update datasets set
      sync_mode = $2, incremental_key = $3, incremental_key_2 = $4,
-     sync_cadence = coalesce($5, sync_cadence),
-     schedule_id = case when $5 is null then schedule_id else null end,
+     sync_cadence = case when $12::uuid is not null then 'schedule' else coalesce($5, sync_cadence) end,
+     schedule_id = case when $12::uuid is not null then $12::uuid
+                        when $5 is null then schedule_id else null end,
      sync_since = $6, sync_since_days = $7,
      dedupe_keys = $8, watermark_lag_minutes = $9,
      watermark   = case when $10 then null else watermark end,
@@ -83,9 +85,9 @@ async function novoConjunto(cadence: string, scheduleId: string | null): Promise
 }
 
 type Linha = { slug: string; sync_cadence: string; schedule_id: string | null }
-const aplicar = (id: string, cadencia: string | null) => pg.query<Linha>(UPDATE, [
+const aplicar = (id: string, cadencia: string | null, agendamento: string | null = null) => pg.query<Linha>(UPDATE, [
   id, 'incremental', 'created_at', 'updated_at', cadencia,
-  null, null, ['id'], 10, true, true,
+  null, null, ['id'], 10, true, true, agendamento,
 ])
 
 console.log('\n── o caso que reprovou o lote em produção ──')
@@ -135,6 +137,37 @@ console.log('\n── o que NÃO pode ter mudado junto ──')
   const r = (await aplicar(id, 'hourly')).rows[0]
   check('conjunto sem agendamento muda de cadência normalmente',
     r.sync_cadence === 'hourly' && r.schedule_id === null)
+}
+
+console.log('\n── entrar num agendamento pela regra do conjunto ──')
+
+// O caminho novo: a página do conjunto escolhe um agendamento no mesmo campo
+// da cadência. O par (cadência, agendamento) tem de sair inteiro numa
+// gravação só, senão a constraint recusa a linha.
+{
+  const id = await novoConjunto('hourly', null)
+  try {
+    const r = (await aplicar(id, null, sched.id)).rows[0]
+    check('cadência fixa → agendamento grava o par inteiro',
+      r.sync_cadence === 'schedule' && r.schedule_id === sched.id,
+      `cadência=${r.sync_cadence} agendamento=${r.schedule_id ?? 'null'}`)
+  } catch (e) {
+    check('cadência fixa → agendamento grava o par inteiro', false, (e as Error).message)
+  }
+}
+{
+  const outro = (await pg.query<{ id: string }>(
+    `insert into sync_schedules (name) values ('horário comercial') returning id`,
+  )).rows[0]
+  const id = await novoConjunto('schedule', sched.id)
+  try {
+    const r = (await aplicar(id, null, outro.id)).rows[0]
+    check('trocar de um agendamento para outro grava o novo',
+      r.sync_cadence === 'schedule' && r.schedule_id === outro.id,
+      `cadência=${r.sync_cadence} agendamento=${r.schedule_id ?? 'null'}`)
+  } catch (e) {
+    check('trocar de um agendamento para outro grava o novo', false, (e as Error).message)
+  }
 }
 
 console.log('\n── a constraint continua valendo ──')

@@ -12,6 +12,8 @@
 //                                            (admin MASTER)
 //   GET  /datasets/sync-queue                o que está rodando e o que espera
 //   POST /datasets/sync-queue/cancel         tira da fila quem ainda não começou
+//   GET  /datasets/sync-rules                a regra em vigor de cada conjunto,
+//                                            numa tabela só (admin)
 //
 // O apply NUNCA inventa: ele recalcula o plano no servidor e grava o que o
 // plano disser. O front manda quais conjuntos aplicar, não o que gravar —
@@ -27,6 +29,7 @@ import { enqueueSync, pendingSyncs, cancelPending, resumeDataset } from './inges
 import { applySyncConfig } from './syncConfig.js'
 import { reconcileFields } from './reconcileFields.js'
 import { requireMasterOnSource } from './masterGuard.js'
+import { getConnector } from '../../connectors/registry.js'
 
 export const autotuneRouter = Router()
 
@@ -333,6 +336,82 @@ autotuneRouter.get('/sync-queue', ...adminOnly, async (req, res) => {
       mode: String(r.mode), status: String(r.status), rows: Number(r.rows ?? 0),
       error: (r.error as string | null) ?? null,
       finishedAt: r.finished_at ? new Date(r.finished_at as string).toISOString() : null,
+    })),
+  })
+})
+
+// A regra de atualização em vigor de TODOS os conjuntos, numa tabela só.
+//
+// Existe porque a regra é gravada por três telas (o painel do conjunto, os
+// Agendamentos e esta padronização) e nenhuma mostrava o quadro inteiro: para
+// saber quem seguia qual agendamento, ou quem ainda estava em snapshot, era
+// abrir conjunto por conjunto.
+//
+// Leitura só do banco do hub — diferente do diagnóstico acima, não consulta o
+// catálogo das fontes, então pode ser aberta a qualquer hora sem custo para a
+// produção. A última execução vem por LATERAL + limit 1, que usa o índice
+// (dataset_id, started_at desc) em vez de varrer o histórico inteiro.
+autotuneRouter.get('/sync-rules', ...adminOnly, async (req, res) => {
+  const rows = (await db.query(
+    `select d.id, d.slug, d.name, d.kind, d.connection_id, d.schema_name, d.object_name,
+            d.sync_mode, d.incremental_key, d.incremental_key_2, d.dedupe_keys,
+            d.watermark_lag_minutes, d.sync_cadence, d.sync_paused_reason, d.row_count,
+            s.id as schedule_id, s.name as schedule_name, s.interval_minutes,
+            s.start_time, s.end_time, s.weekdays,
+            r.status as run_status, r.rows as run_rows, r.started_at as run_started,
+            r.finished_at as run_finished, r.error as run_error,
+            (select count(*) from sync_runs x
+              where x.dataset_id = d.id and x.started_at > now() - interval '24 hours')::int as runs_24h
+       from datasets d
+       join tenants t on t.id = d.tenant_id
+       left join sync_schedules s on s.id = d.schedule_id
+       left join lateral (
+         select status, rows, started_at, finished_at, error from sync_runs
+          where dataset_id = d.id order by started_at desc limit 1
+       ) r on true
+      where t.slug = $1
+      order by d.name`,
+    [req.user!.tenant],
+  )).rows
+
+  // Rótulo de cada campo, para a tabela dizer "Data de criação" e não
+  // "dt_criacao" — é o nome que a pessoa vê no painel do conjunto.
+  const rotulos = new Map<string, string>()
+  if (rows.length) {
+    for (const f of (await db.query(
+      `select dataset_id, key, label from dataset_fields where dataset_id = any($1::uuid[])`,
+      [rows.map((r) => r.id)],
+    )).rows) rotulos.set(`${f.dataset_id}:${f.key}`, String(f.label))
+  }
+  const rotulo = (id: unknown, key: unknown) =>
+    key == null ? null : { key: String(key), label: rotulos.get(`${id}:${key}`) ?? String(key) }
+  const iso = (v: unknown) => (v == null ? null : new Date(v as string).toISOString())
+
+  // Calculado não tem fonte: a "conexão" dele é o próprio lake.
+  const fonte = (r: Record<string, unknown>) => r.kind !== 'derived'
+  res.json({
+    datasets: rows.map((r) => ({
+      id: String(r.id), slug: String(r.slug), name: String(r.name), kind: String(r.kind),
+      connectionName: fonte(r) ? getConnector(String(r.connection_id))?.name ?? String(r.connection_id) : null,
+      table: fonte(r) ? `${r.schema_name}.${r.object_name}` : null,
+      mode: String(r.sync_mode),
+      incrementalKey: rotulo(r.id, r.incremental_key),
+      incrementalKey2: rotulo(r.id, r.incremental_key_2),
+      dedupeKeys: ((r.dedupe_keys as string[] | null) ?? []).map((k) => rotulo(r.id, k)!),
+      watermarkLagMinutes: Number(r.watermark_lag_minutes ?? 0),
+      cadence: String(r.sync_cadence),
+      schedule: r.schedule_id == null ? null : {
+        id: String(r.schedule_id), name: String(r.schedule_name), intervalMinutes: Number(r.interval_minutes),
+        startTime: String(r.start_time), endTime: String(r.end_time), weekdays: Number(r.weekdays),
+      },
+      pausedReason: (r.sync_paused_reason as string | null) ?? null,
+      rowCount: r.row_count == null ? null : Number(r.row_count),
+      lastRun: r.run_status == null ? null : {
+        status: String(r.run_status), rows: Number(r.run_rows ?? 0),
+        startedAt: iso(r.run_started), finishedAt: iso(r.run_finished),
+        error: r.run_error == null ? null : String(r.run_error).slice(0, 300),
+      },
+      runs24h: Number(r.runs_24h ?? 0),
     })),
   })
 })

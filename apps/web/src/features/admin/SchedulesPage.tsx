@@ -2,21 +2,15 @@
 // minutos), aplicados em lote a conjuntos de dados. Ver ScheduleAssignDialog
 // (na tela de Conjuntos) para o fluxo de "selecionei N, aplica a todos".
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Loader2, Pencil, Trash2, X, CalendarClock, Lock } from 'lucide-react'
 import { WEEKDAY_LABELS, type SyncSchedule, type DatasetSummary } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { weekdaysLabel } from '@/lib/schedules'
 import { useConfirm } from '@/components/Dialogs'
 import { useAuthStore } from '@/store/authStore'
 import { Page, PageHeader, ErrorBanner, EmptyState } from '@/components/ui/Page'
 import { Card, CardHead } from '@/components/ui/Card'
-
-function weekdaysLabel(mask: number): string {
-  const days = WEEKDAY_LABELS.filter((_, i) => mask & (1 << i))
-  // seg-sex é o caso mais comum; nomear em vez de listar os 5 dias.
-  if (mask === 62) return 'seg–sex'
-  if (mask === 127) return 'todos os dias'
-  return days.join(', ')
-}
 
 export default function SchedulesPage() {
   const confirm = useConfirm()
@@ -90,7 +84,7 @@ export default function SchedulesPage() {
       <PageHeader
         icon={CalendarClock}
         title="Agendamentos"
-        subtitle="Janela de horário, dias da semana e intervalo em minutos — aplicados em lote a conjuntos de dados."
+        subtitle="Janela de horário, dias da semana e intervalo em minutos. Editar aqui muda todos os conjuntos do agendamento; para pôr ou tirar um conjunto, use o campo Frequência na página dele."
       />
       {error && <ErrorBanner message={error} />}
 
@@ -148,7 +142,7 @@ export default function SchedulesPage() {
                         <div className="grid gap-1 pt-1">
                           {members.map((d) => (
                             <div key={d.id} className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[12px] dark:border-zinc-800 dark:bg-zinc-900">
-                              <span className="truncate">{d.name}</span>
+                              <Link to={`/datasets/${d.slug}`} className="truncate hover:text-info dark:hover:text-info-dark">{d.name}</Link>
                               <button onClick={() => void unassign(d.id)}
                                 disabled={busyId === d.id || (d.kind !== 'derived' && !isMaster)}
                                 title={d.kind !== 'derived' && !isMaster

@@ -31,11 +31,16 @@ export default function ConnectionsPage() {
   const [publishing, setPublishing] = useState<string | null>(null)
 
   // Publica a tabela como Conjunto de Dados e leva para a edição do catálogo.
+  //
+  // A sugestão de nome é o próprio nome da tabela, só com "_" virando "-" e em
+  // minúsculas (person_skills → person-skills) — a mesma forma do endereço que
+  // o conjunto vai ganhar, então nome e URL coincidem. Antes a sugestão virava
+  // "Person Skills", e quem procurava pelo nome da tabela não achava.
   async function publish(connectionId: string, obj: PhysicalObject) {
     const name = await prompt({
       title: 'Publicar conjunto',
-      label: `Nome amigável (o usuário verá este nome, nunca "${obj.name}")`,
-      initial: obj.name.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      label: `Nome do conjunto (sugerido a partir da tabela "${obj.name}"; dá para trocar)`,
+      initial: obj.name.toLowerCase().replace(/[\s_]+/g, '-'),
       confirmLabel: 'Publicar',
     })
     if (!name) return
