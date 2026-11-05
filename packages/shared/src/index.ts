@@ -495,10 +495,61 @@ export interface AlertEventRow {
   kind: string
   title: string
   body: string
+  /** 'no-channel' = ficou só no sistema (o webhook é opcional). */
   status: 'sent' | 'failed' | 'no-channel'
   error: string | null
   createdAt: string
+  /** null = ninguém viu ainda na tela. */
+  seenAt: string | null
+  seenBy: string | null
 }
+
+// ── Saúde da plataforma (MON-14, D-MON-5 B) ─────────────────
+/**
+ * Um problema ABERTO agora, montado a partir do estado atual — não de um
+ * evento. Sai da lista sozinho quando a causa é resolvida.
+ */
+export interface PlatformProblem {
+  /** Estável entre leituras (ex.: 'paused:<id>'), para a tela não piscar. */
+  id: string
+  severity: 'crit' | 'warn'
+  area: 'carga' | 'qualidade' | 'integracao' | 'infraestrutura'
+  title: string
+  detail: string
+  since: string | null
+  /** Rota da tela onde se resolve. */
+  link: string | null
+}
+
+export interface PlatformRun {
+  id: string
+  datasetId: string
+  slug: string
+  name: string
+  kind: 'source' | 'derived'
+  mode: string
+  status: string
+  rows: number | null
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+
+export interface PlatformHealth {
+  checkedAt: string
+  problems: PlatformProblem[]
+  /** Execuções iniciadas nas últimas 24 h, fontes e calculados (MON-08). */
+  runs24h: { total: number; done: number; error: number; cancelled: number; running: number; failures: PlatformRun[] }
+  disk: { usedPercent: number; warnPercent: number; totalBytes: number; freeBytes: number; lakeBytes: number; stagingBytes: number } | null
+  /** Consultas no motor agora e quantas esperam (MON-10). */
+  engine: { normal: number; adhoc: number; queued: number; maxNormal: number; maxAdhoc: number }
+  /** Fila de cargas: quem carrega agora e quantos esperam. */
+  queue: { running: { slug: string; name: string } | null; waiting: number }
+  unseenAlerts: number
+}
+
+/** Leitura leve para o sino do cabeçalho. */
+export interface PlatformBadge { problems: number; crit: number; unseenAlerts: number }
 
 export const WEEKDAY_LABELS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'] as const
 

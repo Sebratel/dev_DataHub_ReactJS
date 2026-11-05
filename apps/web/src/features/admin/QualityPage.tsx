@@ -1,24 +1,23 @@
-// Operar › Qualidade dos dados: a conciliação fonte × lake (D-QLD-3) e o
-// canal de alertas.
+// Operar › Qualidade dos dados: a conciliação fonte × lake (D-QLD-3) e as
+// verificações contínuas (D-QLD-2).
 //
 // Existe porque a contagem "oficial" de um conjunto vinha do próprio lake: uma
 // linha perdida no caminho só aparecia quando alguém estranhava o número. Os
 // doze defeitos de qualidade já corrigidos foram todos achados assim. Aqui o
 // sistema confere sozinho — todo dia um conjunto pequeno, um médio e um grande
-// — e esta tela mostra o último resultado de cada fonte, os dias que não
-// bateram e para onde os alertas vão.
+// — e esta tela mostra o último resultado de cada fonte e os dias que não
+// bateram. Os alertas ficam em Saúde da plataforma, junto com os de carga.
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ClipboardCheck, Database, RefreshCw, Bell, BellOff, Send, ChevronRight, Loader2, Star, ShieldAlert, GitMerge,
+  ClipboardCheck, Database, RefreshCw, ChevronRight, Loader2, Star, ShieldAlert, GitMerge,
 } from 'lucide-react'
 import clsx from 'clsx'
 import type {
-  QualityOverview, QualityDatasetRow, ReconcileRun, ReconcileBand, AlertSettingsView, AlertEventRow, DatasetCheckRow,
+  QualityOverview, QualityDatasetRow, ReconcileRun, ReconcileBand, DatasetCheckRow,
 } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { hoursSince, lagSince } from '@/lib/freshness'
-import { useAuthStore } from '@/store/authStore'
 import {
   Page, PageHeader, ErrorBanner, EmptyState, Toolbar, SearchInput, FilterChips, FilterSelect, TableSkeleton,
 } from '@/components/ui/Page'
@@ -225,7 +224,11 @@ export default function QualityPage() {
             </Card>
           </div>
 
-          <AlertasCard />
+          <p className="text-[11px] text-zinc-500">
+            Divergências e verificações falhando também aparecem em{' '}
+            <Link to="/admin/health" className="font-medium text-info hover:underline dark:text-info-dark">Saúde da plataforma</Link>,
+            com o histórico de alertas.
+          </p>
         </div>
       )}
     </Page>
@@ -441,138 +444,6 @@ function VerificacoesCard({ checks }: { checks: DatasetCheckRow[] }) {
           </tbody>
         </DataGrid>
       )}
-    </Card>
-  )
-}
-
-// ── Canal de alertas ─────────────────────────────────────────────────────
-const EVENTO: Record<AlertEventRow['status'], { label: string; tone: Tone }> = {
-  sent: { label: 'enviado', tone: 'ok' },
-  failed: { label: 'falhou', tone: 'crit' },
-  'no-channel': { label: 'sem canal', tone: 'neutral' },
-}
-
-function AlertasCard() {
-  const isMaster = useAuthStore((s) => !!s.user?.master)
-  const [settings, setSettings] = useState<AlertSettingsView | null>(null)
-  const [events, setEvents] = useState<AlertEventRow[]>([])
-  const [url, setUrl] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  function load() {
-    api<{ settings: AlertSettingsView; events: AlertEventRow[] }>('/api/v1/quality/alerts')
-      .then((r) => { setSettings(r.settings); setEvents(r.events) })
-      .catch((e) => setMsg({ ok: false, text: e instanceof Error ? e.message : 'Falha ao carregar os alertas.' }))
-  }
-  useEffect(load, [])
-
-  async function salvar(body: { webhookUrl?: string; enabled?: boolean }, okText: string) {
-    setBusy(true); setMsg(null)
-    try {
-      const r = await api<{ settings: AlertSettingsView }>('/api/v1/quality/alerts', { method: 'PUT', body: JSON.stringify(body) })
-      setSettings(r.settings); setUrl('')
-      setMsg({ ok: true, text: okText })
-    } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : 'Não foi possível salvar.' })
-    } finally { setBusy(false) }
-  }
-
-  async function testar() {
-    setBusy(true); setMsg(null)
-    try {
-      await api('/api/v1/quality/alerts/test', { method: 'POST' })
-      setMsg({ ok: true, text: 'Mensagem de teste enviada. Confira se chegou no espaço.' })
-    } catch (e) {
-      setMsg({ ok: false, text: e instanceof Error ? e.message : 'O teste falhou.' })
-    } finally { setBusy(false); load() }
-  }
-
-  const inp = 'h-[30px] min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 text-[12px] outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-950'
-  const btn = 'flex h-[30px] shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 text-[11.5px] font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800'
-
-  return (
-    <Card>
-      <CardHead icon={Bell} title="Alertas" sub="conciliação, verificações (prazo, volume, identidade) e carga pausada" />
-      <div className="grid gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        <div className="min-w-0 space-y-2 text-[11.5px]">
-          <p className="text-zinc-500">
-            Os avisos vão para um webhook do Google Chat (ou qualquer endereço que receba <code>{'{"text": …}'}</code>, como um fluxo do n8n).
-            O mesmo assunto não se repete em 12 h.
-          </p>
-          {settings && (
-            <p className="flex flex-wrap items-center gap-1.5">
-              {settings.configured
-                ? <Pill tone={settings.enabled ? 'ok' : 'warn'} dot>{settings.enabled ? 'ligado' : 'desligado'}</Pill>
-                : <Pill tone="warn" dot>sem canal</Pill>}
-              <span className="text-zinc-600 dark:text-zinc-300">
-                {settings.configured ? settings.hint : 'Nenhum webhook cadastrado: os alertas ficam só registrados aqui.'}
-              </span>
-              {settings.lastTestAt && (
-                <span className="text-zinc-400">
-                  · teste {settings.lastTestOk ? 'ok' : 'falhou'} {lagSince(hoursSince(settings.lastTestAt))}
-                </span>
-              )}
-            </p>
-          )}
-          {isMaster ? (
-            <div className="space-y-2">
-              <div className="flex gap-1.5">
-                <input
-                  id="alert-webhook"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder={settings?.configured ? 'Novo endereço (deixe vazio para manter)' : 'https://chat.googleapis.com/v1/spaces/…'}
-                  className={inp}
-                />
-                <button className={btn} disabled={busy || !url.trim()} onClick={() => void salvar({ webhookUrl: url.trim() }, 'Webhook salvo. Use "Testar" para conferir.')}>
-                  Salvar
-                </button>
-              </div>
-              {settings?.configured && (
-                <div className="flex flex-wrap gap-1.5">
-                  <button className={btn} disabled={busy} onClick={() => void testar()}>
-                    <Send size={12} strokeWidth={1.8} /> Testar
-                  </button>
-                  <button className={btn} disabled={busy}
-                    onClick={() => void salvar({ enabled: !settings.enabled }, settings.enabled ? 'Alertas desligados.' : 'Alertas ligados.')}>
-                    {settings.enabled ? <BellOff size={12} strokeWidth={1.8} /> : <Bell size={12} strokeWidth={1.8} />}
-                    {settings.enabled ? 'Desligar' : 'Ligar'}
-                  </button>
-                  <button className={clsx(btn, 'text-crit dark:text-crit-dark')} disabled={busy}
-                    onClick={() => void salvar({ webhookUrl: '' }, 'Webhook removido.')}>
-                    Remover
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-zinc-400">Só o admin master altera o canal de alertas.</p>
-          )}
-          {msg && <p className={msg.ok ? 'text-ok dark:text-ok-dark' : 'text-crit dark:text-crit-dark'}>{msg.text}</p>}
-        </div>
-
-        <div className="min-w-0">
-          <p className="mb-1 text-[11.5px] font-semibold">Últimos alertas</p>
-          {events.length === 0 ? (
-            <p className="text-[11.5px] text-zinc-400">Nenhum alerta até agora.</p>
-          ) : (
-            <ul className="max-h-[260px] space-y-1.5 overflow-auto pr-1">
-              {events.slice(0, 20).map((e) => (
-                <li key={e.id} className="rounded-lg border border-zinc-100 px-2.5 py-1.5 dark:border-zinc-800">
-                  <div className="flex items-center gap-1.5">
-                    <Pill tone={EVENTO[e.status].tone}>{EVENTO[e.status].label}</Pill>
-                    <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium">{e.title}</span>
-                    <span className="shrink-0 text-[10.5px] tabular-nums text-zinc-400">{lagSince(hoursSince(e.createdAt))}</span>
-                  </div>
-                  <p className="mt-0.5 whitespace-pre-line text-[11px] text-zinc-500">{e.body}</p>
-                  {e.error && <p className="mt-0.5 text-[11px] text-crit dark:text-crit-dark">{e.error}</p>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
     </Card>
   )
 }

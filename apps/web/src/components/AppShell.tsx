@@ -20,6 +20,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from '@/store/authStore'
+import AlertsBell from '@/components/AlertsBell'
 import { useThemeStore } from '@/store/themeStore'
 
 interface NavEntry {
@@ -55,7 +56,7 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
   {
     title: 'Operar',
     items: [
-      { to: '/admin/monitor', label: 'Monitoramento', icon: Activity, role: 'admin' },
+      { to: '/admin/health', label: 'Saúde da plataforma', icon: Activity, role: 'admin' },
       { to: '/admin/connections', label: 'Conexões', icon: Database, role: 'admin' },
       { to: '/admin/sync-rules', label: 'Regras de atualização', icon: ListChecks, role: 'admin' },
       { to: '/admin/quality', label: 'Qualidade dos dados', icon: ClipboardCheck, role: 'admin' },
@@ -77,7 +78,7 @@ const CRUMB: Record<string, string> = {
   gateway: 'Gateway', models: 'Modelos', notebooks: 'Notebooks',
   'ai-providers': 'Provedores de IA', schedules: 'Agendamentos',
   autotune: 'Padronizar atualização', 'sync-rules': 'Regras de atualização',
-  quality: 'Qualidade dos dados',
+  quality: 'Qualidade dos dados', health: 'Saúde da plataforma',
 }
 
 function NavItem({ to, label, icon: Icon, end }: NavEntry) {
@@ -249,6 +250,7 @@ export default function AppShell() {
         <header className="flex h-[46px] shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-3.5 dark:border-zinc-800 dark:bg-zinc-900">
           <Breadcrumb />
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {isAdmin && <AlertsBell />}
             <button
               onClick={toggle}
               title={`Tema ${theme === 'dark' ? 'claro' : 'escuro'}`}

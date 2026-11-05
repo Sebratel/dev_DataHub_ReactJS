@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import AppShell from '@/components/AppShell'
 import { DialogProvider } from '@/components/Dialogs'
 import LoginPage from '@/features/auth/LoginPage'
@@ -8,7 +8,7 @@ import HomePage from '@/features/home/HomePage'
 import ConnectionsPage from '@/features/admin/ConnectionsPage'
 import AccessPage from '@/features/admin/AccessPage'
 import AuditPage from '@/features/admin/AuditPage'
-import MonitorPage from '@/features/admin/MonitorPage'
+import HealthPage from '@/features/admin/HealthPage'
 import AiProvidersPage from '@/features/admin/AiProvidersPage'
 import SchedulesPage from '@/features/admin/SchedulesPage'
 import AutotunePage from '@/features/admin/AutotunePage'
@@ -56,7 +56,10 @@ const router = createBrowserRouter([
       { path: 'admin/connections', element: <ConnectionsPage /> },
       { path: 'admin/access', element: <AccessPage /> },
       { path: 'admin/audit', element: <AuditPage /> },
-      { path: 'admin/monitor', element: <MonitorPage /> },
+      { path: 'admin/health', element: <HealthPage /> },
+      // A antiga tela Monitoramento virou um cartão da Saúde da plataforma;
+      // o endereço velho continua funcionando para quem o salvou.
+      { path: 'admin/monitor', element: <Navigate to="/admin/health" replace /> },
       { path: 'admin/ai-providers', element: <AiProvidersPage /> },
       { path: 'admin/sync-rules', element: <SyncRulesPage /> },
       { path: 'admin/quality', element: <QualityPage /> },

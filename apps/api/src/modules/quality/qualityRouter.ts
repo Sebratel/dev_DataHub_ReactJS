@@ -2,7 +2,7 @@
 // de alertas (P-QLD-2 / MON-03).
 //
 // Permissões, rota por rota (conferidas pelo dev/permissionsSmoke.ts):
-//   • ver resultados e alertas: admin;
+//   • ver resultados e alertas, e marcar alerta como visto: admin;
 //   • "Conciliar agora": admin — é operação, como "Sincronizar agora": dispara
 //     uma carga e uma leitura na fonte, sem mudar regra nenhuma;
 //   • cadastrar e testar o webhook: master. O endereço é para onde os avisos
@@ -147,13 +147,26 @@ qualityRouter.get('/alerts', ...adminOnly, async (req, res) => {
   const t = await tenantId(req.user!.tenant)
   const s = (await db.query(`select * from alert_settings where tenant_id = $1`, [t])).rows[0]
   const events: AlertEventRow[] = (await db.query(
-    `select id, kind, title, body, status, error, created_at from alert_events
+    `select id, kind, title, body, status, error, created_at, seen_at, seen_by from alert_events
       where tenant_id = $1 order by created_at desc limit 50`, [t],
   )).rows.map((e) => ({
     id: String(e.id), kind: e.kind, title: e.title, body: e.body, status: e.status,
-    error: e.error ?? null, createdAt: iso(e.created_at)!,
+    error: e.error ?? null, createdAt: iso(e.created_at)!, seenAt: iso(e.seen_at), seenBy: e.seen_by ?? null,
   }))
   res.json({ settings: settingsView(s), events })
+})
+
+// Marca como visto: os `ids` informados, ou todos os não vistos. É o que faz o
+// sino do cabeçalho parar de contar o que alguém do time já olhou.
+qualityRouter.post('/alerts/seen', ...adminOnly, async (req, res) => {
+  const t = await tenantId(req.user!.tenant)
+  const ids = Array.isArray(req.body?.ids) ? (req.body.ids as unknown[]).map(String) : null
+  const r = await db.query(
+    `update alert_events set seen_at = now(), seen_by = $2
+      where tenant_id = $1 and seen_at is null ${ids ? 'and id = any($3::uuid[])' : ''}`,
+    ids ? [t, req.user!.email, ids] : [t, req.user!.email],
+  )
+  res.json({ marked: r.rowCount ?? 0 })
 })
 
 // Grava o canal. `webhookUrl` vazio remove; ausente mantém o atual (a tela

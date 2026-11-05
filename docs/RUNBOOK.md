@@ -285,10 +285,13 @@ Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos d
   lake, QLD-07) contam como divergência.
 - **Ficam fora:** calculados, modo ao vivo e fontes que não são Postgres/MySQL
   (a tela mostra o motivo de cada um).
-- **Alertas:** divergência, conciliação não concluída, "voltou a bater" e carga
-  pausada por falhas seguidas vão para o webhook cadastrado na mesma tela (só o
-  master cadastra; formato `{"text": …}` do Google Chat). O mesmo assunto não se
-  repete em 12 h. Sem webhook, o alerta fica registrado na tela como "sem canal".
+- **Alertas ficam DENTRO do sistema:** divergência, conciliação não concluída,
+  "voltou a bater", verificação falhando e carga pausada aparecem em
+  **Operar › Saúde da plataforma** (histórico com "marcar como visto") e no
+  **sino do cabeçalho** (só admin), que conta os problemas abertos. Mandar
+  também para um chat é opcional: um webhook `{"text": …}` (Google Chat, n8n)
+  que só o master cadastra, recolhido no cartão de alertas. O mesmo assunto não
+  se repete no chat em 12 h.
 - **Divergiu, e agora?** Abra a linha: o dia que não bate aponta a causa. Linha
   a menos num dia com muitos registros de mesmo carimbo = empate na fronteira do
   lote (QLD-01); linha a mais = registro apagado na fonte (QLD-06); "nunca
@@ -312,6 +315,10 @@ Conjunto manual, pausado ou ao vivo não tem prazo cobrado.
 
 ## 10. Recuperação rápida (ordem sugerida num incidente)
 
+0. **Operar › Saúde da plataforma** — "Precisa de atenção agora" lista, do
+   estado atual, cargas pausadas ou falhando, conciliações divergentes,
+   verificações falhando, envio ao Databricks com erro, endpoints fora e disco
+   acima do limite; "Falhas nas últimas 24 h" responde o que quebrou à noite.
 1. `df -h /` — o disco está cheio?
 2. Achou staging gigante? Confirme 0 syncs rodando → apague o `.jsonl` → reinicie.
 3. Deploy falhando (container unhealthy)? Veja `docker logs datahub-api` — a API

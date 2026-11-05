@@ -216,6 +216,11 @@ export function pendingSyncs(): string[] {
   return [...aguardando]
 }
 
+/** O conjunto que está carregando agora (null = fila parada). Para a tela de saúde. */
+export function currentSync(): string | null {
+  return runningDatasetId
+}
+
 // ── Onde este conjunto está na fila ──────────────────────────────────────
 // Existe por um motivo concreto: quem clica em "Sincronizar agora" com a fila
 // ocupada não via NADA acontecer. A tela deduz "está rodando" das linhas de
