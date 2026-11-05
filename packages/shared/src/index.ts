@@ -394,6 +394,94 @@ export interface SyncRuleRow {
   runs24h: number
 }
 
+// ── Qualidade dos dados: conciliação fonte × lake (D-QLD-3) ──
+export type ReconcileStatus = 'queued' | 'running' | 'match' | 'diverged' | 'error'
+/** Faixa de tamanho da D-QLD-3: pequeno, médio, grande. */
+export type ReconcileBand = 'small' | 'medium' | 'large'
+
+/** Um dia em que fonte e lake não bateram. */
+export interface ReconcileDay {
+  day: string
+  sourceRows: number
+  lakeRows: number
+  sourceSum: number | null
+  lakeSum: number | null
+}
+
+export interface ReconcileRun {
+  id: string
+  datasetId: string
+  slug: string
+  name: string
+  trigger: 'daily' | 'manual'
+  band: ReconcileBand | null
+  status: ReconcileStatus
+  /** 'per-day' separa por dia da chave de data; 'total' compara só o total. */
+  method: 'per-day' | 'total' | null
+  keyField: SyncRuleField | null
+  sumField: SyncRuleField | null
+  windowFrom: string | null
+  windowTo: string | null
+  sourceRows: number | null
+  lakeRows: number | null
+  sourceSum: number | null
+  lakeSum: number | null
+  daysCompared: number | null
+  daysDiverged: number | null
+  diffDays: ReconcileDay[]
+  /** Linhas da fonte que nunca entram no lake (chaves vazias — QLD-07). */
+  lostRows: number | null
+  notes: string[]
+  error: string | null
+  requestedBy: string | null
+  sourceMs: number | null
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+/** Um conjunto de fonte na tela de Qualidade: elegível ou não, e a última conferência. */
+export interface QualityDatasetRow {
+  id: string
+  slug: string
+  name: string
+  official: boolean
+  rowCount: number | null
+  band: ReconcileBand
+  mode: 'live' | 'snapshot' | 'incremental'
+  /** null = pode ser conciliado; senão, o motivo de ficar de fora. */
+  ineligible: string | null
+  lastRun: ReconcileRun | null
+}
+
+export interface QualityOverview {
+  datasets: QualityDatasetRow[]
+  /** Faixas e horário em vigor (vêm da stack; ainda a confirmar pelo comitê). */
+  rules: { smallMaxRows: number; largeMinRows: number; largeWindowDays: number; reconcileHour: number }
+}
+
+export interface AlertSettingsView {
+  configured: boolean
+  /** Host do webhook + 4 últimos caracteres — nunca o endereço inteiro. */
+  hint: string | null
+  enabled: boolean
+  lastTestAt: string | null
+  lastTestOk: boolean | null
+  lastTestError: string | null
+  updatedBy: string | null
+  updatedAt: string | null
+}
+
+export interface AlertEventRow {
+  id: string
+  kind: string
+  title: string
+  body: string
+  status: 'sent' | 'failed' | 'no-channel'
+  error: string | null
+  createdAt: string
+}
+
 export const WEEKDAY_LABELS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'] as const
 
 // Usada nos DOIS lados (agendador no servidor, timer de auto-atualizacao no

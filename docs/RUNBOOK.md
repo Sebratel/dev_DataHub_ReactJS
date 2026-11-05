@@ -158,6 +158,10 @@ Para deixar a ingestão mais gentil: lote menor + pausa maior (ex.:
 | `DATABRICKS_VOLUME_PATH` | `/Volumes/piloto_mariadb/landing/arquivos` | Destino; em dev use `.../_dev` |
 | `DATABRICKS_UPLOAD_MAX_RETRIES` | `5` | Retentativas em 429/5xx/rede |
 | `DATABRICKS_SOURCE_TZ` | `America/Sao_Paulo` | Fuso que o lake gravou (vira UTC no envio) |
+| `RECONCILE_HOUR` | `6` | Hora da escolha diária da conciliação fonte × lake |
+| `DQ_SMALL_MAX_ROWS` | `100000` | Até aqui o conjunto é "pequeno" (D-QLD-3) |
+| `DQ_LARGE_MIN_ROWS` | `2000000` | A partir daqui é "grande" |
+| `DQ_LARGE_WINDOW_DAYS` | `60` | Quantos dias o conjunto grande confere |
 
 > Variável nova **tem** que entrar no bloco `environment` do `docker-compose.yml`:
 > o que não estiver listado lá não chega ao contêiner, por mais preenchido que
@@ -263,7 +267,37 @@ catálogo e volume forem mantidos. O provisionamento é a sequência acima.
 
 ---
 
-## 9. Recuperação rápida (ordem sugerida num incidente)
+## 9. Qualidade dos dados — conciliação fonte × lake e alertas
+
+Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos dados**.
+
+- **Todo dia, a partir de `RECONCILE_HOUR`**, o sistema escolhe um conjunto
+  pequeno, um médio e um grande — os oficiais primeiro, depois quem está há mais
+  tempo sem conferência — e confere com a fonte. "Conciliar agora" faz o mesmo
+  para um conjunto só (admin).
+- **A conferência carrega antes de comparar**, dentro da mesma fila das cargas:
+  a fonte nunca recebe duas consultas ao mesmo tempo, e o lake comparado é o
+  recém-atualizado. Conjunto `manual` e conjunto pausado ficam fora da rotina.
+- **O que é comparado:** contagem e soma da identidade numérica (soma de
+  controle). Com chave de data, **por dia**, até o watermark menos a folga; o
+  grande só nos últimos `DQ_LARGE_WINDOW_DAYS` dias. Snapshot e chave numérica
+  comparam o total. Linhas com a chave de carga vazia na fonte (nunca entram no
+  lake, QLD-07) contam como divergência.
+- **Ficam fora:** calculados, modo ao vivo e fontes que não são Postgres/MySQL
+  (a tela mostra o motivo de cada um).
+- **Alertas:** divergência, conciliação não concluída, "voltou a bater" e carga
+  pausada por falhas seguidas vão para o webhook cadastrado na mesma tela (só o
+  master cadastra; formato `{"text": …}` do Google Chat). O mesmo assunto não se
+  repete em 12 h. Sem webhook, o alerta fica registrado na tela como "sem canal".
+- **Divergiu, e agora?** Abra a linha: o dia que não bate aponta a causa. Linha
+  a menos num dia com muitos registros de mesmo carimbo = empate na fronteira do
+  lote (QLD-01); linha a mais = registro apagado na fonte (QLD-06); "nunca
+  entram" = chave de criação vazia (QLD-07). Corrija a regra do conjunto ou
+  recarregue (master) e use "Conciliar agora" para confirmar.
+
+---
+
+## 10. Recuperação rápida (ordem sugerida num incidente)
 
 1. `df -h /` — o disco está cheio?
 2. Achou staging gigante? Confirme 0 syncs rodando → apague o `.jsonl` → reinicie.

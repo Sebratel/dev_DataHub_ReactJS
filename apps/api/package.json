@@ -23,6 +23,7 @@
     "derived:smoke": "tsx src/dev/derivedCadenceSmoke.ts",
     "connboot:smoke": "tsx src/dev/connectionsBootSmoke.ts",
     "queue:smoke": "tsx src/dev/queueStateSmoke.ts",
+    "quality:smoke": "tsx src/dev/qualitySmoke.ts",
     "lake:smoke": "tsx src/dev/lakeRepairSmoke.ts",
     "databricks:smoke": "tsx src/dev/databricksSmoke.ts",
     "databricks:check": "tsx src/dev/databricksCheck.ts",

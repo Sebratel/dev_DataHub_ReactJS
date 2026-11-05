@@ -22,6 +22,7 @@ import { duckQuery } from '../query/duck.js'
 import { materializeDerived, referencedSlugs } from '../transform/derive.js'
 import { recencyExpression, type RecencyKey } from './recency.js'
 import { publicarDataset } from '../databricks/publish.js'
+import { notifyDataset } from '../alerts/notify.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -162,11 +163,25 @@ async function registraFalha(datasetId: string, slug: string, erro: string): Pro
       `Pausado automaticamente após ${falhas} falhas seguidas. Último erro: ${erro.slice(0, 300)} — ` +
       'insistir num erro que se repete só custa leitura na fonte de produção. Resolva a causa e use ' +
       '"Sincronizar agora" para retomar (qualquer ação manual reativa o agendamento).'
-    await db.query(
+    const pausou = (await db.query(
       `update datasets set sync_paused_reason = $2 where id = $1 and sync_paused_reason is null`,
       [datasetId, motivo],
-    )
+    )).rowCount
     console.warn(`[sync] ${slug}: PAUSADO após ${falhas} falhas seguidas.`)
+    // Só na PASSAGEM para pausado: daí em diante o agendador nem tenta, e quem
+    // descobria a pausa era quem estranhava o número horas depois (MON-03).
+    if (pausou) {
+      void notifyDataset(datasetId, {
+        key: `sync:paused:${datasetId}`,
+        kind: 'sync-paused',
+        title: `Carga pausada: ${slug}`,
+        lines: [
+          `Pausada depois de ${falhas} falhas seguidas; o agendador não tenta mais sozinho.`,
+          `Último erro: ${erro.slice(0, 300)}`,
+          'Resolva a causa e use "Sincronizar agora" no conjunto para retomar.',
+        ],
+      })
+    }
   } catch (e) {
     // Best-effort: não pode transformar uma falha de carga em duas.
     console.warn(`[sync] falha ao registrar erro de ${slug}: ${(e as Error).message}`)
@@ -253,6 +268,28 @@ export function cancelPending(ids?: string[]): string[] {
   return removidos
 }
 
+// ── Depois da carga, ainda DENTRO da fila ────────────────────────────────
+// A conciliação fonte × lake (quality/reconcile.ts) precisa conferir a fonte
+// logo depois de uma carga do mesmo conjunto, e sem que nenhuma outra carga
+// rode no meio — por dois motivos: a comparação só é justa contra um lake
+// recém-atualizado, e a regra de uma consulta por vez na produção vale também
+// para ela. O jeito de garantir as duas coisas é rodar no mesmo elo da fila.
+//
+// É um gancho, e não um import, para a fila não depender da conciliação:
+// quem precisa registra (setAfterSync) e é chamado com o desfecho da carga.
+export interface SyncOutcome { ok: boolean; result: string }
+type AfterSync = (datasetId: string, outcome: SyncOutcome) => Promise<void>
+let afterSync: AfterSync | null = null
+export function setAfterSync(fn: AfterSync | null): void { afterSync = fn }
+
+async function chamaAfterSync(datasetId: string, outcome: SyncOutcome): Promise<void> {
+  if (!afterSync) return
+  // Nunca derruba a fila: um erro aqui não pode virar "a carga falhou".
+  try { await afterSync(datasetId, outcome) } catch (e) {
+    console.warn(`[sync] pós-carga de ${datasetId} falhou: ${(e as Error).message}`)
+  }
+}
+
 // `visited` evita ciclo infinito quando A cascateia para B e B (por engano)
 // cascateia de volta para A — cada slug só dispara cascata uma vez por corrida.
 export function enqueueSync(datasetId: string, visited: Set<string> = new Set()): Promise<string> {
@@ -272,7 +309,7 @@ export function enqueueSync(datasetId: string, visited: Set<string> = new Set())
     return Promise.resolve('já estava na fila')
   }
   aguardando.push(datasetId)
-  const job = queue.then(() => {
+  const job = queue.then(async () => {
     // Sai da espera no instante em que COMEÇA a rodar — daí em diante quem
     // conta a história é o sync_run, com status 'running'.
     const i = aguardando.indexOf(datasetId)
@@ -280,9 +317,18 @@ export function enqueueSync(datasetId: string, visited: Set<string> = new Set())
     // Tirado da fila enquanto esperava: desiste sem tocar na fonte.
     if (canceladas.delete(datasetId)) {
       console.log(`[sync] ${datasetId}: retirado da fila antes de começar.`)
+      await chamaAfterSync(datasetId, { ok: false, result: 'retirado da fila' })
       return 'retirado da fila'
     }
-    return runSync(datasetId)
+    let result: string
+    try {
+      result = await runSync(datasetId)
+    } catch (e) {
+      await chamaAfterSync(datasetId, { ok: false, result: (e as Error).message })
+      throw e
+    }
+    await chamaAfterSync(datasetId, { ok: result !== 'cancelado', result })
+    return result
   }).catch((e) => {
     const i = aguardando.indexOf(datasetId)
     if (i >= 0) aguardando.splice(i, 1)

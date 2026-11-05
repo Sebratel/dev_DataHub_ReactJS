@@ -85,6 +85,22 @@ export const config = {
     diskWarnPercent: Math.min(99, Math.max(50, Number(process.env.SYNC_DISK_WARN_PERCENT) || 85)),
   },
 
+  // Qualidade dos dados — conciliação fonte × lake (D-QLD-3, R4 de 30/10/2026).
+  // As faixas são as propostas na v0.4 e ainda serão confirmadas pelo comitê;
+  // por isso ficam na stack, e não no código.
+  quality: {
+    // Hora LOCAL da escolha diária. Depois da janela noturna (ETL_HOUR) e antes
+    // do expediente: o resultado já está no canal quando as pessoas chegam.
+    reconcileHour: Math.min(23, Math.max(0, Number(process.env.RECONCILE_HOUR ?? 6))),
+    // Até aqui é "pequeno" (dois lotes da carga); acima de largeMinRows,
+    // "grande". Entre os dois, "médio".
+    smallMaxRows: Math.max(1, Number(process.env.DQ_SMALL_MAX_ROWS) || 100_000),
+    largeMinRows: Math.max(2, Number(process.env.DQ_LARGE_MIN_ROWS) || 2_000_000),
+    // Conjunto grande confere só os últimos N dias, pela chave indexada — o
+    // histórico inteiro de uma tabela de 15,9 milhões pesaria na fonte.
+    largeWindowDays: Math.max(1, Number(process.env.DQ_LARGE_WINDOW_DAYS) || 60),
+  },
+
   // Publicação no Databricks — envio de saída, best-effort, depois da
   // materialização. Ver docs do piloto Native/Matrix.
   databricks: {

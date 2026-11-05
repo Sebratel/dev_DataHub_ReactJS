@@ -13,6 +13,7 @@ import AiProvidersPage from '@/features/admin/AiProvidersPage'
 import SchedulesPage from '@/features/admin/SchedulesPage'
 import AutotunePage from '@/features/admin/AutotunePage'
 import SyncRulesPage from '@/features/admin/SyncRulesPage'
+import QualityPage from '@/features/admin/QualityPage'
 import ApisPage from '@/features/integrations/ApisPage'
 import GatewayPage from '@/features/gateway/GatewayPage'
 import NotebooksPage from '@/features/notebooks/NotebooksPage'
@@ -58,6 +59,7 @@ const router = createBrowserRouter([
       { path: 'admin/monitor', element: <MonitorPage /> },
       { path: 'admin/ai-providers', element: <AiProvidersPage /> },
       { path: 'admin/sync-rules', element: <SyncRulesPage /> },
+      { path: 'admin/quality', element: <QualityPage /> },
       { path: 'admin/schedules', element: <SchedulesPage /> },
       { path: 'admin/autotune', element: <AutotunePage /> },
     ],
