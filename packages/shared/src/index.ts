@@ -394,6 +394,163 @@ export interface SyncRuleRow {
   runs24h: number
 }
 
+// ── Qualidade dos dados: conciliação fonte × lake (D-QLD-3) ──
+export type ReconcileStatus = 'queued' | 'running' | 'match' | 'diverged' | 'error'
+/** Faixa de tamanho da D-QLD-3: pequeno, médio, grande. */
+export type ReconcileBand = 'small' | 'medium' | 'large'
+
+/** Um dia em que fonte e lake não bateram. */
+export interface ReconcileDay {
+  day: string
+  sourceRows: number
+  lakeRows: number
+  sourceSum: number | null
+  lakeSum: number | null
+}
+
+export interface ReconcileRun {
+  id: string
+  datasetId: string
+  slug: string
+  name: string
+  trigger: 'daily' | 'manual'
+  band: ReconcileBand | null
+  status: ReconcileStatus
+  /** 'per-day' separa por dia da chave de data; 'total' compara só o total. */
+  method: 'per-day' | 'total' | null
+  keyField: SyncRuleField | null
+  sumField: SyncRuleField | null
+  windowFrom: string | null
+  windowTo: string | null
+  sourceRows: number | null
+  lakeRows: number | null
+  sourceSum: number | null
+  lakeSum: number | null
+  daysCompared: number | null
+  daysDiverged: number | null
+  diffDays: ReconcileDay[]
+  /** Linhas da fonte que nunca entram no lake (chaves vazias — QLD-07). */
+  lostRows: number | null
+  /** Linhas a mais que identidades distintas na fonte (QLD-04). null = sem identidade a conferir. */
+  dupIdentity: number | null
+  notes: string[]
+  error: string | null
+  requestedBy: string | null
+  sourceMs: number | null
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+/** Um conjunto de fonte na tela de Qualidade: elegível ou não, e a última conferência. */
+export interface QualityDatasetRow {
+  id: string
+  slug: string
+  name: string
+  official: boolean
+  rowCount: number | null
+  band: ReconcileBand
+  mode: 'live' | 'snapshot' | 'incremental'
+  /** null = pode ser conciliado; senão, o motivo de ficar de fora. */
+  ineligible: string | null
+  lastRun: ReconcileRun | null
+}
+
+/** Verificação contínua (D-QLD-2): prazo pela cadência, volume do snapshot, identidade. */
+export interface DatasetCheckRow {
+  datasetId: string
+  slug: string
+  name: string
+  kind: 'source' | 'derived'
+  check: 'stale' | 'volume' | 'identity'
+  status: 'ok' | 'fail'
+  detail: string | null
+  /** Desde quando está neste estado. */
+  since: string
+  checkedAt: string
+}
+
+export interface QualityOverview {
+  datasets: QualityDatasetRow[]
+  /** Só as que estão falhando agora — o "ok" é o normal e não precisa de lista. */
+  failingChecks: DatasetCheckRow[]
+  /** Faixas e horário em vigor (vêm da stack; ainda a confirmar pelo comitê). */
+  rules: { smallMaxRows: number; largeMinRows: number; largeWindowDays: number; reconcileHour: number }
+}
+
+export interface AlertSettingsView {
+  configured: boolean
+  /** Host do webhook + 4 últimos caracteres — nunca o endereço inteiro. */
+  hint: string | null
+  enabled: boolean
+  lastTestAt: string | null
+  lastTestOk: boolean | null
+  lastTestError: string | null
+  updatedBy: string | null
+  updatedAt: string | null
+}
+
+export interface AlertEventRow {
+  id: string
+  kind: string
+  title: string
+  body: string
+  /** 'no-channel' = ficou só no sistema (o webhook é opcional). */
+  status: 'sent' | 'failed' | 'no-channel'
+  error: string | null
+  createdAt: string
+  /** null = ninguém viu ainda na tela. */
+  seenAt: string | null
+  seenBy: string | null
+}
+
+// ── Saúde da plataforma (MON-14, D-MON-5 B) ─────────────────
+/**
+ * Um problema ABERTO agora, montado a partir do estado atual — não de um
+ * evento. Sai da lista sozinho quando a causa é resolvida.
+ */
+export interface PlatformProblem {
+  /** Estável entre leituras (ex.: 'paused:<id>'), para a tela não piscar. */
+  id: string
+  severity: 'crit' | 'warn'
+  area: 'carga' | 'qualidade' | 'integracao' | 'infraestrutura'
+  title: string
+  detail: string
+  since: string | null
+  /** Rota da tela onde se resolve. */
+  link: string | null
+}
+
+export interface PlatformRun {
+  id: string
+  datasetId: string
+  slug: string
+  name: string
+  kind: 'source' | 'derived'
+  mode: string
+  status: string
+  rows: number | null
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+
+export interface PlatformHealth {
+  checkedAt: string
+  problems: PlatformProblem[]
+  /** Execuções iniciadas nas últimas 24 h, fontes e calculados (MON-08). */
+  runs24h: { total: number; done: number; error: number; cancelled: number; running: number; failures: PlatformRun[] }
+  disk: { usedPercent: number; warnPercent: number; totalBytes: number; freeBytes: number; lakeBytes: number; stagingBytes: number } | null
+  /** Consultas no motor agora e quantas esperam (MON-10). */
+  engine: { normal: number; adhoc: number; queued: number; maxNormal: number; maxAdhoc: number }
+  /** Fila de cargas: quem carrega agora e quantos esperam. */
+  queue: { running: { slug: string; name: string } | null; waiting: number }
+  unseenAlerts: number
+}
+
+/** Leitura leve para o sino do cabeçalho. */
+export interface PlatformBadge { problems: number; crit: number; unseenAlerts: number }
+
 export const WEEKDAY_LABELS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'] as const
 
 // Usada nos DOIS lados (agendador no servidor, timer de auto-atualizacao no

@@ -17,6 +17,8 @@ import { autotuneRouter } from '../modules/sync/autotuneRouter.js'
 import { schedulesRouter } from '../modules/sync/schedulesRouter.js'
 import { accessRouter, ROLES } from '../modules/admin/accessRouter.js'
 import { databricksRouter, databricksAdminRouter } from '../modules/databricks/databricksRouter.js'
+import { qualityRouter } from '../modules/quality/qualityRouter.js'
+import { platformRouter } from '../modules/admin/platformRouter.js'
 import { isMaster, isEnvMaster, grantMaster, revokeMaster } from '../modules/auth/masterAdmins.js'
 import { config } from '../core/config.js'
 
@@ -127,11 +129,31 @@ const EXPECTED: Record<string, Record<string, Level>> = {
   databricksAdminRouter: {
     'GET /status': 'admin',
   },
+  qualityRouter: {
+    // Leitura dos resultados da conciliação e do canal de alertas.
+    'GET /overview': 'admin',
+    'GET /datasets/:id/reconciliations': 'admin',
+    // "Conciliar agora" é operação, como "Sincronizar agora": dispara uma
+    // carga e uma leitura na fonte, sem mudar regra nenhuma.
+    'POST /datasets/:id/reconcile': 'admin',
+    'GET /alerts': 'admin',
+    // Marcar como visto não apaga nada: só tira o aviso do contador do sino.
+    'POST /alerts/seen': 'admin',
+    // O endereço do webhook é para onde vão os avisos de defeito: trocá-lo
+    // em silêncio desviaria os alertas de todos.
+    'PUT /alerts': 'master',
+    'POST /alerts/test': 'master',
+  },
+  // Saúde da plataforma: só leitura.
+  platformRouter: {
+    'GET /badge': 'admin',
+    'GET /health': 'admin',
+  },
 }
 
 const ROUTERS: Record<string, unknown> = {
   syncRouter, autotuneRouter, schedulesRouter, accessRouter,
-  databricksRouter, databricksAdminRouter,
+  databricksRouter, databricksAdminRouter, qualityRouter, platformRouter,
 }
 
 console.log('\n── nível de permissão por rota ──')

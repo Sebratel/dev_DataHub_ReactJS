@@ -108,6 +108,12 @@ services:
       SYNC_MAX_JSON_OBJECT_BYTES: ${SYNC_MAX_JSON_OBJECT_BYTES:-67108864}
       # A partir de quantos % de uso do volume do lake a tela avisa.
       SYNC_DISK_WARN_PERCENT: ${SYNC_DISK_WARN_PERCENT:-85}
+      # Conciliacao fonte x lake (D-QLD-3): hora da escolha diaria, faixas de
+      # tamanho (pequeno ate / grande a partir de) e janela dos grandes, em dias.
+      RECONCILE_HOUR: ${RECONCILE_HOUR:-6}
+      DQ_SMALL_MAX_ROWS: ${DQ_SMALL_MAX_ROWS:-100000}
+      DQ_LARGE_MIN_ROWS: ${DQ_LARGE_MIN_ROWS:-2000000}
+      DQ_LARGE_WINDOW_DAYS: ${DQ_LARGE_WINDOW_DAYS:-60}
       # Motor de consulta (DuckDB) — teto GLOBAL do DuckDB (não é por consulta).
       # 6GB dentro dos 12g da API deixa ~6g pro Node + embeddings + SO. Consultas
       # e cargas grandes derramam pra disco (spill) em vez de estourar (OOM).

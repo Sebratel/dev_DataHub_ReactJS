@@ -19,6 +19,8 @@ import { enqueueSync } from './ingest.js'
 import { orderDerived } from '../transform/derive.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
 import { runDueHealthChecks } from '../../connectors/healthChecks.js'
+import { runDailyPick } from '../quality/reconcile.js'
+import { runStaleChecks } from '../quality/checks.js'
 import { isWithinSchedule } from '@datahub/shared'
 
 function msUntilNextMinute(): number {
@@ -87,8 +89,21 @@ async function tick(): Promise<void> {
     void reindexEmbeddings().catch((e) =>
       console.warn(`[embeddings] reindex periódico falhou: ${(e as Error).message}`))
     await tickHourlyAndDaily(now.getHours())
+    // Conciliação diária (D-QLD-3). ">=" e não "===": se o servidor estava
+    // fora na hora marcada, a escolha do dia acontece na hora cheia seguinte.
+    // A própria rotina não escolhe duas vezes no mesmo dia.
+    if (now.getHours() >= config.quality.reconcileHour) {
+      void runDailyPick(now).catch((e) =>
+        console.warn(`[qualidade] escolha diária falhou: ${(e as Error).message}`))
+    }
   }
   await tickSchedules(now)
+  // Prazo de cada conjunto pela cadência (D-QLD-2). Só lê o catálogo; 15 min
+  // é a granularidade da menor régua que ela aplica (30 min no agendamento).
+  if (now.getMinutes() % 15 === 0) {
+    void runStaleChecks(now).catch((e) =>
+      console.warn(`[qualidade] verificação de prazo falhou: ${(e as Error).message}`))
+  }
 }
 
 export function startScheduler(): void {

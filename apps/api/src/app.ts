@@ -31,6 +31,8 @@ import { notebooksRouter } from './modules/notebooks/notebooksRouter.js'
 import { accessRouter } from './modules/admin/accessRouter.js'
 import { monitorRouter } from './modules/admin/monitorRouter.js'
 import { diskRouter } from './modules/admin/diskRouter.js'
+import { qualityRouter } from './modules/quality/qualityRouter.js'
+import { platformRouter } from './modules/admin/platformRouter.js'
 
 export function createApp(): express.Express {
   const app = express()
@@ -69,6 +71,10 @@ export function createApp(): express.Express {
   app.use('/api/v1/admin', accessRouter)
   app.use('/api/v1/health-checks', monitorRouter)
   app.use('/api/v1/disk', diskRouter)
+  // Qualidade dos dados: conciliação fonte × lake e canal de alertas.
+  app.use('/api/v1/quality', qualityRouter)
+  // Saúde da plataforma: problemas abertos, cargas de 24 h, disco, motor.
+  app.use('/api/v1/platform', platformRouter)
 
   // Catálogo de conjuntos de dados. ORDEM IMPORTA: query e sync têm rotas mais
   // específicas (/:slug/query, /:id/sync) e vêm antes do router genérico.

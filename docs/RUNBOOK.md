@@ -158,6 +158,10 @@ Para deixar a ingestão mais gentil: lote menor + pausa maior (ex.:
 | `DATABRICKS_VOLUME_PATH` | `/Volumes/piloto_mariadb/landing/arquivos` | Destino; em dev use `.../_dev` |
 | `DATABRICKS_UPLOAD_MAX_RETRIES` | `5` | Retentativas em 429/5xx/rede |
 | `DATABRICKS_SOURCE_TZ` | `America/Sao_Paulo` | Fuso que o lake gravou (vira UTC no envio) |
+| `RECONCILE_HOUR` | `6` | Hora da escolha diária da conciliação fonte × lake |
+| `DQ_SMALL_MAX_ROWS` | `100000` | Até aqui o conjunto é "pequeno" (D-QLD-3) |
+| `DQ_LARGE_MIN_ROWS` | `2000000` | A partir daqui é "grande" |
+| `DQ_LARGE_WINDOW_DAYS` | `60` | Quantos dias o conjunto grande confere |
 
 > Variável nova **tem** que entrar no bloco `environment` do `docker-compose.yml`:
 > o que não estiver listado lá não chega ao contêiner, por mais preenchido que
@@ -263,8 +267,58 @@ catálogo e volume forem mantidos. O provisionamento é a sequência acima.
 
 ---
 
-## 9. Recuperação rápida (ordem sugerida num incidente)
+## 9. Qualidade dos dados — conciliação fonte × lake e alertas
 
+Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos dados**.
+
+- **Todo dia, a partir de `RECONCILE_HOUR`**, o sistema escolhe um conjunto
+  pequeno, um médio e um grande — os oficiais primeiro, depois quem está há mais
+  tempo sem conferência — e confere com a fonte. "Conciliar agora" faz o mesmo
+  para um conjunto só (admin).
+- **A conferência carrega antes de comparar**, dentro da mesma fila das cargas:
+  a fonte nunca recebe duas consultas ao mesmo tempo, e o lake comparado é o
+  recém-atualizado. Conjunto `manual` e conjunto pausado ficam fora da rotina.
+- **O que é comparado:** contagem e soma da identidade numérica (soma de
+  controle). Com chave de data, **por dia**, até o watermark menos a folga; o
+  grande só nos últimos `DQ_LARGE_WINDOW_DAYS` dias. Snapshot e chave numérica
+  comparam o total. Linhas com a chave de carga vazia na fonte (nunca entram no
+  lake, QLD-07) contam como divergência.
+- **Ficam fora:** calculados, modo ao vivo e fontes que não são Postgres/MySQL
+  (a tela mostra o motivo de cada um).
+- **Alertas ficam DENTRO do sistema:** divergência, conciliação não concluída,
+  "voltou a bater", verificação falhando e carga pausada aparecem em
+  **Operar › Saúde da plataforma** (histórico com "marcar como visto") e no
+  **sino do cabeçalho** (só admin), que conta os problemas abertos. Mandar
+  também para um chat é opcional: um webhook `{"text": …}` (Google Chat, n8n)
+  que só o master cadastra, recolhido no cartão de alertas. O mesmo assunto não
+  se repete no chat em 12 h.
+- **Divergiu, e agora?** Abra a linha: o dia que não bate aponta a causa. Linha
+  a menos num dia com muitos registros de mesmo carimbo = empate na fronteira do
+  lote (QLD-01); linha a mais = registro apagado na fonte (QLD-06); "nunca
+  entram" = chave de criação vazia (QLD-07); "identidade não é única na fonte"
+  = a identidade configurada junta linhas diferentes na compactação (QLD-04).
+  Corrija a regra do conjunto ou recarregue (master) e use "Conciliar agora"
+  para confirmar.
+
+**Verificações contínuas (D-QLD-2 A)** — sem consultar a fonte, estado em
+`dataset_checks`, alerta só na troca de estado (passou a falhar / voltou):
+
+| Verificação | Quando | Falha quando |
+|---|---|---|
+| Prazo (`stale`) | a cada 15 min | de hora em hora parado > 2 h; diária > 26 h; agendamento parado > 3 intervalos (mín. 30 min) dentro da janela; calculado em cascata que não acompanhou um insumo por > 60 min |
+| Volume (`volume`) | depois de cada carga de snapshot | caiu 20% ou mais em relação à carga anterior (tabelas com ≥ 1.000 linhas) |
+| Identidade (`identity`) | depois de cada carga com identidade | identidade vazia no lake (qualquer modo) ou repetida (snapshot) |
+
+Conjunto manual, pausado ou ao vivo não tem prazo cobrado.
+
+---
+
+## 10. Recuperação rápida (ordem sugerida num incidente)
+
+0. **Operar › Saúde da plataforma** — "Precisa de atenção agora" lista, do
+   estado atual, cargas pausadas ou falhando, conciliações divergentes,
+   verificações falhando, envio ao Databricks com erro, endpoints fora e disco
+   acima do limite; "Falhas nas últimas 24 h" responde o que quebrou à noite.
 1. `df -h /` — o disco está cheio?
 2. Achou staging gigante? Confirme 0 syncs rodando → apague o `.jsonl` → reinicie.
 3. Deploy falhando (container unhealthy)? Veja `docker logs datahub-api` — a API

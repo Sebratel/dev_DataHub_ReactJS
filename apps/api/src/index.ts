@@ -13,6 +13,7 @@ import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging, faxinaLake } from './core/lake.js'
 import { closeOrphanRuns } from './modules/sync/ingest.js'
+import { closeOrphanReconciles } from './modules/quality/reconcile.js'
 import { reloadConnections, avisoDeConexoes } from './connectors/store.js'
 import { reloadMasterAdmins } from './modules/auth/masterAdmins.js'
 import { ensureApiMetricsDataset, ensureApiSummaryDerived, ensureApiMetricsDashboard, ensureApiRuntimeWidget } from './modules/catalog/apiMetricsDataset.js'
@@ -88,6 +89,11 @@ if (isDbAvailable()) {
   await closeOrphanRuns()
     .then((n) => { if (n) console.log(`[sync] ${n} execução(ões) órfã(s) fechada(s) no boot.`) })
     .catch((e) => console.warn(`[sync] falha ao fechar execuções órfãs: ${(e as Error).message}`))
+  // Conferências que esperavam a fila do processo que morreu: ninguém mais as
+  // roda, e a pendente bloquearia o próximo "Conciliar agora" do conjunto.
+  await closeOrphanReconciles()
+    .then((n) => { if (n) console.log(`[qualidade] ${n} conciliação(ões) interrompida(s) fechada(s) no boot.`) })
+    .catch((e) => console.warn(`[qualidade] falha ao fechar conciliações órfãs: ${(e as Error).message}`))
   // Masters concedidos pela tela — a checagem é contra um Set em memória.
   await reloadMasterAdmins().catch((e) =>
     console.warn(`[auth] carga inicial de masters falhou: ${(e as Error).message}`))
