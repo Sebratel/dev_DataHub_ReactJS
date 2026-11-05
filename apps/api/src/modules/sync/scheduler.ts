@@ -20,6 +20,7 @@ import { orderDerived } from '../transform/derive.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
 import { runDueHealthChecks } from '../../connectors/healthChecks.js'
 import { runDailyPick } from '../quality/reconcile.js'
+import { runStaleChecks } from '../quality/checks.js'
 import { isWithinSchedule } from '@datahub/shared'
 
 function msUntilNextMinute(): number {
@@ -97,6 +98,12 @@ async function tick(): Promise<void> {
     }
   }
   await tickSchedules(now)
+  // Prazo de cada conjunto pela cadência (D-QLD-2). Só lê o catálogo; 15 min
+  // é a granularidade da menor régua que ela aplica (30 min no agendamento).
+  if (now.getMinutes() % 15 === 0) {
+    void runStaleChecks(now).catch((e) =>
+      console.warn(`[qualidade] verificação de prazo falhou: ${(e as Error).message}`))
+  }
 }
 
 export function startScheduler(): void {

@@ -10,11 +10,11 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ClipboardCheck, Database, RefreshCw, Bell, BellOff, Send, ChevronRight, Loader2, Star,
+  ClipboardCheck, Database, RefreshCw, Bell, BellOff, Send, ChevronRight, Loader2, Star, ShieldAlert, GitMerge,
 } from 'lucide-react'
 import clsx from 'clsx'
 import type {
-  QualityOverview, QualityDatasetRow, ReconcileRun, ReconcileBand, AlertSettingsView, AlertEventRow,
+  QualityOverview, QualityDatasetRow, ReconcileRun, ReconcileBand, AlertSettingsView, AlertEventRow, DatasetCheckRow,
 } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { hoursSince, lagSince } from '@/lib/freshness'
@@ -141,7 +141,10 @@ export default function QualityPage() {
             { label: 'Conferidos em 30 dias', value: fmt(conferidos30), foot: elegiveis.length ? `${Math.round((conferidos30 / elegiveis.length) * 100)}% dos conciliáveis` : undefined },
             { label: 'Divergem', value: fmt(count('diverged')), foot: 'no último resultado' },
             { label: 'Não concluídas', value: fmt(count('error')), foot: 'fonte fora, tempo esgotado ou carga falhou' },
+            { label: 'Verificações falhando', value: fmt(data?.failingChecks.length ?? 0), foot: 'prazo, volume e identidade', icon: ShieldAlert },
           ]} />
+
+          {data && <VerificacoesCard checks={data.failingChecks} />}
 
           {r && (
             <p className="text-[11px] text-zinc-500">
@@ -327,6 +330,14 @@ function Detalhe({ d }: { d: QualityDatasetRow }) {
             <dt className="text-zinc-400">Nunca entram</dt>
             <dd className="text-crit dark:text-crit-dark">{fmt(run.lostRows)} linha(s) da fonte com a chave de carga vazia</dd>
           </>)}
+          {run.dupIdentity != null && (<>
+            <dt className="text-zinc-400">Identidade na fonte</dt>
+            <dd className={run.dupIdentity ? 'text-crit dark:text-crit-dark' : ''}>
+              {run.dupIdentity
+                ? `não é única: ${fmt(run.dupIdentity)} linha(s) a mais que identidades distintas — a compactação guarda só uma de cada`
+                : 'única na janela conferida'}
+            </dd>
+          </>)}
           {run.sourceMs != null && (<><dt className="text-zinc-400">Tempo na fonte</dt><dd>{fmt(run.sourceMs)} ms</dd></>)}
           <dt className="text-zinc-400">Pedido por</dt><dd>{run.requestedBy ?? '—'}</dd>
         </dl>
@@ -384,6 +395,56 @@ function Detalhe({ d }: { d: QualityDatasetRow }) {
   )
 }
 
+// ── Verificações contínuas (D-QLD-2) ─────────────────────────────────────
+// Só o que falha agora: o "ok" é o normal e não precisa de lista. Fontes e
+// calculados juntos — o prazo vale para os dois.
+const VERIFICACAO: Record<DatasetCheckRow['check'], string> = {
+  stale: 'Atrasado',
+  volume: 'Volume caiu',
+  identity: 'Identidade',
+}
+
+function VerificacoesCard({ checks }: { checks: DatasetCheckRow[] }) {
+  return (
+    <Card>
+      <CardHead icon={ShieldAlert} title="Verificações contínuas"
+        sub="depois de cada carga (volume, identidade) e a cada 15 min (prazo pela cadência), sem consultar a fonte" />
+      {checks.length === 0 ? (
+        <EmptyState icon={ShieldAlert} message="Nenhuma verificação falhando: todo conjunto dentro do prazo da cadência, sem queda de volume nem identidade vazia." />
+      ) : (
+        <DataGrid fixed className="min-w-[900px]">
+          <thead>
+            <tr>
+              <Th>Conjunto</Th>
+              <Th className="w-[130px]">Verificação</Th>
+              <Th>O que está errado</Th>
+              <Th className="w-[130px]">Desde</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {checks.map((c) => (
+              <Tr key={`${c.datasetId}:${c.check}`}>
+                <Td>
+                  <Link to={`/datasets/${c.slug}`} className="block hover:text-info dark:hover:text-info-dark">
+                    <EntityCell name={c.name} slug={c.slug}>
+                      {c.kind === 'derived'
+                        ? <GitMerge size={13} strokeWidth={1.5} className="shrink-0 text-zinc-400" />
+                        : <Database size={13} strokeWidth={1.5} className="shrink-0 text-zinc-400" />}
+                    </EntityCell>
+                  </Link>
+                </Td>
+                <Td><Pill tone={c.check === 'stale' ? 'warn' : 'crit'}>{VERIFICACAO[c.check]}</Pill></Td>
+                <Td muted title={c.detail ?? undefined}><span className="line-clamp-2 whitespace-normal text-[11.5px]">{c.detail}</span></Td>
+                <Td muted title={quando(c.since)}><span className="tabular-nums text-[11.5px]">{lagSince(hoursSince(c.since))}</span></Td>
+              </Tr>
+            ))}
+          </tbody>
+        </DataGrid>
+      )}
+    </Card>
+  )
+}
+
 // ── Canal de alertas ─────────────────────────────────────────────────────
 const EVENTO: Record<AlertEventRow['status'], { label: string; tone: Tone }> = {
   sent: { label: 'enviado', tone: 'ok' },
@@ -432,7 +493,7 @@ function AlertasCard() {
 
   return (
     <Card>
-      <CardHead icon={Bell} title="Alertas" sub="divergência, conciliação não concluída e carga pausada" />
+      <CardHead icon={Bell} title="Alertas" sub="conciliação, verificações (prazo, volume, identidade) e carga pausada" />
       <div className="grid gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <div className="min-w-0 space-y-2 text-[11.5px]">
           <p className="text-zinc-500">

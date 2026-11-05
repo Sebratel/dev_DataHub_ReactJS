@@ -10,7 +10,7 @@
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import type {
-  ReconcileRun, QualityOverview, QualityDatasetRow, AlertSettingsView, AlertEventRow, SyncRuleField,
+  ReconcileRun, QualityOverview, QualityDatasetRow, AlertSettingsView, AlertEventRow, SyncRuleField, DatasetCheckRow,
 } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { config } from '../../core/config.js'
@@ -55,7 +55,7 @@ function mapRun(r: Record<string, any>): ReconcileRun {
     sourceSum: num(r.source_sum), lakeSum: num(r.lake_sum),
     daysCompared: num(r.days_compared), daysDiverged: num(r.days_diverged),
     diffDays: (r.diff_days as ReconcileRun['diffDays'] | null) ?? [],
-    lostRows: num(r.lost_rows), notes: (r.notes as string[] | null) ?? [],
+    lostRows: num(r.lost_rows), dupIdentity: num(r.dup_identity), notes: (r.notes as string[] | null) ?? [],
     error: r.error ?? null, requestedBy: r.requested_by ?? null, sourceMs: num(r.source_ms),
     createdAt: iso(r.created_at)!, startedAt: iso(r.started_at), finishedAt: iso(r.finished_at),
   }
@@ -89,8 +89,22 @@ qualityRouter.get('/overview', ...adminOnly, async (req, res) => {
     }),
     lastRun: r.last_run_id ? runs.get(String(r.last_run_id)) ?? null : null,
   }))
+  // Verificações contínuas que estão falhando agora — fontes E calculados (o
+  // prazo vale para os dois; a conciliação, só para fontes).
+  const failingChecks: DatasetCheckRow[] = (await db.query(
+    `select c.*, d.slug, d.name, d.kind from dataset_checks c
+       join datasets d on d.id = c.dataset_id join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and c.status = 'fail'
+      order by c.since`,
+    [req.user!.tenant],
+  )).rows.map((c) => ({
+    datasetId: String(c.dataset_id), slug: String(c.slug), name: String(c.name),
+    kind: c.kind === 'derived' ? 'derived' : 'source', check: c.check_name, status: c.status,
+    detail: c.detail ?? null, since: iso(c.since)!, checkedAt: iso(c.checked_at)!,
+  }))
   const body: QualityOverview = {
     datasets,
+    failingChecks,
     rules: { ...rules(), reconcileHour: config.quality.reconcileHour },
   }
   res.json(body)

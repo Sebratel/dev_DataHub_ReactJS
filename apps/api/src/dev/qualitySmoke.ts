@@ -13,6 +13,8 @@ import {
   type PlanDataset, type PlanRules,
 } from '../modules/quality/reconcilePlan.js'
 import { alertText, validateWebhookUrl, webhookHint } from '../modules/alerts/notify.js'
+import { staleVerdict, volumeVerdict, idade, type StaleInput } from '../modules/quality/checkRules.js'
+import { sourceDupIdentitySql } from '../modules/quality/reconcilePlan.js'
 
 let failures = 0
 function check(name: string, ok: boolean, detail = ''): void {
@@ -166,6 +168,77 @@ check('soma: um a mais não bate', !sameSum(123456789012, 123456789013))
 check('soma: arredondamento de DOUBLE em valor enorme é tolerado', sameSum(9.007199254740993e18, 9.007199254740992e18))
 eq('balde de driver: data em texto e número em texto', toBucket({ d: '2026-09-14', n: '45', s: '2000' }), { day: '2026-09-14', n: 45, s: 2000 })
 eq('balde do lake: data com hora vira só o dia', toBucket({ d: '2026-09-14 00:00:00', n: 1, s: null }), { day: '2026-09-14', n: 1, s: null })
+
+console.log('\n── identidade na fonte (QLD-04) ──')
+{
+  const p = planReconcile(base({ dedupeKeys: ['id', 'codigo'] }), R, NOW)
+  eq('incremental com identidade: confere as colunas da identidade', p.ok && p.identity,
+    [{ key: 'id', column: 'id' }, { key: 'codigo', column: 'codigo' }])
+  const sem = planReconcile(base({ dedupeKeys: [] }), R, NOW)
+  check('sem identidade configurada, nada a conferir', sem.ok && sem.identity === null)
+  const sumiu = planReconcile(base({ dedupeKeys: ['id', 'coluna_que_sumiu'] }), R, NOW)
+  check('identidade com campo que sumiu do catálogo não é conferida pela metade', sumiu.ok && sumiu.identity === null)
+  const snap = planReconcile(base({ syncMode: 'snapshot', incrementalKey: null }), R, NOW)
+  check('snapshot não compacta: a identidade não decide nada lá', snap.ok && snap.identity === null)
+
+  const lim = { keyField: { key: 'criado_em', column: 'dt' }, lower: 'L', upper: 'U' }
+  const pg2 = sourceDupIdentitySql('postgres', 't', lim, [{ key: 'a', column: 'a' }, { key: 'b', column: 'b' }])
+  eq('Postgres: distinct de várias colunas compara a linha (a, b)', pg2.sql,
+    'select count(*) - count(distinct ("a", "b")) as dup from t where "dt" is not null and "dt" >= $1 and "dt" <= $2 and "a" is not null and "b" is not null')
+  eq('Postgres: mesmos limites da contagem', pg2.params, ['L', 'U'])
+  const my2 = sourceDupIdentitySql('mysql', 't', lim, [{ key: 'a', column: 'a' }, { key: 'b', column: 'b' }])
+  check('MySQL: distinct com a lista direto', my2.sql.includes('count(distinct `a`, `b`)'), my2.sql)
+  const um = sourceDupIdentitySql('postgres', 't', { keyField: null, lower: null, upper: null }, [{ key: 'id', column: 'id' }])
+  eq('uma coluna só: distinct simples', um.sql, 'select count(*) - count(distinct "id") as dup from t where "id" is not null')
+  const igual = compareBuckets([{ day: 'x', n: 5, s: 15 }], [{ day: 'x', n: 5, s: 15 }], true)
+  check('identidade repetida na fonte impede o "bate" mesmo com contagem igual', !isMatch(igual, 0, 2) && isMatch(igual, 0, 0))
+}
+
+console.log('\n── prazo pela cadência (MON-09, QLD-10) ──')
+{
+  const at = (min: number) => new Date(NOW.getTime() - min * 60_000)
+  const st = (o: Partial<StaleInput>): StaleInput => ({
+    kind: 'source', syncMode: 'incremental', cadence: 'hourly', paused: false,
+    lastSyncAt: at(30), schedule: null, inputs: [], ...o,
+  })
+  const late = (v: ReturnType<typeof staleVerdict>) => (v.evaluate ? v.late : 'não avalia')
+  eq('de hora em hora, parado há 3 h: atrasado (o selo antigo dizia "em dia" até 26 h)', late(staleVerdict(st({ lastSyncAt: at(180) }), NOW)), true)
+  eq('de hora em hora, há 90 min: em dia', late(staleVerdict(st({ lastSyncAt: at(90) }), NOW)), false)
+  eq('diária há 25 h: em dia', late(staleVerdict(st({ cadence: 'daily', lastSyncAt: at(25 * 60) }), NOW)), false)
+  eq('diária há 27 h: atrasada', late(staleVerdict(st({ cadence: 'daily', lastSyncAt: at(27 * 60) }), NOW)), true)
+  eq('manual não promete prazo', late(staleVerdict(st({ cadence: 'manual', lastSyncAt: at(9999) }), NOW)), 'não avalia')
+  eq('pausado tem alerta próprio', late(staleVerdict(st({ paused: true, lastSyncAt: at(9999) }), NOW)), 'não avalia')
+  eq('ao vivo não tem carga', late(staleVerdict(st({ syncMode: 'live' }), NOW)), 'não avalia')
+
+  // Agendamento seg–sex 05:00–18:00 de 5 em 5 min; NOW = qui 05/11 06:00.
+  const sched = { intervalMinutes: 5, startTime: '05:00', endTime: '18:00', weekdays: 62 }
+  eq('agendamento de 5 min parado há 40 min dentro da janela: atrasado (limite 30 min)',
+    late(staleVerdict(st({ cadence: 'schedule', schedule: sched, lastSyncAt: at(40) }), NOW)), true)
+  eq('agendamento parado há 20 min: em dia',
+    late(staleVerdict(st({ cadence: 'schedule', schedule: sched, lastSyncAt: at(20) }), NOW)), false)
+  const fora = staleVerdict(st({ cadence: 'schedule', schedule: { ...sched, startTime: '08:00' }, lastSyncAt: at(9999) }), NOW)
+  check('fora da janela não avalia, mas mantém o estado de antes', !fora.evaluate && fora.keep)
+  const abriu = staleVerdict(st({ cadence: 'schedule', schedule: { ...sched, startTime: '05:45' }, lastSyncAt: at(9999) }), NOW)
+  check('janela que acabou de abrir ainda não cobra', !abriu.evaluate && abriu.keep)
+
+  const calc = (insumoMin: number, calcMin: number) => staleVerdict(st({
+    kind: 'derived', syncMode: 'snapshot', cadence: 'cascade', lastSyncAt: at(calcMin),
+    inputs: [{ slug: 'pedidos', lastSyncAt: at(insumoMin) }, { slug: 'clientes', lastSyncAt: null }],
+  }), NOW)
+  eq('calculado em cascata que não acompanha o insumo há 2 h: atrasado', late(calc(10, 130)), true)
+  eq('calculado que acompanhou: em dia', late(calc(30, 25)), false)
+  const v = calc(10, 130)
+  check('o detalhe diz qual insumo andou', v.evaluate && v.detail.includes('pedidos'), v.evaluate ? v.detail : '')
+}
+
+console.log('\n── volume do snapshot (QLD-08) ──')
+eq('caiu 25%: suspeito', volumeVerdict(10_000, 7_500)?.fail, true)
+eq('caiu 10%: normal', volumeVerdict(10_000, 9_000)?.fail, false)
+eq('cresceu: normal', volumeVerdict(10_000, 12_000)?.fail, false)
+eq('tabela pequena não avalia (10 → 7 linhas não diz nada)', volumeVerdict(500, 100), null)
+eq('primeira carga não avalia', volumeVerdict(null, 100), null)
+check('o detalhe traz os dois números', !!volumeVerdict(10_000, 7_500)?.detail.includes('10.000'))
+eq('idade legível', [idade(45), idade(150), idade(60 * 50)], ['45 min', '2 h 30 min', '2 dias'])
 
 console.log('\n── alertas ──')
 eq('texto: título em negrito e uma linha por item', alertText('Conciliação divergente: X', ['a', '', 'b']), '*Data Hub · Conciliação divergente: X*\na\nb')

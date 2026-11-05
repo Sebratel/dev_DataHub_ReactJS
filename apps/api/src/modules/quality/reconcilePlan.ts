@@ -61,6 +61,9 @@ export type Plan =
     upper: string | null
     /** Colunas cujo vazio, juntas, deixam a linha fora do lake para sempre. */
     lostCheck: PlanColumn[] | null
+    /** Identidade configurada (incremental com compactação): conferida como
+     *  única na fonte. null = não há identidade a conferir. */
+    identity: PlanColumn[] | null
     notes: string[]
   }
 
@@ -170,9 +173,19 @@ export function planReconcile(d: PlanDataset, r: PlanRules, now: Date = new Date
     notes.push('Snapshot: compara a tabela inteira, sem separar por dia — o conjunto não tem chave de data.')
     return {
       ok: true, band, method: 'total', keyField: null, sumField,
-      lower: null, lowerFromLake: false, upper: null, lostCheck: null, notes,
+      lower: null, lowerFromLake: false, upper: null, lostCheck: null, identity: null, notes,
     }
   }
+
+  // A identidade só pesa no incremental: é por ela que a compactação decide
+  // que duas linhas são a MESMA. Se ela não é única na fonte, linhas
+  // diferentes viram uma no lake (QLD-04). Campo que sumiu do catálogo não
+  // entra — a conferência seria de uma coluna que não existe.
+  const identityCols = d.dedupeKeys
+    .map((k) => d.fields.find((x) => x.key === k))
+    .filter((f): f is PlanField => !!f)
+    .map((f) => ({ key: f.key, column: f.sourceColumn }))
+  const identity = identityCols.length && identityCols.length === d.dedupeKeys.length ? identityCols : null
 
   const isDate = key1.type === 'date'
   const keyField = { key: key1.key, column: key1.sourceColumn, isDate }
@@ -199,7 +212,7 @@ export function planReconcile(d: PlanDataset, r: PlanRules, now: Date = new Date
     notes.push('Chave incremental numérica: compara o total até o último valor carregado, sem separar por dia.')
     return {
       ok: true, band, method: 'total', keyField, sumField,
-      lower: null, lowerFromLake: false, upper, lostCheck, notes,
+      lower: null, lowerFromLake: false, upper, lostCheck, identity, notes,
     }
   }
 
@@ -228,7 +241,7 @@ export function planReconcile(d: PlanDataset, r: PlanRules, now: Date = new Date
     notes.push(`Conjunto grande: confere os últimos ${r.largeWindowDays} dias, para não varrer o histórico inteiro na fonte.`)
   }
 
-  return { ok: true, band, method: 'per-day', keyField, sumField, lower, lowerFromLake, upper, lostCheck, notes }
+  return { ok: true, band, method: 'per-day', keyField, sumField, lower, lowerFromLake, upper, lostCheck, identity, notes }
 }
 
 // ── SQL ──────────────────────────────────────────────────────────────────
@@ -242,10 +255,12 @@ export function quoteFor(dialect: Dialect): (s: string) => string {
 
 type Bounds = { lower: string | null; upper: string | null }
 
-/** Consulta de contagem (e soma) na FONTE. Placeholders do dialeto. */
-export function sourceCountSql(
-  dialect: Dialect, from: string, plan: { method: 'per-day' | 'total'; keyField: PlanColumn | null; sumField: PlanColumn | null } & Bounds,
-): { sql: string; params: string[] } {
+// Os limites da comparação na FONTE, com os placeholders do dialeto. A mesma
+// função monta o WHERE de todas as consultas da conferência: contagem e
+// identidade olham exatamente a mesma população de linhas.
+function sourceWhere(
+  dialect: Dialect, plan: { keyField: PlanColumn | null } & Bounds, extra: string[] = [],
+): { where: string; params: string[] } {
   const q = quoteFor(dialect)
   const params: string[] = []
   const ph = () => (dialect === 'mysql' ? '?' : `$${params.length}`)
@@ -256,12 +271,37 @@ export function sourceCountSql(
     if (plan.lower != null) { params.push(plan.lower); where.push(`${k} >= ${ph()}`) }
     if (plan.upper != null) { params.push(plan.upper); where.push(`${k} <= ${ph()}`) }
   }
+  where.push(...extra)
+  return { where: where.length ? ` where ${where.join(' and ')}` : '', params }
+}
+
+/** Consulta de contagem (e soma) na FONTE. Placeholders do dialeto. */
+export function sourceCountSql(
+  dialect: Dialect, from: string, plan: { method: 'per-day' | 'total'; keyField: PlanColumn | null; sumField: PlanColumn | null } & Bounds,
+): { sql: string; params: string[] } {
+  const q = quoteFor(dialect)
+  const { where: w, params } = sourceWhere(dialect, plan)
   const s = plan.sumField ? `, sum(${q(plan.sumField.column)}) as s` : ''
-  const w = where.length ? ` where ${where.join(' and ')}` : ''
   if (plan.method === 'per-day' && plan.keyField) {
     return { sql: `select cast(${q(plan.keyField.column)} as date) as d, count(*) as n${s} from ${from}${w} group by 1`, params }
   }
   return { sql: `select count(*) as n${s} from ${from}${w}`, params }
+}
+
+/**
+ * Linhas a mais do que identidades distintas, na mesma janela da contagem.
+ * Só identidades preenchidas: a vazia é outra verificação (pós-carga, no
+ * lake). O "distinct" de várias colunas muda de sintaxe entre os dialetos:
+ * o Postgres compara a linha (a, b); o MySQL aceita a lista direto.
+ */
+export function sourceDupIdentitySql(
+  dialect: Dialect, from: string, plan: { keyField: PlanColumn | null } & Bounds, identity: PlanColumn[],
+): { sql: string; params: string[] } {
+  const q = quoteFor(dialect)
+  const cols = identity.map((c) => q(c.column))
+  const { where, params } = sourceWhere(dialect, plan, cols.map((c) => `${c} is not null`))
+  const distinto = cols.length === 1 ? cols[0] : dialect === 'mysql' ? cols.join(', ') : `(${cols.join(', ')})`
+  return { sql: `select count(*) - count(distinct ${distinto}) as dup from ${from}${where}`, params }
 }
 
 /** Linhas que a carga nunca traz: todas as chaves incrementais vazias. */
@@ -354,7 +394,12 @@ export function compareBuckets(source: Bucket[], lake: Bucket[], withSum: boolea
   }
 }
 
-/** Bateu? Mesma contagem, mesma soma, nenhum dia diferente, nenhuma linha perdida. */
-export function isMatch(c: Comparison, lostRows: number): boolean {
-  return c.sourceRows === c.lakeRows && sameSum(c.sourceSum, c.lakeSum) && c.diverged.length === 0 && lostRows === 0
+/**
+ * Bateu? Mesma contagem, mesma soma, nenhum dia diferente, nenhuma linha
+ * perdida — e a identidade única na fonte: se não for, linhas diferentes
+ * viram uma só no lake, mesmo quando a contagem ainda fecha por acaso.
+ */
+export function isMatch(c: Comparison, lostRows: number, dupIdentity = 0): boolean {
+  return c.sourceRows === c.lakeRows && sameSum(c.sourceSum, c.lakeSum) && c.diverged.length === 0
+    && lostRows === 0 && dupIdentity === 0
 }

@@ -25,8 +25,9 @@ import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { duckQuery } from '../query/duck.js'
 import { enqueueSync, setAfterSync, normalizaWatermark, type SyncOutcome } from '../sync/ingest.js'
 import { notify } from '../alerts/notify.js'
+import { postLoadChecks } from './checks.js'
 import {
-  planReconcile, ineligibleReason, bandOf, quoteFor, sourceCountSql, sourceLostSql, lakeCountSql,
+  planReconcile, ineligibleReason, bandOf, quoteFor, sourceCountSql, sourceLostSql, sourceDupIdentitySql, lakeCountSql,
   toBucket, compareBuckets, isMatch, sameSum, timestampLocal,
   type Dialect, type PlanDataset, type PlanRules,
 } from './reconcilePlan.js'
@@ -113,7 +114,13 @@ export async function requestReconcile(
 }
 
 // ── Depois da carga ──────────────────────────────────────────────────────
+// Primeiro as verificações do lake (baratas, toda carga), depois a
+// conciliação pedida (rara, lê a fonte). As duas dentro do mesmo elo da fila.
 async function afterSync(datasetId: string, outcome: SyncOutcome): Promise<void> {
+  if (outcome.ok) {
+    await postLoadChecks(datasetId).catch((e) =>
+      console.warn(`[qualidade] verificações pós-carga de ${datasetId}: ${(e as Error).message}`))
+  }
   const pendentes = (await db.query(
     `select id from reconcile_runs where dataset_id = $1 and status = 'queued' order by created_at`, [datasetId],
   )).rows
@@ -186,6 +193,11 @@ export async function runReconcile(runId: string): Promise<void> {
     const lostRows = plan.lostCheck
       ? Number((await querySource(conn, sourceLostSql(dialect, from, plan.lostCheck))).rows[0]?.n ?? 0)
       : 0
+    let dupIdentity = 0
+    if (plan.identity) {
+      const di = sourceDupIdentitySql(dialect, from, bounds, plan.identity)
+      dupIdentity = Number((await querySource(conn, di.sql, di.params)).rows[0]?.dup ?? 0)
+    }
     const sourceMs = Date.now() - t0
 
     // ── Lake ─────────────────────────────────────────────────────────────
@@ -202,23 +214,26 @@ export async function runReconcile(runId: string): Promise<void> {
     }
 
     const c = compareBuckets(fonte, lake, !!plan.sumField)
-    const ok = isMatch(c, lostRows)
+    const ok = isMatch(c, lostRows, dupIdentity)
     const porDia = plan.method === 'per-day'
     const diffDays = porDia ? c.diverged : []
+    const nomesIdent = plan.identity?.map((x) => x.key).join(' + ') ?? ''
 
     await db.query(
       `update reconcile_runs set status = $2, method = $3, key_field = $4, sum_field = $5,
               window_from = $6, window_to = $7, source_rows = $8, lake_rows = $9, source_sum = $10, lake_sum = $11,
               days_compared = $12, days_diverged = $13, diff_days = $14, lost_rows = $15, notes = $16,
-              source_ms = $17, finished_at = now()
+              source_ms = $17, dup_identity = $18, finished_at = now()
         where id = $1`,
       [runId, ok ? 'match' : 'diverged', plan.method, plan.keyField?.key ?? null, plan.sumField?.key ?? null,
        lower, plan.upper, c.sourceRows, c.lakeRows, c.sourceSum, c.lakeSum,
        porDia ? c.daysCompared : null, porDia ? diffDays.length : null,
-       JSON.stringify(diffDays.slice(0, 60)), lostRows, JSON.stringify(notes), sourceMs],
+       JSON.stringify(diffDays.slice(0, 60)), lostRows, JSON.stringify(notes), sourceMs,
+       plan.identity ? dupIdentity : null],
     )
     console.log(`[qualidade] ${ds.row.slug}: ${ok ? 'bate' : 'DIVERGE'} — fonte ${c.sourceRows} × lake ${c.lakeRows}` +
-      `${porDia ? `, ${diffDays.length} de ${c.daysCompared} dia(s) diferentes` : ''}${lostRows ? `, ${lostRows} perdida(s)` : ''}.`)
+      `${porDia ? `, ${diffDays.length} de ${c.daysCompared} dia(s) diferentes` : ''}${lostRows ? `, ${lostRows} perdida(s)` : ''}` +
+      `${dupIdentity ? `, identidade repetida em ${dupIdentity}` : ''}.`)
 
     const tenantId = String(ds.row.tenant_id)
     const name = String(ds.row.name)
@@ -233,6 +248,10 @@ export async function runReconcile(runId: string): Promise<void> {
       }
       if (lostRows) {
         lines.push(`${fmt(lostRows)} linha(s) da fonte nunca entram no lake: ${plan.lostCheck!.map((x) => x.key).join(' e ')} vazio(s).`)
+      }
+      if (dupIdentity) {
+        lines.push(`A identidade (${nomesIdent}) não é única na fonte: ${fmt(dupIdentity)} linha(s) a mais que ` +
+          'identidades distintas. A compactação guarda só uma de cada.')
       }
       if (diffDays.length) {
         const amostra = diffDays.slice(0, 5)

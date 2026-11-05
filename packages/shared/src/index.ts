@@ -431,6 +431,8 @@ export interface ReconcileRun {
   diffDays: ReconcileDay[]
   /** Linhas da fonte que nunca entram no lake (chaves vazias — QLD-07). */
   lostRows: number | null
+  /** Linhas a mais que identidades distintas na fonte (QLD-04). null = sem identidade a conferir. */
+  dupIdentity: number | null
   notes: string[]
   error: string | null
   requestedBy: string | null
@@ -454,8 +456,24 @@ export interface QualityDatasetRow {
   lastRun: ReconcileRun | null
 }
 
+/** Verificação contínua (D-QLD-2): prazo pela cadência, volume do snapshot, identidade. */
+export interface DatasetCheckRow {
+  datasetId: string
+  slug: string
+  name: string
+  kind: 'source' | 'derived'
+  check: 'stale' | 'volume' | 'identity'
+  status: 'ok' | 'fail'
+  detail: string | null
+  /** Desde quando está neste estado. */
+  since: string
+  checkedAt: string
+}
+
 export interface QualityOverview {
   datasets: QualityDatasetRow[]
+  /** Só as que estão falhando agora — o "ok" é o normal e não precisa de lista. */
+  failingChecks: DatasetCheckRow[]
   /** Faixas e horário em vigor (vêm da stack; ainda a confirmar pelo comitê). */
   rules: { smallMaxRows: number; largeMinRows: number; largeWindowDays: number; reconcileHour: number }
 }

@@ -292,8 +292,21 @@ Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos d
 - **Divergiu, e agora?** Abra a linha: o dia que não bate aponta a causa. Linha
   a menos num dia com muitos registros de mesmo carimbo = empate na fronteira do
   lote (QLD-01); linha a mais = registro apagado na fonte (QLD-06); "nunca
-  entram" = chave de criação vazia (QLD-07). Corrija a regra do conjunto ou
-  recarregue (master) e use "Conciliar agora" para confirmar.
+  entram" = chave de criação vazia (QLD-07); "identidade não é única na fonte"
+  = a identidade configurada junta linhas diferentes na compactação (QLD-04).
+  Corrija a regra do conjunto ou recarregue (master) e use "Conciliar agora"
+  para confirmar.
+
+**Verificações contínuas (D-QLD-2 A)** — sem consultar a fonte, estado em
+`dataset_checks`, alerta só na troca de estado (passou a falhar / voltou):
+
+| Verificação | Quando | Falha quando |
+|---|---|---|
+| Prazo (`stale`) | a cada 15 min | de hora em hora parado > 2 h; diária > 26 h; agendamento parado > 3 intervalos (mín. 30 min) dentro da janela; calculado em cascata que não acompanhou um insumo por > 60 min |
+| Volume (`volume`) | depois de cada carga de snapshot | caiu 20% ou mais em relação à carga anterior (tabelas com ≥ 1.000 linhas) |
+| Identidade (`identity`) | depois de cada carga com identidade | identidade vazia no lake (qualquer modo) ou repetida (snapshot) |
+
+Conjunto manual, pausado ou ao vivo não tem prazo cobrado.
 
 ---
 
