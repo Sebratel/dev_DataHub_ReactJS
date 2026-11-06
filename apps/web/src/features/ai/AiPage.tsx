@@ -18,8 +18,19 @@ interface ChartDef {
   metric: { metric: string } | { field: string; agg: Aggregation }
   filters: QueryFilter[]
 }
-/** Um passo do raciocínio: qual tool, sobre o quê, e se deu erro. */
-interface TraceStep { name: string; alvo: string | null; erro: boolean }
+/**
+ * Um passo do raciocínio: qual tool, sobre o quê, o que foi tentado (filtros,
+ * busca de valores), quantas linhas voltaram e, se deu erro, o motivo.
+ * Conversas antigas só têm os três primeiros campos.
+ */
+interface TraceStep {
+  name: string
+  alvo: string | null
+  erro: boolean
+  detalhe?: string | null
+  linhas?: number | null
+  motivo?: string | null
+}
 
 interface ChatMessage {
   id: string
@@ -38,6 +49,7 @@ interface ChatMessage {
 const TOOL_LABEL: Record<string, { icon: typeof Search; label: string }> = {
   search_datasets: { icon: Search, label: 'Procurando conjuntos de dados…' },
   get_dataset_schema: { icon: Database, label: 'Lendo os campos do conjunto…' },
+  list_field_values: { icon: Search, label: 'Conferindo como os valores estão gravados…' },
   run_query: { icon: Database, label: 'Consultando o lake…' },
   render_chart: { icon: BarChart3, label: 'Montando o gráfico…' },
 }
@@ -47,6 +59,7 @@ const TOOL_LABEL: Record<string, { icon: typeof Search; label: string }> = {
 const PASSO_LABEL: Record<string, string> = {
   search_datasets: 'Buscou conjuntos',
   get_dataset_schema: 'Leu os campos de',
+  list_field_values: 'Viu os valores de',
   run_query: 'Consultou',
   render_chart: 'Montou gráfico de',
 }
@@ -342,12 +355,25 @@ function TraceBlock({ trace, aberto }: { trace: TraceStep[]; aberto: boolean }) 
       {open && (
         <ol className="mt-1.5 space-y-0.5 border-l border-zinc-200 pl-2.5 dark:border-zinc-800">
           {trace.map((t, i) => (
-            <li key={i} className={clsx('flex items-baseline gap-1.5',
-              t.erro ? 'text-crit dark:text-crit-dark' : 'text-zinc-500')}>
-              <span className="w-4 shrink-0 tabular-nums text-right text-[10px] text-zinc-400">{i + 1}</span>
-              {t.erro && <AlertTriangle size={10} className="shrink-0 translate-y-px" />}
-              <span>{PASSO_LABEL[t.name] ?? t.name}</span>
-              {t.alvo && <span className="min-w-0 truncate font-mono text-[10.5px]">{t.alvo}</span>}
+            <li key={i} className={clsx(t.erro ? 'text-crit dark:text-crit-dark' : 'text-zinc-500')}>
+              <div className="flex items-baseline gap-1.5">
+                <span className="w-4 shrink-0 tabular-nums text-right text-[10px] text-zinc-400">{i + 1}</span>
+                {t.erro && <AlertTriangle size={10} className="shrink-0 translate-y-px" />}
+                <span className="shrink-0">{PASSO_LABEL[t.name] ?? t.name}</span>
+                {t.alvo && <span className="min-w-0 truncate font-mono text-[10.5px]">{t.alvo}</span>}
+                {t.linhas != null && (
+                  // Zero é o sinal de valor chutado: o filtro não casou com nada.
+                  <span className={clsx('shrink-0 tabular-nums text-[10.5px]',
+                    t.linhas === 0 ? 'font-medium text-warn dark:text-warn-dark' : 'text-zinc-400')}>
+                    → {t.linhas === 0 ? 'nada' : t.linhas.toLocaleString('pt-BR')}
+                  </span>
+                )}
+              </div>
+              {(t.detalhe || t.motivo) && (
+                <div className="ml-[22px] min-w-0 break-words font-mono text-[10px] leading-snug text-zinc-400">
+                  {t.motivo ?? t.detalhe}
+                </div>
+              )}
             </li>
           ))}
         </ol>

@@ -1,7 +1,8 @@
 // Chat IA — conversas persistidas + loop agêntico com progresso via SSE.
-// Cada mensagem do usuário roda o loop (máx. 8 iterações de tools); eventos
-// intermediários informam o que a IA está consultando; o texto final e os
-// gráficos são persistidos e enviados no fim.
+// Cada mensagem do usuário roda o loop (agent.ts: máx. 8 rodadas de tools e
+// uma resposta final, mesmo no limite); eventos intermediários informam o que
+// a IA está consultando; o texto final e os gráficos são persistidos e
+// enviados no fim.
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
@@ -9,6 +10,7 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import type { AiMessage } from './provider.js'
 import { activeProvider } from './providerStore.js'
 import { AI_TOOLS, executeTool } from './tools.js'
+import { runAgent } from './agent.js'
 
 export const aiRouter = Router()
 
@@ -19,14 +21,6 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
 const authed = [requireAuth(), requireDb]
 
 const MAX_TOOL_ITERATIONS = 8
-
-// Sobre QUAL conjunto (ou qual busca) foi cada passo. É o que transforma uma
-// lista de "Consultando o lake…" repetida oito vezes em diagnóstico: cinco
-// tentativas no MESMO conjunto é laço; cinco conjuntos diferentes é garimpo.
-function alvoDaTool(input: Record<string, unknown>): string | null {
-  const v = input.dataset ?? input.slug ?? input.query
-  return v == null ? null : String(v).slice(0, 60)
-}
 
 const SYSTEM_PROMPT = `Você é o assistente de dados do Data Hub da Sebratel (provedor de internet).
 Responda SEMPRE em português do Brasil.
@@ -40,8 +34,11 @@ Estilo (IMPORTANTE):
 
 Como trabalhar:
 - Use search_datasets para descobrir os conjuntos de dados e get_dataset_schema antes de consultar.
-- Monte consultas com run_query (QueryDef estruturado — você nunca escreve SQL).
-- Todo número citado deve vir de um run_query desta conversa. Nunca invente valores.
+- Quando a pergunta cita um VALOR de texto (tag, status, motivo, plano, cidade, categoria), nunca chute como ele está gravado: chame list_field_values com search no campo provável e use o valor exato que voltar. "Desbloqueio de confiança" pode estar gravado como ISA_DESBLOQUEIO_CONFIANÇA, e um filtro com a grafia errada devolve zero linhas sem avisar.
+- Se a busca de valores não achar nada, tente uma palavra só ou outro campo de texto do MESMO conjunto antes de trocar de conjunto.
+- Para frequência de uma tag ou categoria, list_field_values já devolve quantas linhas têm cada valor — muitas vezes é a resposta inteira.
+- Monte consultas com run_query (QueryDef estruturado — você nunca escreve SQL). Agregue no run_query (select com agg + groupBy) em vez de trazer linhas soltas.
+- Todo número citado deve vir de um run_query ou list_field_values desta conversa. Nunca invente valores.
 - Quando um gráfico ajudar, use render_chart (ele já exibe o gráfico; depois resuma o insight em UMA frase, sem repetir os pontos).
 - Se um conjunto não estiver sincronizado ou o dado não existir, diga isso em uma frase e sugira o caminho.
 
@@ -137,50 +134,24 @@ aiRouter.post('/conversations/:id/messages', ...authed, async (req, res) => {
       .map((m) => ({ role: m.role as 'user' | 'assistant', content: String(m.content) }))
 
     const charts: Record<string, unknown>[] = []
-    let finalText = ''
-    // O que a IA consultou, passo a passo. Existe porque sem isto ninguém —
-    // nem quem usa, nem quem mantém — consegue saber POR QUE uma resposta
-    // acabou no limite: a tela mostrava o progresso e o descartava ao chegar
-    // a resposta final, e o servidor não registrava nada.
-    const trace: { name: string; alvo: string | null; erro: boolean }[] = []
-    let limitReached = false
-
-    for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const turn = await provider.chat(SYSTEM_PROMPT, messages, AI_TOOLS)
-      if (!turn.toolCalls.length) {
-        finalText = turn.text
-        break
-      }
-      messages.push({ role: 'assistant', content: turn.raw })
-      // Executa TODAS as tools do turno e devolve os resultados juntos.
-      const results = []
-      for (const call of turn.toolCalls) {
-        send('tool', { name: call.name, input: call.input })
-        const outcome = await executeTool(call.name, call.input, req.user!)
+    // O rastro (o que a IA consultou, com filtros, linhas e erros) vem do
+    // loop: sem ele ninguém — nem quem usa, nem quem mantém — consegue saber
+    // POR QUE uma resposta acabou no limite.
+    const { text: finalText, trace, limitReached } = await runAgent({
+      provider,
+      system: SYSTEM_PROMPT,
+      messages,
+      tools: AI_TOOLS,
+      maxRounds: MAX_TOOL_ITERATIONS,
+      exec: (call) => executeTool(call.name, call.input, req.user!),
+      onToolStart: (call) => send('tool', { name: call.name, input: call.input }),
+      onOutcome: (_call, outcome) => {
         if (outcome.chart) {
           charts.push(outcome.chart)
           send('chart', outcome.chart)
         }
-        trace.push({ name: call.name, alvo: alvoDaTool(call.input), erro: !!outcome.isError })
-        results.push({ toolCallId: call.id, content: outcome.content, isError: outcome.isError })
-      }
-      messages.push(provider.toolResultMessage(results))
-      if (i === MAX_TOOL_ITERATIONS - 1) {
-        limitReached = true
-        // A mensagem diz o que aconteceu, não só que acabou. "Refine a
-        // pergunta" sozinho manda a pessoa tentar de novo às cegas — e com
-        // frequência o problema é uma consulta que falha sempre, não uma
-        // pergunta grande demais.
-        const erros = trace.filter((t) => t.erro).length
-        finalText = `Parei depois de ${trace.length} consulta(s), no limite de ${MAX_TOOL_ITERATIONS} rodadas`
-          + (erros ? `, sendo ${erros} com erro` : '')
-          + '. Abra "o que eu consultei" abaixo para ver onde travei.'
-          + (erros
-            ? ' As consultas com erro indicam problema no conjunto, não na pergunta —'
-            + ' tente a mesma consulta num Notebook para ver o erro completo.'
-            : ' Se foram muitos conjuntos diferentes, aponte o conjunto certo na pergunta.')
-      }
-    }
+      },
+    })
 
     const saved = (await db.query(
       `insert into messages (conversation_id, role, content, chart, trace)

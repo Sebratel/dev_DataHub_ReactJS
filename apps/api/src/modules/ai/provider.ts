@@ -43,10 +43,19 @@ export interface AiMessage {
   content: unknown // string ou blocos brutos do provedor
 }
 
+/**
+ * toolChoice 'none' = as ferramentas continuam DECLARADAS, mas o modelo não
+ * pode chamá-las: tem de responder em texto. Não dá para simplesmente tirar
+ * as ferramentas da chamada — a Anthropic recusa uma conversa que já tem
+ * tool_use/tool_result sem a definição delas. É assim que o loop pede a
+ * resposta final quando as rodadas acabam.
+ */
+export interface ChatOptions { toolChoice?: 'auto' | 'none' }
+
 export interface AIProvider {
   readonly name: string
   readonly model: string
-  chat(system: string, messages: AiMessage[], tools: AiToolDef[]): Promise<AiTurn>
+  chat(system: string, messages: AiMessage[], tools: AiToolDef[], opts?: ChatOptions): Promise<AiTurn>
   toolResultMessage(results: { toolCallId: string; content: string; isError?: boolean }[]): AiMessage
   isConfigured(): boolean
   /** Modelos que ESTA chave alcança — evita escolher no escuro e digitar errado. */
@@ -150,7 +159,7 @@ class AnthropicProvider implements AIProvider {
     return this.client
   }
 
-  async chat(system: string, messages: AiMessage[], tools: AiToolDef[]): Promise<AiTurn> {
+  async chat(system: string, messages: AiMessage[], tools: AiToolDef[], opts?: ChatOptions): Promise<AiTurn> {
     const response = await this.getClient().messages.create({
       model: this.model,
       max_tokens: this.cfg.maxTokens ?? 16_000,
@@ -164,6 +173,8 @@ class AnthropicProvider implements AIProvider {
         description: t.description,
         input_schema: t.inputSchema as never,
       })),
+      // 'none' é compatível com o pensamento adaptativo ('any'/'tool' não são).
+      ...(opts?.toolChoice === 'none' && tools.length ? { tool_choice: { type: 'none' } as never } : {}),
     })
 
     if (response.stop_reason === 'refusal') {
@@ -245,7 +256,7 @@ class OpenAiProvider implements AIProvider {
     return out
   }
 
-  async chat(system: string, messages: AiMessage[], tools: AiToolDef[]): Promise<AiTurn> {
+  async chat(system: string, messages: AiMessage[], tools: AiToolDef[], opts?: ChatOptions): Promise<AiTurn> {
     const body = {
       model: this.model,
       max_completion_tokens: this.cfg.maxTokens ?? 16_000,
@@ -255,6 +266,7 @@ class OpenAiProvider implements AIProvider {
           type: 'function',
           function: { name: t.name, description: t.description, parameters: t.inputSchema },
         })),
+        ...(opts?.toolChoice === 'none' ? { tool_choice: 'none' } : {}),
       } : {}),
     }
     const json = await postJson(this.url(), body, { authorization: `Bearer ${this.cfg.apiKey}` })
@@ -379,7 +391,7 @@ class GeminiProvider implements AIProvider {
     })
   }
 
-  async chat(system: string, messages: AiMessage[], tools: AiToolDef[]): Promise<AiTurn> {
+  async chat(system: string, messages: AiMessage[], tools: AiToolDef[], opts?: ChatOptions): Promise<AiTurn> {
     const body = {
       systemInstruction: { parts: [{ text: system }] },
       contents: this.toContents(messages),
@@ -392,6 +404,7 @@ class GeminiProvider implements AIProvider {
             parameters: toGeminiSchema(t.inputSchema),
           })),
         }],
+        ...(opts?.toolChoice === 'none' ? { toolConfig: { functionCallingConfig: { mode: 'NONE' } } } : {}),
       } : {}),
     }
     const json = await postJson(this.url(), body, { 'x-goog-api-key': this.cfg.apiKey })

@@ -35,8 +35,23 @@ export const AI_TOOLS: AiToolDef[] = [
     },
   },
   {
+    name: 'list_field_values',
+    description: 'Lista os VALORES que um campo realmente tem, com quantas linhas têm cada um (os mais frequentes primeiro). Use SEMPRE antes de filtrar por categoria, status, tag, motivo, plano, cidade ou qualquer texto: o valor gravado raramente é igual ao que a pessoa escreveu (ex.: "desbloqueio de confiança" está gravado como "ISA_DESBLOQUEIO_CONFIANÇA"). Em "search", passe as palavras do que procura: a busca ignora acento, maiúscula, espaço e "_" e exige todas as palavras. Campos que guardam várias tags numa célula ("A || B") são separados sozinhos, e a contagem vira o número de linhas que têm cada tag — que já é a frequência daquela tag.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dataset: { type: 'string', description: 'Slug do conjunto' },
+        field: { type: 'string', description: 'Key do campo (de get_dataset_schema)' },
+        search: { type: 'string', description: 'Opcional. Palavras do valor procurado. Ex.: "segunda via boleto", "desbloq".' },
+        separator: { type: 'string', description: 'Opcional. Separador quando a célula guarda uma lista (ex.: ",", ";"). "||" é detectado sozinho.' },
+      },
+      required: ['dataset', 'field'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'run_query',
-    description: 'Executa uma consulta estruturada (QueryDef) sobre um conjunto sincronizado no lake e retorna as linhas. Use os KEYS dos campos (não os rótulos). Para agregar: select com {field, agg, as} + groupBy. Operadores de filtro: =, !=, >, >=, <, <=, contains, starts_with, in, is_null, not_null, between.',
+    description: 'Executa uma consulta estruturada (QueryDef) sobre um conjunto sincronizado no lake e retorna as linhas. Use os KEYS dos campos (não os rótulos). Para agregar: select com {field, agg, as} + groupBy. Operadores de filtro: =, !=, >, >=, <, <=, contains, starts_with, in, is_null, not_null, between. Para filtrar por um valor de texto, use o valor EXATO que list_field_values devolveu.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,7 +135,7 @@ export interface ToolOutcome {
 // Conjuntos referenciados no input de uma tool (para checar o escopo).
 function slugsInInput(name: string, input: Record<string, unknown>): string[] {
   if (name === 'get_dataset_schema') return [String(input.slug ?? '')]
-  if (name === 'run_query') return [String(input.dataset ?? '')]
+  if (name === 'run_query' || name === 'list_field_values') return [String(input.dataset ?? '')]
   if (name === 'propose_widgets') {
     const ws = Array.isArray(input.widgets) ? (input.widgets as Record<string, unknown>[]) : []
     return ws.map((w) => String(w.dataset ?? w.datasetSlug ?? ''))
@@ -146,6 +161,7 @@ export async function executeTool(
     switch (name) {
       case 'search_datasets': return await searchDatasets(user, input.query ? String(input.query) : undefined, allowed)
       case 'get_dataset_schema': return await getSchema(String(input.slug ?? ''), user)
+      case 'list_field_values': return await listFieldValues(input, user)
       case 'run_query': return await runQuery(input as unknown as QueryDef, user)
       case 'render_chart': return await renderChart(input, user)
       case 'propose_widgets': return await proposeWidgets(input, user)
@@ -259,6 +275,101 @@ async function executeQueryDef(def: QueryDef, user: SessionUser) {
     metrics: metrics as never,
   })
   return duckQuery(compiled.sql, compiled.params, { timeoutMs: config.duck.queryTimeoutMs })
+}
+
+// ── Valores de um campo ──────────────────────────────────────────────────
+// Existe porque o agente garimpava conjuntos até esgotar as rodadas sem nunca
+// achar o dado: a pergunta trazia "desbloqueio de confiança", e o que está
+// gravado é ISA_DESBLOQUEIO_CONFIANÇA — com Ç, "_" e prefixo. O filtro
+// "contém" ignora maiúscula mas não acento, e o catálogo só descreve campos,
+// não os valores deles. Sem um jeito de VER os valores, a IA só podia chutar.
+
+// Palavras que não ajudam a achar um valor e quebrariam o "todas as palavras".
+const PALAVRAS_VAZIAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'em', 'no', 'na', 'para', 'por', 'com', 'os', 'as'])
+
+/** "Desbloqueio de Confiança" → ['desbloqueio', 'confianca']: sem acento, sem caixa, sem pontuação. */
+export function palavrasDeBusca(search: string): string[] {
+  return search.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 2 && !PALAVRAS_VAZIAS.has(w))
+}
+
+// Fração de valores com "||" a partir da qual o campo é tratado como lista.
+// É o formato das tags do Matrix ("A || B"); "||" quase nunca aparece em texto
+// comum, então a detecção não confunde uma frase com uma lista.
+const LIMIAR_LISTA = 0.05
+
+async function listFieldValues(input: Record<string, unknown>, user: SessionUser): Promise<ToolOutcome> {
+  const slug = String(input.dataset ?? '')
+  const key = String(input.field ?? '')
+  const search = input.search ? String(input.search).trim() : ''
+  const ds = await loadDataset(slug, user)
+  const dir = datasetDir(String(ds.tenant_slug), String(ds.slug))
+  if (!listParquet(dir).length) {
+    throw new Error(`O conjunto "${slug}" ainda não foi sincronizado com o lake.`)
+  }
+  const f = (await db.query(
+    `select key, sensitive, hidden from dataset_fields where dataset_id = $1 and key = $2`,
+    [ds.id, key],
+  )).rows[0]
+  if (!f || f.hidden) {
+    return { content: `Campo não encontrado: ${key}. Use get_dataset_schema para ver os campos de ${slug}.`, isError: true }
+  }
+  // Nunca, nem para admin (SEG-05): o que esta função devolve vai para o
+  // provedor de IA, fora da empresa — e a lista de valores de um CPF é o CPF.
+  if (f.sensitive) {
+    return { content: `O campo ${key} é sensível: os valores dele não são enviados à IA. Filtre ou agrupe por outro campo.`, isError: true }
+  }
+
+  const src = `read_parquet('${parquetGlob(dir)}')`
+  const col = `"${key.replace(/"/g, '""')}"`
+  const texto = `cast(${col} as varchar)`
+  const opts = { timeoutMs: config.duck.queryTimeoutMs }
+
+  let sep = input.separator ? String(input.separator) : null
+  if (!sep) {
+    const amostra = (await duckQuery(
+      `select count(*) filter (where v like '%||%') as listas, count(*) as total
+         from (select ${texto} as v from ${src} where ${col} is not null limit 5000)`, [], opts,
+    )).rows[0]
+    if (Number(amostra?.total ?? 0) > 0 && Number(amostra.listas) / Number(amostra.total) >= LIMIAR_LISTA) sep = '||'
+  }
+
+  // Lista na célula: desmonta, tira as aspas que o Matrix põe em volta e as
+  // sobras de espaço. Cada linha conta uma vez por tag que tem. O unnest fica
+  // sozinho no SELECT de dentro: dentro de outra função o DuckDB o recusa.
+  const valores = sep
+    ? `b as (select unnest(string_split(replace(${texto}, '"', ''), ?)) as t from ${src} where ${col} is not null),
+          v as (select trim(t) as valor from b)`
+    : `v as (select ${texto} as valor from ${src} where ${col} is not null)`
+  const params: unknown[] = sep ? [sep] : []
+  const palavras = palavrasDeBusca(search)
+  const filtro = palavras.map((w) => { params.push(`%${w}%`); return `strip_accents(lower(valor)) like ?` })
+  const { rows } = await duckQuery(
+    `with ${valores},
+          g as (select valor, count(*) as linhas from v
+                 where valor <> ''${filtro.length ? ` and ${filtro.join(' and ')}` : ''}
+                 group by valor)
+     select valor, linhas, count(*) over () as distintos from g order by linhas desc, valor limit 50`,
+    params, opts,
+  )
+
+  const values = rows.map((r) => ({ valor: r.valor, linhas: Number(r.linhas) }))
+  const distintos = Number(rows[0]?.distintos ?? 0)
+  let dica: string | undefined
+  if (search && !values.length) {
+    dica = 'Nenhum valor tem todas as palavras da busca. Tente uma palavra só (ex.: a raiz "desbloq") ou chame sem search para ver os mais comuns.'
+  } else if (!sep && values.length && values.filter((v) => /[,;]/.test(String(v.valor))).length / values.length >= 0.3) {
+    dica = 'Os valores parecem listas. Se forem, chame de novo com separator "," ou ";" para contar cada item.'
+  } else if (distintos > values.length) {
+    dica = `Mostrando os ${values.length} mais frequentes de ${distintos} valores distintos${search ? ' que casam com a busca' : ''}.`
+  }
+  return {
+    content: JSON.stringify({
+      dataset: slug, field: key, separator: sep, search: search || null, distintos, values,
+      ...(dica ? { dica } : {}),
+    }),
+  }
 }
 
 async function runQuery(def: QueryDef, user: SessionUser): Promise<ToolOutcome> {
