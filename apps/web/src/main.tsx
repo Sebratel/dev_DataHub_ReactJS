@@ -14,8 +14,7 @@ import SchedulesPage from '@/features/admin/SchedulesPage'
 import AutotunePage from '@/features/admin/AutotunePage'
 import SyncRulesPage from '@/features/admin/SyncRulesPage'
 import QualityPage from '@/features/admin/QualityPage'
-import ApisPage from '@/features/integrations/ApisPage'
-import GatewayPage from '@/features/gateway/GatewayPage'
+import GatewayApisPage from '@/features/gateway-apis/GatewayApisPage'
 import NotebooksPage from '@/features/notebooks/NotebooksPage'
 import NotebookPage from '@/features/notebooks/NotebookPage'
 import ModelsPage from '@/features/ml/ModelsPage'
@@ -28,7 +27,6 @@ import MetricsPage from '@/features/metrics/MetricsPage'
 import DashboardsPage from '@/features/dashboards/DashboardsPage'
 import DashboardPage from '@/features/dashboards/DashboardPage'
 import AiPage from '@/features/ai/AiPage'
-import IntegrationsPage from '@/features/integrations/IntegrationsPage'
 import '@/styles/index.css'
 
 const router = createBrowserRouter([
@@ -46,9 +44,12 @@ const router = createBrowserRouter([
       { path: 'dashboards/:id', element: <DashboardPage /> },
       { path: 'metrics', element: <MetricsPage /> },
       { path: 'ai', element: <AiPage /> },
-      { path: 'integrations', element: <IntegrationsPage /> },
-      { path: 'apis', element: <ApisPage /> },
-      { path: 'gateway', element: <GatewayPage /> },
+      { path: 'gateway-apis', element: <GatewayApisPage /> },
+      // Integrações, APIs e Gateway viraram abas do Gateway de APIs; os
+      // endereços velhos levam à aba equivalente.
+      { path: 'integrations', element: <Navigate to="/gateway-apis#tokens" replace /> },
+      { path: 'apis', element: <Navigate to="/gateway-apis#apis" replace /> },
+      { path: 'gateway', element: <Navigate to="/gateway-apis" replace /> },
       { path: 'notebooks', element: <NotebooksPage /> },
       { path: 'notebooks/:slug', element: <NotebookPage /> },
       { path: 'models', element: <ModelsPage /> },

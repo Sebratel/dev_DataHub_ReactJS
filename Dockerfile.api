@@ -20,7 +20,11 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY packages/shared/package.json packages/shared/
-RUN npm ci --omit=dev
+# skip: o onnxruntime-node baixaria do NuGet o pacote de GPU (CUDA/TensorRT) em
+# todo Linux x64. O servidor não tem GPU e os binários de CPU já vêm no pacote
+# do npm — o download só deixava o deploy mais lento, a imagem maior e o build
+# sujeito a timeout do api.nuget.org.
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm ci --omit=dev
 
 # Código: API + tipos compartilhados (tsx resolve os imports .ts em runtime).
 COPY tsconfig.base.json ./

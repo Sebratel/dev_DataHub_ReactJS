@@ -44,7 +44,10 @@ const adminOnly = [requireAuth({ role: 'admin' }), requireDb]
 
 credentialsRouter.get('/', ...adminOnly, async (req, res) => {
   const rows = (await db.query(
-    `select c.id, c.name, c.dataset_slugs, c.write_slugs, c.owner_email, c.revoked, c.last_used_at, c.expires_at, c.created_at
+    // Os limites do gateway vêm junto: a tela edita escopo e limites do token
+    // num painel só, inclusive de token revogado (que o /gateway/usage omite).
+    `select c.id, c.name, c.dataset_slugs, c.write_slugs, c.owner_email, c.revoked, c.last_used_at, c.expires_at, c.created_at,
+            c.rate_limit_per_min, c.quota_per_day, c.upstream_slugs
        from api_credentials c join tenants t on t.id = c.tenant_id
       where t.slug = $1 order by c.created_at desc`,
     [req.user!.tenant],

@@ -13,8 +13,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
-  Home, Boxes, LayoutDashboard, Sparkles, Plug, ShieldCheck, ScrollText,
-  Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Radio, Brain, NotebookText, Sparkle,
+  Home, Boxes, LayoutDashboard, Sparkles, ShieldCheck, ScrollText,
+  Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Brain, NotebookText, Sparkle,
   CalendarClock, Wand2, ListChecks, ClipboardCheck,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -48,9 +48,7 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
       { to: '/notebooks', label: 'Notebooks', icon: NotebookText },
       { to: '/ai', label: 'Assistente IA', icon: Sparkles },
       { to: '/models', label: 'Modelos', icon: Brain, role: 'editor' },
-      { to: '/integrations', label: 'Integrações', icon: Plug },
-      { to: '/apis', label: 'APIs', icon: Webhook, role: 'editor' },
-      { to: '/gateway', label: 'Gateway', icon: Radio, role: 'editor' },
+      { to: '/gateway-apis', label: 'Gateway de APIs', icon: Webhook, role: 'editor' },
     ],
   },
   {
@@ -72,10 +70,10 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
 // Rótulos amigáveis por segmento de rota (para o breadcrumb dinâmico).
 const CRUMB: Record<string, string> = {
   datasets: 'Conjuntos', dashboards: 'Painéis', metrics: 'Métricas', ai: 'Assistente IA',
-  integrations: 'Integrações', admin: 'Administração', connections: 'Conexões',
-  monitor: 'Monitoramento', 'write-products': 'APIs de Escrita', access: 'Usuários e Acessos',
-  audit: 'Auditoria', derived: 'Calculado', new: 'Novo', apis: 'APIs', explore: 'Explorador',
-  gateway: 'Gateway', models: 'Modelos', notebooks: 'Notebooks',
+  admin: 'Administração', connections: 'Conexões',
+  access: 'Usuários e Acessos',
+  audit: 'Auditoria', derived: 'Calculado', new: 'Novo', explore: 'Explorador',
+  'gateway-apis': 'Gateway de APIs', models: 'Modelos', notebooks: 'Notebooks',
   'ai-providers': 'Provedores de IA', schedules: 'Agendamentos',
   autotune: 'Padronizar atualização', 'sync-rules': 'Regras de atualização',
   quality: 'Qualidade dos dados', health: 'Saúde da plataforma',
