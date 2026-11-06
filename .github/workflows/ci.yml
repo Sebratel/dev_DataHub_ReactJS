@@ -26,6 +26,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # O onnxruntime-node (embeddings, via @huggingface/transformers) baixa no
+  # `npm ci` o pacote de GPU (CUDA/TensorRT) do NuGet em todo Linux x64. Ninguém
+  # usa GPU aqui — os binários de CPU já vêm no pacote do npm — e esse download
+  # derrubou o job web por timeout do api.nuget.org em 06/11/2026.
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   api:
     runs-on: ubuntu-latest
