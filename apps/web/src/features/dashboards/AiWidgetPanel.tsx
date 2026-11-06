@@ -23,6 +23,7 @@ interface WidgetProposal {
 const TOOL_LABEL: Record<string, string> = {
   search_datasets: 'Procurando os conjuntos de dados…',
   get_dataset_schema: 'Lendo os campos do conjunto…',
+  list_field_values: 'Conferindo como os valores estão gravados…',
   run_query: 'Validando os dados no lake…',
   propose_widgets: 'Montando os widgets…',
 }

@@ -10,6 +10,7 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import type { AiMessage } from '../ai/provider.js'
 import { activeProvider } from '../ai/providerStore.js'
 import { WIDGET_BUILDER_TOOLS, executeTool } from '../ai/tools.js'
+import { runAgent } from '../ai/agent.js'
 import { generateInsight } from './insights.js'
 import type { QueryDef } from '@datahub/shared'
 
@@ -29,6 +30,7 @@ Seu trabalho é traduzir o pedido da pessoa em um ou mais widgets. Você NUNCA e
 Como trabalhar:
 - Use search_datasets para achar o(s) conjunto(s) certos e get_dataset_schema para ver os campos REAIS (use o "key" do campo, não o rótulo).
 - Use SOMENTE conjuntos e campos que existam no schema. Nunca invente nome de campo, agregação ou conjunto.
+- Para filtrar por um valor de texto (tag, status, categoria), chame list_field_values com search e use o valor exato que voltar — nunca chute a grafia.
 - Se tiver dúvida se há dados, valide com run_query antes.
 - No FIM, chame propose_widgets UMA vez com a lista de widgets. Se algum for inválido, a tool devolve o erro — corrija e chame de novo.
 - Prefira de 1 a 4 widgets bem escolhidos, com títulos curtos. Depois de propose_widgets, escreva UMA frase dizendo o que montou.
@@ -84,30 +86,23 @@ aiWidgetsRouter.post('/:id/ai/build', requireAuth({ role: 'editor' }), requireDb
   try {
     const messages: AiMessage[] = [{ role: 'user', content: prompt }]
     let proposed: Record<string, unknown>[] = []
-    let finalText = ''
-
-    for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const turn = await provider.chat(systemPrompt, messages, WIDGET_BUILDER_TOOLS)
-      if (!turn.toolCalls.length) {
-        finalText = turn.text
-        break
-      }
-      messages.push({ role: 'assistant', content: turn.raw })
-      const results = []
-      for (const call of turn.toolCalls) {
-        send('tool', { name: call.name, input: call.input })
-        const outcome = await executeTool(call.name, call.input, req.user!, scope)
+    // Mesmo loop do chat (agent.ts): no limite, a IA ainda explica o que
+    // conseguiu montar e o que faltou, em vez de só "atingi o limite".
+    const { text: finalText } = await runAgent({
+      provider,
+      system: systemPrompt,
+      messages,
+      tools: WIDGET_BUILDER_TOOLS,
+      maxRounds: MAX_TOOL_ITERATIONS,
+      exec: (call) => executeTool(call.name, call.input, req.user!, scope),
+      onToolStart: (call) => send('tool', { name: call.name, input: call.input }),
+      onOutcome: (_call, outcome) => {
         if (outcome.widgets) {
           proposed = outcome.widgets
           send('widgets', outcome.widgets)
         }
-        results.push({ toolCallId: call.id, content: outcome.content, isError: outcome.isError })
-      }
-      messages.push(provider.toolResultMessage(results))
-      if (i === MAX_TOOL_ITERATIONS - 1) {
-        finalText = 'Atingi o limite de tentativas. Refine o pedido para eu continuar.'
-      }
-    }
+      },
+    })
 
     await audit(req, 'dashboards.ai.build', { type: 'dashboard', id: req.params.id }, { widgets: proposed.length })
     send('done', { text: finalText, widgets: proposed })

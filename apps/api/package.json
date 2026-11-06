@@ -24,6 +24,7 @@
     "connboot:smoke": "tsx src/dev/connectionsBootSmoke.ts",
     "queue:smoke": "tsx src/dev/queueStateSmoke.ts",
     "quality:smoke": "tsx src/dev/qualitySmoke.ts",
+    "agent:smoke": "tsx src/dev/agentSmoke.ts",
     "lake:smoke": "tsx src/dev/lakeRepairSmoke.ts",
     "databricks:smoke": "tsx src/dev/databricksSmoke.ts",
     "databricks:check": "tsx src/dev/databricksCheck.ts",
