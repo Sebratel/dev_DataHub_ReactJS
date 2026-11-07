@@ -254,9 +254,9 @@ Abaixo, **Sincronizar agora**, **Parar** e o histórico de execuções.
 > há nada pendente — não que a gravação falhou.
 
 > Quando o conjunto segue um agendamento, o lugar da cadência mostra **qual
-> agendamento, com que intervalo e em que janela**. Mudar a frequência é lá, em
-> Administração › Agendamentos, porque ela vale para todos os conjuntos que
-> seguem aquele agendamento.
+> agendamento, com que intervalo e em que janela**. Mudar o horário dele é em
+> Operar › Regras de atualização, no cartão do agendamento, porque ele vale
+> para todos os conjuntos que o seguem.
 
 > **A 2ª chave fica desabilitada até existir identidade.** Não é capricho da
 > tela: o banco recusa a combinação, porque sem identidade as duas passadas
@@ -270,13 +270,28 @@ identidade. O diagnóstico propõe **10 minutos** quando há identidade e chave 
 data; sem identidade, propõe **0** — com folga e sem identidade, você
 garantiria duplicatas.
 
-### 3.3 Administração › Agendamentos
+### 3.3 Operar › Regras de atualização (com os agendamentos)
 
-Um agendamento é uma política **nomeada e reutilizável**: janela de horário +
-dias da semana + intervalo em minutos. É o que viabiliza a cadência de minutos.
+A tabela mostra a regra em vigor de cada conjunto: modo, chaves, identidade,
+folga, frequência e a última carga. Para mudar a regra de **um** conjunto,
+clique nele: tudo se edita no painel dele.
 
-Editar um agendamento **propaga para todos** os conjuntos que o usam. Apagar
-devolve todos para a cadência diária.
+Em cima ficam os **agendamentos**, um cartão cada. Um agendamento é uma política
+**nomeada e reutilizável**: janela de horário + dias da semana + intervalo em
+minutos. É o que viabiliza a cadência de minutos.
+
+- **Novo agendamento** cria um vazio. Os conjuntos entram pelo campo Frequência
+  do painel de cada um, ou em lote em *Conjuntos* → **Agendar atualização**.
+- **Ver os N conjuntos na tabela** filtra a tabela por aquele agendamento. Com o
+  filtro ligado, cada linha ganha um **×** que tira o conjunto do agendamento
+  (ele volta para a cadência diária).
+- Editar um agendamento **propaga para todos** os conjuntos que o usam. Apagar
+  devolve todos para a cadência diária.
+- Se o agendamento rege algum conjunto de **fonte**, editar, apagar e tirar
+  conjunto de fonte são do admin master; o cartão mostra um cadeado.
+
+> Até 07/11/2026 os agendamentos tinham uma tela própria, *Agendamentos*. O
+> endereço antigo leva para esta.
 
 ### 3.4 Usuários e Acessos › Admin master
 
@@ -410,8 +425,9 @@ há quantas execuções ele se repete.
 
 ## 6. Roteiro C — cadência de minutos
 
-1. **Administração › Agendamentos**. Se ainda não houver um, crie a partir de
-   *Conjuntos*, selecionando os conjuntos e usando **Agendar atualização**.
+1. **Operar › Regras de atualização**, cartões de agendamento no topo. Se ainda
+   não houver um, use **Novo agendamento**, ou crie a partir de *Conjuntos*,
+   selecionando os conjuntos e usando **Agendar atualização**.
 2. Defina janela e intervalo. Sugestão inicial: **07:00–19:00, seg–sex, a cada
    10 minutos**. Comece conservador.
 

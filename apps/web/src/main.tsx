@@ -10,7 +10,6 @@ import AccessPage from '@/features/admin/AccessPage'
 import AuditPage from '@/features/admin/AuditPage'
 import HealthPage from '@/features/admin/HealthPage'
 import AiProvidersPage from '@/features/admin/AiProvidersPage'
-import SchedulesPage from '@/features/admin/SchedulesPage'
 import AutotunePage from '@/features/admin/AutotunePage'
 import SyncRulesPage from '@/features/admin/SyncRulesPage'
 import QualityPage from '@/features/admin/QualityPage'
@@ -64,7 +63,8 @@ const router = createBrowserRouter([
       { path: 'admin/ai-providers', element: <AiProvidersPage /> },
       { path: 'admin/sync-rules', element: <SyncRulesPage /> },
       { path: 'admin/quality', element: <QualityPage /> },
-      { path: 'admin/schedules', element: <SchedulesPage /> },
+      // Agendamentos virou a faixa de cartões do topo das Regras de atualização.
+      { path: 'admin/schedules', element: <Navigate to="/admin/sync-rules" replace /> },
       { path: 'admin/autotune', element: <AutotunePage /> },
     ],
   },

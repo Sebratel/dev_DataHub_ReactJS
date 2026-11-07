@@ -15,7 +15,7 @@ import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, ShieldCheck, ScrollText,
   Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Brain, NotebookText, Sparkle,
-  CalendarClock, Wand2, ListChecks, ClipboardCheck,
+  Wand2, ListChecks, ClipboardCheck,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
@@ -58,7 +58,6 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
       { to: '/admin/connections', label: 'Conexões', icon: Database, role: 'admin' },
       { to: '/admin/sync-rules', label: 'Regras de atualização', icon: ListChecks, role: 'admin' },
       { to: '/admin/quality', label: 'Qualidade dos dados', icon: ClipboardCheck, role: 'admin' },
-      { to: '/admin/schedules', label: 'Agendamentos', icon: CalendarClock, role: 'admin' },
       { to: '/admin/autotune', label: 'Padronizar atualização', icon: Wand2, role: 'admin' },
       { to: '/admin/ai-providers', label: 'Provedores de IA', icon: Sparkle, role: 'admin' },
       { to: '/admin/access', label: 'Usuários e Acessos', icon: ShieldCheck, role: 'admin' },

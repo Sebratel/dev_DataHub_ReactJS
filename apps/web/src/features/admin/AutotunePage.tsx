@@ -624,7 +624,7 @@ export default function AutotunePage() {
             {filter !== 'recarga' && !schedules.length && (
               <p className="border-t border-zinc-200 px-3 py-2 text-[11.5px] leading-relaxed text-zinc-500 dark:border-zinc-800">
                 Nenhum agendamento cadastrado ainda. Sem um agendamento, os conjuntos que caberiam em cadência de
-                minutos ficam de hora em hora — crie um em <strong>Agendamentos</strong> e reanalise.
+                minutos ficam de hora em hora — crie um em <strong>Regras de atualização</strong> (Novo agendamento) e reanalise.
               </p>
             )}
           </Card>

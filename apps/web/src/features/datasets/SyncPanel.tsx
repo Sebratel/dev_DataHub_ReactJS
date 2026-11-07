@@ -495,7 +495,7 @@ function FrequencyNote({ freq, gravada, agendamento, anterior, snapshot, rowCoun
           Segue o agendamento <strong>{agendamento.name}</strong> — {scheduleRhythm(agendamento)}.
           {outros > 0 && <> Outros {outros} conjunto(s) seguem o mesmo agendamento.</>}{' '}
           Mudar o horário dele muda todos os conjuntos que o seguem; isso é em{' '}
-          <Link to="/admin/schedules" className="text-info hover:underline dark:text-info-dark">Agendamentos</Link>.
+          <Link to="/admin/sync-rules" className="text-info hover:underline dark:text-info-dark">Regras de atualização</Link>.
         </p>
       )}
       {anterior && freq !== gravada && (
