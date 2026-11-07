@@ -313,11 +313,11 @@ export function sourceLostSql(dialect: Dialect, from: string, lost: PlanColumn[]
 const sqlit = (s: string) => `'${String(s).replace(/'/g, "''")}'`
 const ident = (s: string) => `"${String(s).replace(/"/g, '""')}"`
 
-/** A mesma contagem no LAKE (DuckDB), pelos nomes expostos (key). */
-export function lakeCountSql(
-  glob: string, plan: { method: 'per-day' | 'total'; keyField: (PlanColumn & { isDate: boolean }) | null; sumField: PlanColumn | null } & Bounds,
-): string {
-  const src = `read_parquet(${sqlit(glob)})`
+type LakeKey = (PlanColumn & { isDate: boolean }) | null
+
+// Os limites da comparação no LAKE — o espelho de sourceWhere: contagem e
+// diagnóstico olham a mesma população de linhas.
+function lakeWhere(plan: { keyField: LakeKey } & Bounds, extra: string[] = []): string {
   const where: string[] = []
   if (plan.keyField) {
     const k = ident(plan.keyField.key)
@@ -326,12 +326,84 @@ export function lakeCountSql(
     if (plan.lower != null) where.push(`${k} >= ${lit(plan.lower)}`)
     if (plan.upper != null) where.push(`${k} <= ${lit(plan.upper)}`)
   }
+  where.push(...extra)
+  return where.length ? ` where ${where.join(' and ')}` : ''
+}
+
+/** A mesma contagem no LAKE (DuckDB), pelos nomes expostos (key). */
+export function lakeCountSql(
+  glob: string, plan: { method: 'per-day' | 'total'; keyField: LakeKey; sumField: PlanColumn | null } & Bounds,
+): string {
+  const src = `read_parquet(${sqlit(glob)})`
   const s = plan.sumField ? `, sum(${ident(plan.sumField.key)}) as s` : ''
-  const w = where.length ? ` where ${where.join(' and ')}` : ''
+  const w = lakeWhere(plan)
   if (plan.method === 'per-day' && plan.keyField) {
     return `select cast(${ident(plan.keyField.key)} as date) as d, count(*) as n${s} from ${src}${w} group by 1`
   }
   return `select count(*) as n${s} from ${src}${w}`
+}
+
+/**
+ * Linhas repetidas no LAKE pelas colunas dadas (identidade ou, sem ela, o
+ * campo da soma — quase sempre o id), na mesma janela da contagem. Só lê as
+ * colunas da chave: num Parquet (colunar) é uma fração de ler o conjunto.
+ */
+export function lakeDupSql(glob: string, plan: { keyField: LakeKey } & Bounds, keys: string[]): string {
+  const src = `read_parquet(${sqlit(glob)})`
+  const cols = keys.map(ident)
+  const w = lakeWhere(plan, cols.map((c) => `${c} is not null`))
+  return `select count(*) - (select count(*) from (select distinct ${cols.join(', ')} from ${src}${w})) as dup from ${src}${w}`
+}
+
+// ── Diagnóstico ──────────────────────────────────────────────────────────
+// Divergiu — por quê, e o que conserta? Conferir de novo nunca conserta: sem
+// dizer a causa, "Conciliar agora" devolvia o mesmo número e parecia não
+// fazer nada. A causa sai do sinal da diferença e das repetidas no lake.
+export interface DiagnosisInput {
+  syncMode: string
+  sourceRows: number
+  lakeRows: number
+  /** Repetidas no lake (null = não deu para medir: sem identidade nem soma). */
+  lakeDup: number | null
+  /** Por qual chave as repetidas foram contadas, para a frase. */
+  dupBy: string | null
+  hasIdentity: boolean
+  keyField: string | null
+}
+
+const n = (v: number) => v.toLocaleString('pt-BR')
+
+export function diagnose(d: DiagnosisInput): string {
+  const dif = d.lakeRows - d.sourceRows
+  if (d.syncMode !== 'incremental') {
+    return 'Conjunto em snapshot: cada carga relê a fonte inteira, então diferença aqui costuma ser movimento ' +
+      'na fonte entre o fim da carga e a conferência. Se continuar divergindo, confira de novo fora do horário de pico.'
+  }
+  const partes: string[] = []
+  const dup = d.lakeDup ?? 0
+  if (dup > 0) {
+    partes.push(`O lake tem ${n(dup)} linha(s) repetida(s) (mesmo ${d.dupBy}).`)
+    partes.push(d.hasIdentity
+      ? 'A compactação deveria tê-las colapsado; a recarga completa regrava o conjunto sem elas.'
+      : 'O conjunto não tem identidade da linha definida, então cada carga que relê a mesma linha a acrescenta ' +
+        'de novo. A recarga completa limpa agora; para não voltar, defina a identidade em Padronizar atualização.')
+    const resto = dif - dup
+    if (resto > 0) partes.push(`Fora as repetidas, sobram ${n(resto)}: provavelmente apagadas na fonte.`)
+    return partes.join(' ')
+  }
+  if (dif > 0) {
+    return `O lake tem ${n(dif)} linha(s) que a fonte não tem mais: o mais provável é que tenham sido apagadas lá. ` +
+      'A carga incremental traz linhas novas e alteradas, mas não fica sabendo de exclusão. ' +
+      'A recarga completa relê a fonte e remove essas linhas.' +
+      (d.lakeDup == null ? ' (Não deu para descartar linha repetida: o conjunto não tem identidade nem soma de controle.)' : '')
+  }
+  if (dif < 0) {
+    return `Faltam ${n(-dif)} linha(s) no lake. Costuma ser linha gravada na fonte com ` +
+      `${d.keyField ?? 'a chave de carga'} anterior ao ponto da última carga — o incremental não volta para buscá-la. ` +
+      'A recarga completa traz.'
+  }
+  return 'Mesmo total de linhas, mas os dias ou a soma de controle não batem: linha alterada na fonte que o lake ' +
+    'guarda na versão antiga (mudou de dia, por exemplo). A recarga completa corrige.'
 }
 
 // ── Comparação ───────────────────────────────────────────────────────────

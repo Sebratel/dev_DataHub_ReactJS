@@ -1,8 +1,11 @@
 // Sino do cabeçalho (só admin): o aviso DENTRO do sistema.
 //
-// Mostra quantos problemas estão abertos agora (vermelho se algum é crítico) e
-// um ponto azul quando há alerta que ninguém do time viu. Leva para Saúde da
-// plataforma. Consulta a cada minuto uma rota leve — só contagens.
+// O NÚMERO é de alertas que ninguém do time viu — é o que "Marcar todos como
+// vistos" zera. Antes ele contava os problemas abertos, que só somem quando a
+// causa é resolvida: a pessoa marcava tudo como lido e o "4" continuava lá,
+// parecendo defeito. Problema aberto sem alerta novo vira só um PONTO (vermelho
+// se algum é crítico): continua visível, mas não pede para ser "lido".
+// Leva para Saúde da plataforma. Consulta a cada minuto uma rota leve.
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bell } from 'lucide-react'
@@ -34,10 +37,11 @@ export default function AlertsBell() {
     return () => { vivo = false; clearInterval(t); ouvintes.delete(load) }
   }, [])
 
-  const n = b?.problems ?? 0
+  const n = b?.unseenAlerts ?? 0
+  const abertos = b?.problems ?? 0
   const titulo = !b ? 'Saúde da plataforma'
-    : `${n ? `${n} problema(s) precisando de atenção${b.crit ? `, ${b.crit} crítico(s)` : ''}` : 'Nada precisando de atenção'}` +
-      `${b.unseenAlerts ? ` · ${b.unseenAlerts} alerta(s) não visto(s)` : ''}`
+    : `${n ? `${n} alerta(s) não visto(s)` : 'Nenhum alerta novo'}` +
+      ` · ${abertos ? `${abertos} problema(s) aberto(s)${b.crit ? `, ${b.crit} crítico(s)` : ''}` : 'nada precisando de atenção'}`
 
   return (
     <button
@@ -55,8 +59,8 @@ export default function AlertsBell() {
           {n > 99 ? '99+' : n}
         </span>
       )}
-      {n === 0 && !!b?.unseenAlerts && (
-        <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-info" />
+      {n === 0 && abertos > 0 && (
+        <span className={clsx('absolute right-1 top-1 h-1.5 w-1.5 rounded-full', b?.crit ? 'bg-crit' : 'bg-warn')} />
       )}
     </button>
   )
