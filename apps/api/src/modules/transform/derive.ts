@@ -197,7 +197,7 @@ export function auditDerivedCadence(rows: CadenceRow[]): DerivedCadenceItem[] {
     if (cadence === 'schedule') {
       return {
         ...base, eligible: false,
-        reason: 'Segue um agendamento em lote. Troque em Administração › Agendamentos.',
+        reason: 'Segue um agendamento em lote. Troque em Operar › Regras de atualização.',
       }
     }
     return { ...base, eligible: true, reason: null }

@@ -100,7 +100,7 @@ export default function DerivedCadencePanel({ dataset, onSaved }: { dataset: Dat
         <h2 className="text-sm font-medium uppercase tracking-wider text-zinc-400">Atualização automática (admin)</h2>
         <div className="mt-3 flex flex-wrap items-start gap-3">
           <p className="max-w-[420px] rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-            Controlado por um agendamento em lote. Gerencie em Administração › Agendamentos.
+            Controlado por um agendamento em lote. Gerencie em Operar › Regras de atualização.
           </p>
           {materializeButton}
         </div>
