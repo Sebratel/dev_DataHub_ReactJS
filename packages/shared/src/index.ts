@@ -433,6 +433,10 @@ export interface ReconcileRun {
   lostRows: number | null
   /** Linhas a mais que identidades distintas na fonte (QLD-04). null = sem identidade a conferir. */
   dupIdentity: number | null
+  /** Linhas repetidas no LAKE (identidade ou id). null = bateu, ou não deu para medir. */
+  lakeDup: number | null
+  /** Divergiu: a causa provável e o conserto, em uma frase. */
+  diagnosis: string | null
   notes: string[]
   error: string | null
   requestedBy: string | null

@@ -55,7 +55,8 @@ function mapRun(r: Record<string, any>): ReconcileRun {
     sourceSum: num(r.source_sum), lakeSum: num(r.lake_sum),
     daysCompared: num(r.days_compared), daysDiverged: num(r.days_diverged),
     diffDays: (r.diff_days as ReconcileRun['diffDays'] | null) ?? [],
-    lostRows: num(r.lost_rows), dupIdentity: num(r.dup_identity), notes: (r.notes as string[] | null) ?? [],
+    lostRows: num(r.lost_rows), dupIdentity: num(r.dup_identity),
+    lakeDup: num(r.lake_dup), diagnosis: r.diagnosis ?? null, notes: (r.notes as string[] | null) ?? [],
     error: r.error ?? null, requestedBy: r.requested_by ?? null, sourceMs: num(r.source_ms),
     createdAt: iso(r.created_at)!, startedAt: iso(r.started_at), finishedAt: iso(r.finished_at),
   }

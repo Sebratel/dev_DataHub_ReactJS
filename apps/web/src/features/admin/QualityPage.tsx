@@ -7,16 +7,18 @@
 // sistema confere sozinho — todo dia um conjunto pequeno, um médio e um grande
 // — e esta tela mostra o último resultado de cada fonte e os dias que não
 // bateram. Os alertas ficam em Saúde da plataforma, junto com os de carga.
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ClipboardCheck, Database, RefreshCw, ChevronRight, Loader2, Star, ShieldAlert, GitMerge,
+  ClipboardCheck, Database, RefreshCw, ChevronRight, Loader2, Star, ShieldAlert, GitMerge, Wrench, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import type {
   QualityOverview, QualityDatasetRow, ReconcileRun, ReconcileBand, DatasetCheckRow,
 } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
+import { useConfirm } from '@/components/Dialogs'
 import { hoursSince, lagSince } from '@/lib/freshness'
 import {
   Page, PageHeader, ErrorBanner, EmptyState, Toolbar, SearchInput, FilterChips, FilterSelect, TableSkeleton,
@@ -57,6 +59,41 @@ const fmtCarimbo = (s: string) => {
 
 type Filtro = 'all' | 'diverged' | 'error' | 'match' | 'never' | 'out'
 
+interface Aviso { tone: 'info' | 'ok' | 'warn' | 'crit'; text: string }
+const AVISO_CLS: Record<Aviso['tone'], string> = {
+  info: 'bg-info-soft text-info dark:bg-info/10 dark:text-info-dark',
+  ok: 'bg-ok-soft text-ok dark:bg-ok/10 dark:text-ok-dark',
+  warn: 'bg-warn-soft text-warn dark:bg-warn/10 dark:text-warn-dark',
+  crit: 'bg-crit-soft text-crit dark:bg-crit/10 dark:text-crit-dark',
+}
+
+/** Linhas a mais (+) ou a menos (−) no lake, por extenso. */
+function diferencaTxt(run: ReconcileRun): string {
+  const dif = (run.lakeRows ?? 0) - (run.sourceRows ?? 0)
+  if (dif > 0) return `${fmt(dif)} linha(s) a mais no lake`
+  if (dif < 0) return `${fmt(-dif)} linha(s) a menos no lake`
+  return `mesmo total, ${fmt(run.daysDiverged)} dia(s) diferentes`
+}
+
+// O resultado de uma conferência pedida nesta tela, com o que fazer depois.
+function resultadoDe(d: QualityDatasetRow, run: ReconcileRun): Aviso {
+  const hora = run.finishedAt ? new Date(run.finishedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''
+  if (run.status === 'match') {
+    return { tone: 'ok', text: `${d.name}: conferido às ${hora} — bate com a fonte (${fmt(run.sourceRows)} linhas).` }
+  }
+  if (run.status === 'diverged') {
+    return {
+      tone: 'crit',
+      text: `${d.name}: conferido às ${hora} — continua divergente (${diferencaTxt(run)}). ` +
+        (run.diagnosis ?? 'Abra a linha para ver os dias que não bateram.'),
+    }
+  }
+  return { tone: 'warn', text: `${d.name}: a conferência não terminou — ${run.error ?? 'motivo não informado'}` }
+}
+
+/** Divergente em incremental: a recarga completa é o conserto. */
+const corrigivel = (d: QualityDatasetRow) => situacaoDe(d) === 'diverged' && d.mode === 'incremental'
+
 export default function QualityPage() {
   const [data, setData] = useState<QualityOverview | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -65,7 +102,13 @@ export default function QualityPage() {
   const [query, setQuery] = useState('')
   const [aberto, setAberto] = useState<string | null>(null)
   const [pedindo, setPedindo] = useState<string | null>(null)
-  const [aviso, setAviso] = useState<string | null>(null)
+  // Um aviso por conjunto pedido nesta tela: o pedido e, depois, o resultado.
+  const [avisos, setAvisos] = useState<Record<string, Aviso>>({})
+  // Conjuntos cujo resultado esta tela está esperando para anunciar. Sem isto,
+  // conferir de novo e receber o MESMO número parecia "não aconteceu nada".
+  const acompanhando = useRef(new Set<string>())
+  const isMaster = useAuthStore((s) => !!s.user?.master)
+  const confirm = useConfirm()
 
   function load() {
     api<QualityOverview>('/api/v1/quality/overview')
@@ -83,17 +126,63 @@ export default function QualityPage() {
     return () => clearInterval(t)
   }, [pendente])
 
+  // Terminou uma conferência pedida aqui: diz o resultado com todas as letras.
+  useEffect(() => {
+    if (!data) return
+    for (const d of data.datasets) {
+      if (!acompanhando.current.has(d.id) || situacaoDe(d) === 'pending' || !d.lastRun) continue
+      acompanhando.current.delete(d.id)
+      setAvisos((a) => ({ ...a, [d.id]: resultadoDe(d, d.lastRun!) }))
+    }
+  }, [data])
+
+  const avisa = (d: QualityDatasetRow, a: Aviso) => setAvisos((cur) => ({ ...cur, [d.id]: a }))
+  const fecha = (id: string) => setAvisos((cur) => { const resto = { ...cur }; delete resto[id]; return resto })
+
   async function conciliar(d: QualityDatasetRow) {
     setPedindo(d.id)
-    setAviso(null)
     try {
       const r = await api<{ alreadyQueued: boolean }>(`/api/v1/quality/datasets/${d.id}/reconcile`, { method: 'POST' })
-      setAviso(r.alreadyQueued
-        ? `${d.name} já estava na fila de conferência.`
-        : `${d.name} entrou na fila: primeiro a carga, depois a conferência com a fonte.`)
+      acompanhando.current.add(d.id)
+      avisa(d, {
+        tone: 'info',
+        text: r.alreadyQueued
+          ? `${d.name} já estava na fila de conferência. O resultado aparece aqui quando terminar.`
+          : `${d.name} entrou na fila: primeiro a carga, depois a conferência com a fonte. O resultado aparece aqui.`,
+      })
       load()
     } catch (e) {
-      setAviso(e instanceof Error ? e.message : 'Não foi possível pedir a conciliação.')
+      avisa(d, { tone: 'crit', text: e instanceof Error ? e.message : 'Não foi possível pedir a conciliação.' })
+    } finally {
+      setPedindo(null)
+    }
+  }
+
+  // Corrigir = recarga completa + conferência logo depois. Conferir sozinho
+  // nunca conserta: linha apagada na fonte, repetida ou faltando no lake só
+  // sai com a fonte relida inteira. A recarga entra na fila primeiro; o pedido
+  // de conferência pega carona na MESMA carga (a fila não duplica o conjunto)
+  // e roda no fim dela, já sobre o lake regravado.
+  async function corrigir(d: QualityDatasetRow) {
+    const ok = await confirm({
+      title: `Corrigir "${d.name}"`,
+      message:
+        `O conjunto será relido INTEIRO da fonte (${fmt(d.rowCount)} linhas) e o conteúdo atual do lake será ` +
+        'substituído. Logo depois, a conferência roda de novo e o resultado aparece aqui.\n\n' +
+        'Roda na fila — uma carga por vez no hub inteiro —, então ocupa a fila enquanto durar.' +
+        (d.band === 'large' ? ' Conjunto grande: prefira fora do horário de pico.' : ''),
+      confirmLabel: 'Recarregar e conferir',
+    })
+    if (!ok) return
+    setPedindo(d.id)
+    try {
+      await api(`/api/v1/datasets/${d.id}/reload`, { method: 'POST' })
+      await api(`/api/v1/quality/datasets/${d.id}/reconcile`, { method: 'POST' })
+      acompanhando.current.add(d.id)
+      avisa(d, { tone: 'info', text: `${d.name}: recarga completa na fila. Ao terminar, a conferência roda sozinha e o resultado aparece aqui.` })
+      load()
+    } catch (e) {
+      avisa(d, { tone: 'crit', text: e instanceof Error ? e.message : 'Não foi possível pedir a correção.' })
     } finally {
       setPedindo(null)
     }
@@ -152,7 +241,12 @@ export default function QualityPage() {
               Antes de conferir, o conjunto carrega: a comparação é com o lake recém-atualizado.
             </p>
           )}
-          {aviso && <p className="rounded-xl bg-info-soft px-3 py-2 text-[11.5px] text-info dark:bg-info/10 dark:text-info-dark">{aviso}</p>}
+          {Object.entries(avisos).map(([id, a]) => (
+            <p key={id} className={clsx('flex items-start gap-2 rounded-xl px-3 py-2 text-[11.5px] leading-relaxed', AVISO_CLS[a.tone])}>
+              <span className="min-w-0 flex-1">{a.text}</span>
+              <button onClick={() => fecha(id)} aria-label="Fechar aviso" className="shrink-0 opacity-60 hover:opacity-100"><X size={13} /></button>
+            </p>
+          ))}
 
           <div>
             <Toolbar>
@@ -207,12 +301,15 @@ export default function QualityPage() {
                           aberto={aberto === d.id}
                           onToggle={() => setAberto(aberto === d.id ? null : d.id)}
                           pedindo={pedindo === d.id}
+                          podeCorrigir={isMaster && corrigivel(d)}
                           onConciliar={() => void conciliar(d)}
+                          onCorrigir={() => void corrigir(d)}
                         />
                         {aberto === d.id && (
                           <tr>
                             <td colSpan={9} className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/40">
-                              <Detalhe d={d} />
+                              <Detalhe d={d} isMaster={isMaster} pedindo={pedindo === d.id}
+                                onConciliar={() => void conciliar(d)} onCorrigir={() => void corrigir(d)} />
                             </td>
                           </tr>
                         )}
@@ -235,8 +332,9 @@ export default function QualityPage() {
   )
 }
 
-function Linha({ d, aberto, onToggle, pedindo, onConciliar }: {
-  d: QualityDatasetRow; aberto: boolean; onToggle: () => void; pedindo: boolean; onConciliar: () => void
+function Linha({ d, aberto, onToggle, pedindo, podeCorrigir, onConciliar, onCorrigir }: {
+  d: QualityDatasetRow; aberto: boolean; onToggle: () => void; pedindo: boolean
+  podeCorrigir: boolean; onConciliar: () => void; onCorrigir: () => void
 }) {
   const s = situacaoDe(d)
   const run = d.lastRun
@@ -284,7 +382,19 @@ function Linha({ d, aberto, onToggle, pedindo, onConciliar }: {
           : terminou && run.method === 'total' ? <span className="text-[11px]">só o total</span> : '—'}
       </Td>
       <Td>
-        {!d.ineligible && (
+        {/* Divergente: o botão da linha é o CONSERTO (recarga + conferência).
+            "Só conferir de novo" fica no detalhe — conferir não muda o número. */}
+        {!d.ineligible && podeCorrigir ? (
+          <button
+            onClick={onCorrigir}
+            disabled={pedindo}
+            title="Relê a fonte inteira, substitui o lake e confere de novo"
+            className="flex h-[26px] items-center gap-1.5 rounded-lg border border-crit/40 px-2.5 text-[11.5px] font-medium text-crit hover:bg-crit-soft disabled:opacity-50 dark:text-crit-dark dark:hover:bg-crit/10"
+          >
+            {pedindo ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} strokeWidth={1.8} />}
+            Corrigir
+          </button>
+        ) : !d.ineligible && (
           <button
             onClick={onConciliar}
             disabled={pedindo || s === 'pending'}
@@ -302,7 +412,9 @@ function Linha({ d, aberto, onToggle, pedindo, onConciliar }: {
 }
 
 // Detalhe de um conjunto: a última conferência por inteiro e as anteriores.
-function Detalhe({ d }: { d: QualityDatasetRow }) {
+function Detalhe({ d, isMaster, pedindo, onConciliar, onCorrigir }: {
+  d: QualityDatasetRow; isMaster: boolean; pedindo: boolean; onConciliar: () => void; onCorrigir: () => void
+}) {
   const [runs, setRuns] = useState<ReconcileRun[] | null>(null)
   useEffect(() => {
     api<{ runs: ReconcileRun[] }>(`/api/v1/quality/datasets/${d.id}/reconciliations`)
@@ -321,6 +433,28 @@ function Detalhe({ d }: { d: QualityDatasetRow }) {
       <div className="min-w-0 space-y-1.5">
         <p className="font-semibold">Última conferência · {quando(run.finishedAt ?? run.createdAt)}</p>
         {run.error && <p className="rounded-lg bg-warn-soft px-2.5 py-1.5 text-warn dark:bg-warn/10 dark:text-warn-dark">{run.error}</p>}
+        {run.status === 'diverged' && (
+          <div className="rounded-lg border border-crit/30 bg-crit-soft/40 px-2.5 py-2 dark:bg-crit/5">
+            <p className="font-semibold text-crit dark:text-crit-dark">Por que diverge · {diferencaTxt(run)}</p>
+            <p className="mt-0.5 leading-relaxed text-zinc-700 dark:text-zinc-300">
+              {run.diagnosis ?? 'Conferência anterior a este diagnóstico: confira de novo para saber a causa provável.'}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {corrigivel(d) && (isMaster ? (
+                <button onClick={onCorrigir} disabled={pedindo}
+                  className="flex h-[26px] items-center gap-1.5 rounded-lg bg-crit px-2.5 text-[11.5px] font-semibold text-white hover:opacity-90 disabled:opacity-50">
+                  <Wrench size={12} strokeWidth={1.8} /> Recarregar da fonte e conferir
+                </button>
+              ) : (
+                <span className="text-[11px] text-zinc-500">A recarga completa é do admin master.</span>
+              ))}
+              <button onClick={onConciliar} disabled={pedindo}
+                className="flex h-[26px] items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 text-[11.5px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                <RefreshCw size={12} strokeWidth={1.8} /> Só conferir de novo
+              </button>
+            </div>
+          </div>
+        )}
         <dl className="grid grid-cols-[130px_1fr] gap-x-2 gap-y-1 text-zinc-600 dark:text-zinc-300">
           <dt className="text-zinc-400">Comparação</dt>
           <dd>{run.method === 'per-day' ? `por dia de ${run.keyField?.label ?? '—'}` : run.method === 'total' ? 'total' : '—'}</dd>
@@ -340,6 +474,10 @@ function Detalhe({ d }: { d: QualityDatasetRow }) {
                 ? `não é única: ${fmt(run.dupIdentity)} linha(s) a mais que identidades distintas — a compactação guarda só uma de cada`
                 : 'única na janela conferida'}
             </dd>
+          </>)}
+          {run.lakeDup != null && (<>
+            <dt className="text-zinc-400">Repetidas no lake</dt>
+            <dd className={run.lakeDup ? 'text-crit dark:text-crit-dark' : ''}>{run.lakeDup ? `${fmt(run.lakeDup)} linha(s)` : 'nenhuma'}</dd>
           </>)}
           {run.sourceMs != null && (<><dt className="text-zinc-400">Tempo na fonte</dt><dd>{fmt(run.sourceMs)} ms</dd></>)}
           <dt className="text-zinc-400">Pedido por</dt><dd>{run.requestedBy ?? '—'}</dd>

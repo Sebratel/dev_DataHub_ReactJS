@@ -9,8 +9,8 @@
 // Uso: npm run quality:smoke --workspace apps/api
 import {
   bandOf, ineligibleReason, planReconcile, parseLocal, timestampLocal, MENOR_DATA,
-  sourceCountSql, sourceLostSql, lakeCountSql, toBucket, compareBuckets, isMatch, sameSum,
-  type PlanDataset, type PlanRules,
+  sourceCountSql, sourceLostSql, lakeCountSql, lakeDupSql, diagnose, toBucket, compareBuckets, isMatch, sameSum,
+  type PlanDataset, type PlanRules, type DiagnosisInput,
 } from '../modules/quality/reconcilePlan.js'
 import { alertText, validateWebhookUrl, webhookHint } from '../modules/alerts/notify.js'
 import { staleVerdict, volumeVerdict, idade, type StaleInput } from '../modules/quality/checkRules.js'
@@ -239,6 +239,29 @@ eq('tabela pequena não avalia (10 → 7 linhas não diz nada)', volumeVerdict(5
 eq('primeira carga não avalia', volumeVerdict(null, 100), null)
 check('o detalhe traz os dois números', !!volumeVerdict(10_000, 7_500)?.detail.includes('10.000'))
 eq('idade legível', [idade(45), idade(150), idade(60 * 50)], ['45 min', '2 h 30 min', '2 dias'])
+
+console.log('\n── diagnóstico da divergência ──')
+{
+  const d = (o: Partial<DiagnosisInput>): string => diagnose({
+    syncMode: 'incremental', sourceRows: 100, lakeRows: 100, lakeDup: 0, dupBy: 'id',
+    hasIdentity: true, keyField: 'criado_em', ...o,
+  })
+  check('lake a mais sem repetidas: apagadas na fonte, recarga resolve',
+    /apagadas/.test(d({ lakeRows: 455 })) && /recarga completa/.test(d({ lakeRows: 455 })) && d({ lakeRows: 455 }).includes('355'))
+  check('lake a mais POR repetidas: diz quantas e por qual chave',
+    d({ lakeRows: 110, lakeDup: 10 }).includes('10 linha(s) repetida(s) (mesmo id)'))
+  check('repetidas sem identidade: manda definir a identidade (senão volta)',
+    /defina a identidade/.test(d({ lakeRows: 110, lakeDup: 10, hasIdentity: false })))
+  check('repetidas e apagadas juntas: separa as duas',
+    d({ lakeRows: 130, lakeDup: 10 }).includes('sobram 20'))
+  check('faltando no lake: cita a chave de carga', /Faltam 5 .*criado_em/.test(d({ lakeRows: 95 })))
+  check('mesmo total, dias diferentes: linha alterada', /Mesmo total/.test(d({})))
+  check('snapshot: não manda recarregar', !/recarga completa/.test(d({ syncMode: 'snapshot', lakeRows: 455 })))
+  check('sem como medir repetidas: avisa', /Não deu para descartar/.test(d({ lakeRows: 455, lakeDup: null, dupBy: null })))
+  const sql = lakeDupSql('/lake/x/*.parquet', { keyField: { key: 'criado_em', column: 'dt', isDate: true }, lower: '2026-01-01', upper: null }, ['a', 'b'])
+  check('repetidas no lake: mesma janela da contagem', sql.includes("\"criado_em\" >= cast('2026-01-01' as timestamp)"))
+  check('repetidas no lake: distinct pelas colunas da chave, sem nulas', sql.includes('select distinct "a", "b"') && sql.includes('"a" is not null and "b" is not null'))
+}
 
 console.log('\n── alertas ──')
 eq('texto: título em negrito e uma linha por item', alertText('Conciliação divergente: X', ['a', '', 'b']), '*Data Hub · Conciliação divergente: X*\na\nb')

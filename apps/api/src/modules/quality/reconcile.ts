@@ -28,7 +28,7 @@ import { notify } from '../alerts/notify.js'
 import { postLoadChecks } from './checks.js'
 import {
   planReconcile, ineligibleReason, bandOf, quoteFor, sourceCountSql, sourceLostSql, sourceDupIdentitySql, lakeCountSql,
-  toBucket, compareBuckets, isMatch, sameSum, timestampLocal,
+  lakeDupSql, diagnose, toBucket, compareBuckets, isMatch, sameSum, timestampLocal,
   type Dialect, type PlanDataset, type PlanRules,
 } from './reconcilePlan.js'
 import type { ReconcileBand } from '@datahub/shared'
@@ -219,17 +219,35 @@ export async function runReconcile(runId: string): Promise<void> {
     const diffDays = porDia ? c.diverged : []
     const nomesIdent = plan.identity?.map((x) => x.key).join(' + ') ?? ''
 
+    // Divergiu: a causa provável, medida no lake (sem tocar na fonte). As
+    // repetidas contam pela identidade; sem ela, pelo campo "id" — nunca por
+    // um número qualquer, que repetiria por natureza e acusaria duplicata falsa.
+    let lakeDup: number | null = null
+    let diagnosis: string | null = null
+    if (!ok) {
+      const idField = ds.plan.fields.find((f) => f.type === 'number' && f.key.toLowerCase() === 'id')
+      const dupKeys = ds.plan.dedupeKeys.length ? ds.plan.dedupeKeys : idField ? [idField.key] : null
+      if (dupKeys && temLake) {
+        lakeDup = Number((await duckQuery(lakeDupSql(glob, bounds, dupKeys))).rows[0]?.dup ?? 0)
+      }
+      diagnosis = diagnose({
+        syncMode: ds.plan.syncMode, sourceRows: c.sourceRows, lakeRows: c.lakeRows, lakeDup,
+        dupBy: dupKeys?.join(' + ') ?? null, hasIdentity: ds.plan.dedupeKeys.length > 0,
+        keyField: plan.keyField?.key ?? null,
+      })
+    }
+
     await db.query(
       `update reconcile_runs set status = $2, method = $3, key_field = $4, sum_field = $5,
               window_from = $6, window_to = $7, source_rows = $8, lake_rows = $9, source_sum = $10, lake_sum = $11,
               days_compared = $12, days_diverged = $13, diff_days = $14, lost_rows = $15, notes = $16,
-              source_ms = $17, dup_identity = $18, finished_at = now()
+              source_ms = $17, dup_identity = $18, lake_dup = $19, diagnosis = $20, finished_at = now()
         where id = $1`,
       [runId, ok ? 'match' : 'diverged', plan.method, plan.keyField?.key ?? null, plan.sumField?.key ?? null,
        lower, plan.upper, c.sourceRows, c.lakeRows, c.sourceSum, c.lakeSum,
        porDia ? c.daysCompared : null, porDia ? diffDays.length : null,
        JSON.stringify(diffDays.slice(0, 60)), lostRows, JSON.stringify(notes), sourceMs,
-       plan.identity ? dupIdentity : null],
+       plan.identity ? dupIdentity : null, lakeDup, diagnosis],
     )
     console.log(`[qualidade] ${ds.row.slug}: ${ok ? 'bate' : 'DIVERGE'} — fonte ${c.sourceRows} × lake ${c.lakeRows}` +
       `${porDia ? `, ${diffDays.length} de ${c.daysCompared} dia(s) diferentes` : ''}${lostRows ? `, ${lostRows} perdida(s)` : ''}` +
@@ -258,6 +276,7 @@ export async function runReconcile(runId: string): Promise<void> {
           .map((d) => `${fmtDia(d.day)} (fonte ${fmt(d.sourceRows)} × lake ${fmt(d.lakeRows)})`).join('; ')
         lines.push(`Dias diferentes: ${diffDays.length} de ${c.daysCompared}. ${amostra}${diffDays.length > 5 ? '; …' : ''}.`)
       }
+      if (diagnosis) lines.push(diagnosis)
       lines.push('Veja em Operar › Qualidade dos dados.')
       await notify(tenantId, { key: `reconcile:diverged:${datasetId}`, kind: 'reconcile-diverged', title: `Conciliação divergente: ${name}`, lines })
     } else {
