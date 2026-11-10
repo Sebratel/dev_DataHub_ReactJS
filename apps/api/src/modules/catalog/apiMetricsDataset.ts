@@ -4,6 +4,7 @@
 // (bigserial: único, crescente, não-nulo → keyset perfeito) e sincroniza de
 // hora em hora.
 import { db, isDbAvailable } from '../../db/pool.js'
+import { recordSqlVersion } from '../transform/versions.js'
 
 const FIELDS: [key: string, label: string, type: string][] = [
   ['id', 'ID', 'number'],
@@ -89,14 +90,15 @@ export async function ensureApiSummaryDerived(): Promise<void> {
       if (!base) continue
       const taken = (await db.query('select 1 from datasets where tenant_id = $1 and slug = $2', [t.id, 'api-resumo'])).rows[0]
       if (taken) continue
-      await db.query(
+      const criado = (await db.query(
         `insert into datasets (tenant_id, kind, transform_sql, connection_id, schema_name, object_name,
                                slug, name, description, sync_mode, sync_cadence, owner_email)
          values ($1, 'derived', $2, 'lake', 'derived', 'api-resumo', 'api-resumo',
                  'Saúde das APIs — resumo', 'P50/P95/P99, taxa de erro e uptime por endpoint.',
-                 'snapshot', 'hourly', 'sistema@datahub')`,
+                 'snapshot', 'hourly', 'sistema@datahub') returning id`,
         [t.id, API_SUMMARY_SQL],
-      )
+      )).rows[0]
+      await recordSqlVersion(db, String(criado.id), API_SUMMARY_SQL, 'sistema@datahub', 'Provisionado pelo sistema.')
       console.log(`[api-metrics] derivado "api-resumo" provisionado (tenant ${t.slug}).`)
     }
   } catch (e) {

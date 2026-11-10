@@ -17,6 +17,7 @@ import OfficialBadge from '@/components/OfficialBadge'
 import SyncPanel from './SyncPanel'
 import DatabricksPanel from './DatabricksPanel'
 import DerivedCadencePanel from './DerivedCadencePanel'
+import SqlVersions from './SqlVersions'
 import DataTable from './DataTable'
 import AccessDialog from './AccessDialog'
 import EditDatasetDialog from './EditDatasetDialog'
@@ -324,7 +325,8 @@ export default function DatasetDetailPage() {
                         automatica, mais abaixo na pagina, ja tem o mesmo botao
                         com status e erro reais -- em vez do timeout as-cegas
                         de 2,5s que existia aqui. */}
-                    {derived && canManage && (
+                    {/* Oficial: o SQL congela para o dono (DSP-03); só admin edita. */}
+                    {derived && canManage && (isAdmin || !dataset.official) && (
                       <Link to={`/datasets/derived/new?slug=${dataset.slug}`} className={menuItem}>
                         <GitMerge size={15} className="text-zinc-400" /> Editar SQL
                       </Link>
@@ -444,6 +446,8 @@ export default function DatasetDetailPage() {
           <pre className="overflow-x-auto rounded-xl border border-zinc-200 bg-white p-3 font-mono text-xs leading-relaxed shadow-card dark:border-zinc-800 dark:bg-zinc-950">
             {dataset.transformSql}
           </pre>
+          <SqlVersions datasetId={dataset.id} official={dataset.official}
+            canRestore={isAdmin || (canManage && !dataset.official)} onRestored={load} />
         </section>
       )}
 

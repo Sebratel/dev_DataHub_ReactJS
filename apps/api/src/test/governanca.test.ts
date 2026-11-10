@@ -173,12 +173,49 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
       'o dono abriu o conjunto para a empresa')
   })
 
-  it('T-DSP-05 calculado OFICIAL não muda de SQL sem aprovação', {
-    todo: 'DSP-03: o dono muda o SQL de um oficial, o selo continua e o SQL anterior se perde.',
-  }, async () => {
+  it('T-DSP-05 calculado OFICIAL não muda de SQL sem aprovação', async () => {
     assert.equal((await as('admin').patch(`/api/v1/datasets/${calcId}`, { official: true })).status, 200)
+    const original = 'select id, cliente, valor from teste_comite_aberto'
     const r = await as('editor').patch(`/api/v1/datasets/derived/${calcId}`, { sql: 'select id from teste_comite_aberto' })
     assert.ok(r.status >= 400, `o dono reescreveu o oficial: ${r.status}`)
+    const sqlAgora = async () => String((await db.query('select transform_sql from datasets where id = $1', [calcId])).rows[0].transform_sql)
+    assert.equal(await sqlAgora(), original, 'a recusa mexeu no SQL')
+    // O dono ainda mexe no que não muda o número: nome e descrição.
+    assert.equal((await as('editor').patch(`/api/v1/datasets/derived/${calcId}`, { description: 'chancelado' })).status, 200)
+
+    // O admin altera, e o SQL anterior fica guardado como versão.
+    const adm = await as('admin').patch(`/api/v1/datasets/derived/${calcId}`, { sql: 'select id, valor from teste_comite_aberto', note: 'pedido da diretoria' })
+    assert.equal(adm.status, 200, JSON.stringify(adm.body))
+    const v = await as('editor').get(`/api/v1/datasets/derived/${calcId}/versions`)
+    assert.equal(v.status, 200)
+    assert.deepEqual(v.body.versions.map((x: { version: number }) => x.version), [2, 1])
+    assert.equal(v.body.versions[1].sql, original, 'o SQL chancelado se perdeu')
+    assert.equal(v.body.versions[0].note, 'pedido da diretoria')
+    assert.equal(v.body.versions[0].current, true)
+
+    // Voltar à versão chancelada segue a mesma regra: dono não, admin sim.
+    assert.equal((await as('editor').post(`/api/v1/datasets/derived/${calcId}/versions/1/restore`)).status, 409)
+    const volta = await as('admin').post(`/api/v1/datasets/derived/${calcId}/versions/1/restore`)
+    assert.equal(volta.status, 200, JSON.stringify(volta.body))
+    assert.equal(volta.body.version, 3)
+    assert.equal(await sqlAgora(), original)
+  })
+
+  it('DSP-03 todo SQL de calculado vira versão; o dono restaura a anterior do que não é oficial', async () => {
+    const ed = as('editor')
+    const c = await ed.post('/api/v1/datasets/derived', { name: 'TESTE-COMITE versões', sql: 'select id from teste_comite_aberto' })
+    assert.equal(c.status, 201, JSON.stringify(c.body))
+    assert.equal((await ed.patch(`/api/v1/datasets/derived/${c.body.id}`, { sql: 'select id, valor from teste_comite_aberto' })).body.version, 2)
+    const igual = await ed.patch(`/api/v1/datasets/derived/${c.body.id}`, { sql: 'select id, valor from teste_comite_aberto' })
+    assert.equal(igual.body.version, null, 'salvar o mesmo SQL criou versão')
+    const volta = await ed.post(`/api/v1/datasets/derived/${c.body.id}/versions/1/restore`)
+    assert.equal(volta.status, 200, JSON.stringify(volta.body))
+    const v = (await ed.get(`/api/v1/datasets/derived/${c.body.id}/versions`)).body.versions
+    assert.deepEqual(v.map((x: { version: number }) => x.version), [3, 2, 1])
+    assert.equal(v[0].sql, 'select id from teste_comite_aberto')
+    assert.equal(v[0].note, 'Restaurada da versão 1.')
+    // Quem não é o dono nem admin não restaura.
+    assert.equal((await as('editor2').post(`/api/v1/datasets/derived/${c.body.id}/versions/2/restore`)).status, 404)
   })
 
   it('T-DSP-06 o dono arquiva ou exclui o próprio calculado sem dependentes', async () => {

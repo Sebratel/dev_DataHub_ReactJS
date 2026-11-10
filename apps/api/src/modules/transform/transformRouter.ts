@@ -3,7 +3,10 @@
 //   POST  /derived            cria (valida + materializa em background)
 //   POST  /derived/preview    amostra do SQL (LIMIT 50) sem criar nada
 //   PATCH /derived/:id        nome/descrição/SQL (SQL novo → re-materializa)
+//                             oficial: o SQL só muda por admin (DSP-03)
 //   POST  /derived/:id/materialize  atualiza agora (fila sequencial)
+//   GET   /derived/:id/versions     histórico do SQL (migration 043)
+//   POST  /derived/:id/versions/:v/restore  volta a uma versão (vira versão nova)
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
@@ -13,7 +16,8 @@ import {
   validateTransformSql, previewDerived, assertNoDerivedCycle, assertReferencesAllowed,
   auditDerivedCadence, referencedSlugs, type CadenceRow,
 } from './derive.js'
-import type { AccessUser } from '../../core/access.js'
+import { canQuery, type AccessUser } from '../../core/access.js'
+import { recordSqlVersion, listSqlVersions, OFICIAL_CONGELADO } from './versions.js'
 
 export const transformRouter = Router()
 
@@ -154,15 +158,18 @@ transformRouter.post('/derived', ...editorOnly, async (req, res) => {
      cadence, req.user!.email],
   )).rows[0]
 
+  await recordSqlVersion(db, String(ds.id), String(sql), req.user!.email)
   void enqueueSync(String(ds.id)) // primeira materialização em background
   await audit(req, 'datasets.derived.create', { type: 'dataset', id: slug })
   res.status(201).json({ id: ds.id, slug })
 })
 
+interface Editable { id: string; slug: string; official: boolean; sql: string | null }
+
 // Busca o derivado no tenant e checa permissão (admin ou dono).
-async function findEditable(req: Request): Promise<{ id: string; slug: string } | null> {
+async function findEditable(req: Request): Promise<Editable | null> {
   const row = (await db.query(
-    `select d.id, d.slug, d.owner_email from datasets d
+    `select d.id, d.slug, d.owner_email, d.official, d.transform_sql from datasets d
       join tenants t on t.id = d.tenant_id
      where t.slug = $1 and d.id = $2 and d.kind = 'derived'`,
     [req.user!.tenant, req.params.id],
@@ -170,14 +177,61 @@ async function findEditable(req: Request): Promise<{ id: string; slug: string } 
   if (!row) return null
   const admin = req.user!.roles.includes('admin')
   if (!admin && row.owner_email !== req.user!.email) return null
-  return { id: String(row.id), slug: String(row.slug) }
+  return {
+    id: String(row.id), slug: String(row.slug), official: !!row.official,
+    sql: (row.transform_sql as string | null) ?? null,
+  }
+}
+
+// DSP-03: o SQL de um calculado OFICIAL só muda por admin. Nome, descrição e
+// cadência seguem com o dono — não mudam o número que foi chancelado.
+function congelado(req: Request, ds: Editable): boolean {
+  return ds.official && !req.user!.roles.includes('admin')
+}
+
+// Troca o SQL e grava a versão na MESMA transação: um SQL novo sem versão é
+// exatamente o "o anterior se perdeu" que o achado DSP-03 descreve.
+async function gravaSql(
+  ds: Editable, sql: string, by: string, note: string | null,
+  extra: { name?: unknown; description?: unknown; syncCadence?: string | null } = {},
+): Promise<number | null> {
+  const client = await db.connect()
+  try {
+    await client.query('begin')
+    await client.query(
+      // schedule_id CAI JUNTO quando a cadência muda: a constraint
+      // datasets_schedule_pairing_check exige 'schedule' e schedule_id sempre
+      // emparelhados, e esta rota só grava relógio fixo ou cascata. Sem isto,
+      // tirar um derivado do agendamento em lote produz o par proibido e o
+      // Postgres recusa a linha inteira — foi exatamente assim que a
+      // padronização das fontes teve 100% de um lote rejeitado.
+      `update datasets set
+         name = coalesce($2, name), description = coalesce($3, description),
+         transform_sql = $4,
+         sync_cadence = coalesce($5, sync_cadence),
+         schedule_id = case when $5 is null then schedule_id else null end,
+         updated_at = now()
+       where id = $1`,
+      [ds.id, extra.name ?? null, extra.description ?? null, sql, extra.syncCadence ?? null],
+    )
+    const v = await recordSqlVersion(client, ds.id, sql, by, note)
+    await client.query('commit')
+    return v
+  } catch (e) {
+    await client.query('rollback').catch(() => {})
+    throw e
+  } finally {
+    client.release()
+  }
 }
 
 transformRouter.patch('/derived/:id', ...editorOnly, async (req, res) => {
   const ds = await findEditable(req)
   if (!ds) return res.status(404).json({ error: 'Conjunto derivado não encontrado (ou você não é o dono).' })
-  const { name, description, sql, syncCadence } = req.body ?? {}
-  if (sql != null) {
+  const { name, description, sql, syncCadence, note } = req.body ?? {}
+  const mudaSql = sql != null && String(sql) !== ds.sql
+  if (mudaSql && congelado(req, ds)) return res.status(409).json({ error: OFICIAL_CONGELADO })
+  if (mudaSql) {
     try {
       await tryPreview(req.user!, String(sql))
       await assertNoDerivedCycle(req.user!.tenant, ds.slug, String(sql)) // cadeias sem ciclo
@@ -188,25 +242,71 @@ transformRouter.patch('/derived/:id', ...editorOnly, async (req, res) => {
   if (syncCadence != null && !CADENCES.has(String(syncCadence))) {
     return res.status(400).json({ error: 'Cadência inválida.' })
   }
-  await db.query(
-    // schedule_id CAI JUNTO quando a cadência muda: a constraint
-    // datasets_schedule_pairing_check exige 'schedule' e schedule_id sempre
-    // emparelhados, e esta rota só grava relógio fixo ou cascata. Sem isto,
-    // tirar um derivado do agendamento em lote produz o par proibido e o
-    // Postgres recusa a linha inteira — foi exatamente assim que a
-    // padronização das fontes teve 100% de um lote rejeitado.
-    `update datasets set
-       name = coalesce($2, name), description = coalesce($3, description),
-       transform_sql = coalesce($4, transform_sql),
-       sync_cadence = coalesce($5, sync_cadence),
-       schedule_id = case when $5 is null then schedule_id else null end,
-       updated_at = now()
-     where id = $1`,
-    [ds.id, name ?? null, description ?? null, sql ?? null, syncCadence ? String(syncCadence) : null],
-  )
-  if (sql != null) void enqueueSync(ds.id) // SQL mudou → re-materializa
-  await audit(req, 'datasets.derived.update', { type: 'dataset', id: ds.slug }, { sqlChanged: sql != null })
-  res.json({ ok: true, rematerializing: sql != null })
+  const cadence = syncCadence ? String(syncCadence) : null
+  let versao: number | null = null
+  if (mudaSql) {
+    versao = await gravaSql(ds, String(sql), req.user!.email, note ? String(note).slice(0, 500) : null,
+      { name, description, syncCadence: cadence })
+  } else {
+    await db.query(
+      `update datasets set
+         name = coalesce($2, name), description = coalesce($3, description),
+         sync_cadence = coalesce($4, sync_cadence),
+         schedule_id = case when $4 is null then schedule_id else null end,
+         updated_at = now()
+       where id = $1`,
+      [ds.id, name ?? null, description ?? null, cadence],
+    )
+  }
+  // SQL enviado → re-materializa, mesmo igual: a tela chama o botão de
+  // "Salvar e re-materializar", e é assim que ele sempre funcionou. Só não
+  // vira versão nova quando nada mudou.
+  if (sql != null) void enqueueSync(ds.id)
+  await audit(req, 'datasets.derived.update', { type: 'dataset', id: ds.slug },
+    { sqlChanged: mudaSql, ...(versao ? { version: versao } : {}), ...(ds.official && mudaSql ? { official: true } : {}) })
+  res.json({ ok: true, rematerializing: sql != null, version: versao })
+})
+
+// ── Versões do SQL (DSP-03) ──────────────────────────────────────────────
+// Quem lê o SQL do calculado (editor/admin com acesso a ele) lê as versões.
+transformRouter.get('/derived/:id/versions', ...editorOnly, async (req, res) => {
+  const row = (await db.query(
+    `select d.id, d.transform_sql from datasets d join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and d.id = $2 and d.kind = 'derived'`,
+    [req.user!.tenant, req.params.id],
+  )).rows[0]
+  if (!row || !(await canQuery(req.user!, String(row.id)))) {
+    return res.status(404).json({ error: 'Conjunto derivado não encontrado.' })
+  }
+  res.json({ versions: await listSqlVersions(String(row.id), (row.transform_sql as string | null) ?? null) })
+})
+
+// Volta a uma versão anterior. Não apaga nada: a volta vira uma versão nova,
+// e a regra é a mesma da edição (oficial = só admin).
+transformRouter.post('/derived/:id/versions/:version/restore', ...editorOnly, async (req, res) => {
+  const ds = await findEditable(req)
+  if (!ds) return res.status(404).json({ error: 'Conjunto derivado não encontrado (ou você não é o dono).' })
+  if (congelado(req, ds)) return res.status(409).json({ error: OFICIAL_CONGELADO })
+  const alvo = (await db.query(
+    `select sql from dataset_sql_versions where dataset_id = $1 and version = $2`,
+    [ds.id, Number(req.params.version)],
+  )).rows[0]
+  if (!alvo) return res.status(404).json({ error: 'Versão não encontrada.' })
+  const sql = String(alvo.sql)
+  if (sql === ds.sql) return res.json({ ok: true, version: null, rematerializing: false })
+  try {
+    // A versão antiga pode citar um conjunto que saiu do catálogo ou a que a
+    // pessoa não tem mais acesso: a mesma validação da edição.
+    await tryPreview(req.user!, sql)
+    await assertNoDerivedCycle(req.user!.tenant, ds.slug, sql)
+  } catch (e) {
+    return res.status(400).json({ error: (e as Error).message })
+  }
+  const versao = await gravaSql(ds, sql, req.user!.email, `Restaurada da versão ${req.params.version}.`)
+  void enqueueSync(ds.id)
+  await audit(req, 'datasets.derived.restore-version', { type: 'dataset', id: ds.slug },
+    { from: Number(req.params.version), version: versao })
+  res.json({ ok: true, version: versao, rematerializing: true })
 })
 
 transformRouter.post('/derived/:id/materialize', ...editorOnly, async (req, res) => {

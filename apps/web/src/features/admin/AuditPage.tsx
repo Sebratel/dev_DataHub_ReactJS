@@ -35,6 +35,7 @@ const ACTION_LABEL: Record<string, string> = {
   'datasets.derived.create': 'Criou derivado',
   'datasets.derived.update': 'Editou derivado',
   'datasets.derived.materialize': 'Materializou derivado',
+  'datasets.derived.restore-version': 'Voltou versão do SQL',
   'access.dataset.grant': 'Concedeu acesso',
   'access.dataset.grant.revoke': 'Revogou acesso',
   'access.dataset.visibility': 'Mudou visibilidade',

@@ -22,6 +22,7 @@ import {
 import { enqueueSync } from '../sync/ingest.js'
 import { canExport, publishBlocked, PUBLICAR_SO_ADMIN, type AccessUser } from '../../core/access.js'
 import { recordUsage } from '../../core/usage.js'
+import { recordSqlVersion } from '../transform/versions.js'
 
 export const notebooksRouter = Router()
 
@@ -495,6 +496,7 @@ notebooksRouter.post('/materialize', requireAuth({ role: 'editor' }), requireDb,
        String(req.body?.description ?? 'Materializado a partir de um notebook.'), req.user!.email],
     )).rows[0]
 
+    await recordSqlVersion(db, String(ds.id), sql, req.user!.email, 'Criado a partir de um notebook.')
     void enqueueSync(String(ds.id)) // primeira materialização em background
     await audit(req, 'notebooks.materialize', { type: 'dataset', id: slug }, { from: 'notebook' })
     res.status(201).json({ id: ds.id, slug })
