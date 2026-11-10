@@ -6,7 +6,8 @@
 //             PATCH /:id       edita nome/descrição/tags
 //             PATCH /:id/fields/:fieldId  label/descrição/oculto/sensível
 //             GET /:slug/preview  amostra ao vivo (LIMIT 50, sensíveis mascarados)
-//             DELETE /:id      despublica
+//   Admin ou dono do calculado:
+//             DELETE /:id      manda para a lixeira (ver trash.ts)
 // ─────────────────────────────────────────────────────────────────────────
 import { Router } from 'express'
 import type { DatasetSummary, DatasetDetail, AdminDatasetField, FieldType } from '@datahub/shared'
@@ -17,8 +18,8 @@ import { sampleHttp, inferFields, type HttpEndpoint } from '../../connectors/htt
 import { requireAuth, audit } from '../auth/middleware.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 import { usageSummary } from '../../core/usage.js'
-import { removeDatasetDir } from '../../core/lake.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
+import { trashDataset, datasetDependents, sendTrashError } from './trash.js'
 import { camadaDe, slugDeTabela } from '../databricks/publish.js'
 
 export const datasetsRouter = Router()
@@ -381,20 +382,29 @@ datasetsRouter.patch('/:id/fields/:fieldId', requireAuth({ role: 'admin' }), asy
   res.json({ ok: true })
 })
 
-datasetsRouter.delete('/:id', requireAuth({ role: 'admin' }), async (req, res) => {
-  const row = (await db.query('delete from datasets where id = $1 returning slug', [req.params.id])).rows[0]
-  if (!row) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
-  // Os Parquet do conjunto saem JUNTO. Sem isto o disco só crescia — e, pior,
-  // recriar um conjunto com o MESMO nome caía no mesmo diretório e nascia
-  // enxergando os dados do antigo. Ver removeDatasetDir.
-  let lakeRemovido = false
+// Excluir manda para a LIXEIRA (D-DSP-3): lista e recusa se houver
+// dependentes; sem dependentes, guarda a definição e os Parquet por 30 dias.
+// Admin exclui qualquer conjunto; o dono, os calculados não oficiais que criou
+// (DSP-07). As regras moram em trash.ts.
+datasetsRouter.delete('/:id', async (req, res) => {
   try {
-    lakeRemovido = removeDatasetDir(req.user!.tenant, String(row.slug))
-  } catch (e) {
-    console.warn(`[lake] não foi possível apagar o diretório de "${row.slug}": ${(e as Error).message}`)
+    res.json({ ok: true, ...(await trashDataset(req, req.params.id)) })
+  } catch (e) { sendTrashError(res, e) }
+})
+
+// O que depende deste conjunto — a tela mostra ANTES de oferecer o botão de
+// excluir. Mesma regra de quem gerencia: admin ou dono.
+datasetsRouter.get('/:slug/dependents', async (req, res) => {
+  const row = (await db.query(
+    `select d.id, d.slug, d.owner_email from datasets d join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and d.slug = $2`,
+    [req.user!.tenant, req.params.slug],
+  )).rows[0]
+  if (!row) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+  if (!isAdmin(req) && row.owner_email !== req.user!.email) {
+    return res.status(403).json({ error: 'Só o dono do conjunto ou um administrador vê os dependentes.' })
   }
-  await audit(req, 'datasets.unpublish', { type: 'dataset', id: row.slug }, { lakeRemovido })
-  res.json({ ok: true, lakeRemovido })
+  res.json({ dependents: await datasetDependents(req.user!.tenant, { id: String(row.id), slug: String(row.slug) }) })
 })
 
 // Amostra AO VIVO da fonte (admin, LIMIT 50) — validação na publicação.

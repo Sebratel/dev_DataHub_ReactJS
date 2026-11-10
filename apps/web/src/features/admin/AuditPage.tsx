@@ -19,6 +19,9 @@ interface AuditLog {
 const ACTION_LABEL: Record<string, string> = {
   'datasets.publish': 'Publicou conjunto',
   'datasets.unpublish': 'Removeu conjunto',
+  'datasets.trash': 'Mandou para a lixeira',
+  'datasets.restore': 'Restaurou da lixeira',
+  'datasets.purge': 'Excluiu de vez',
   'datasets.update': 'Editou conjunto',
   'datasets.sync': 'Sincronizou',
   'datasets.sync-config': 'Config. de sync',

@@ -21,6 +21,7 @@ import { reindexEmbeddings } from '../ai/embeddings.js'
 import { runDueHealthChecks } from '../../connectors/healthChecks.js'
 import { runDailyPick } from '../quality/reconcile.js'
 import { runStaleChecks } from '../quality/checks.js'
+import { purgeExpiredTrash } from '../catalog/trash.js'
 import { isWithinSchedule } from '@datahub/shared'
 
 function msUntilNextMinute(): number {
@@ -96,6 +97,10 @@ async function tick(): Promise<void> {
       void runDailyPick(now).catch((e) =>
         console.warn(`[qualidade] escolha diária falhou: ${(e as Error).message}`))
     }
+    // Lixeira (D-DSP-3): o que passou de 30 dias é excluído de vez. Idempotente,
+    // então rodar a cada hora só garante que o prazo vence no dia certo.
+    void purgeExpiredTrash().catch((e) =>
+      console.warn(`[lixeira] prazo de 30 dias falhou: ${(e as Error).message}`))
   }
   await tickSchedules(now)
   // Prazo de cada conjunto pela cadência (D-QLD-2). Só lê o catálogo; 15 min
