@@ -7,6 +7,7 @@ import { requireAuth } from '../auth/middleware.js'
 import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { canQuery } from '../../core/access.js'
+import { recordUsage } from '../../core/usage.js'
 import { compileQuery } from './compile.js'
 import { duckQuery } from './duck.js'
 
@@ -65,6 +66,13 @@ queryRouter.post('/:slug/query', requireAuth(), async (req, res) => {
     if (compiled.countSql) {
       total = Number((await duckQuery(compiled.countSql, compiled.countParams, { timeoutMs })).rows[0]?.n ?? 0)
     }
+    // Uso (MON-01): painel, explorador e tabela do conjunto passam todos por
+    // aqui. Conta toda consulta; a Auditoria recebe só a 1ª do dia.
+    await recordUsage({
+      tenant: req.user!.tenant, actor: req.user!.email,
+      resourceType: 'dataset', resourceId: String(ds.id), via: 'query',
+      audit: { action: 'datasets.query', resource: String(ds.slug), ip: req.ip },
+    })
     const typeByKey = new Map(fields.map((f) => [f.key, f.type]))
     const payload: QueryResult = {
       columns: result.columns.map((name) => ({ name, type: typeByKey.get(name) ?? 'text' })),

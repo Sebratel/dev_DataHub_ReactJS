@@ -6,6 +6,7 @@ import type { Request, Response, NextFunction } from 'express'
 import type { DashboardSummary, Widget, QueryFilter, DashboardTab } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
+import { recordUsage } from '../../core/usage.js'
 
 export const dashboardsRouter = Router()
 
@@ -169,6 +170,14 @@ dashboardsRouter.get('/:id', requireAuth(), requireDb, async (req, res) => {
         startTime: String(s.start_time), endTime: String(s.end_time), weekdays: Number(s.weekdays),
       }))
     : []
+
+  // Uso (MON-01): abrir o painel. O dado de cada widget vem pela consulta do
+  // conjunto, que registra o uso do conjunto por conta própria.
+  await recordUsage({
+    tenant: req.user!.tenant, actor: req.user!.email,
+    resourceType: 'dashboard', resourceId: String(row.id), via: 'dashboard',
+    audit: { action: 'dashboards.open', resource: String(row.id), detail: { name: row.name }, ip: req.ip },
+  })
 
   res.json({
     dashboard: { ...toSummary(row), tabs: tabs.map(toTab), widgets: widgets.map(toWidget), schedules },

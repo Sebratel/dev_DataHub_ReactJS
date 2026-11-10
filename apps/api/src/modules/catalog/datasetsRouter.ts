@@ -16,6 +16,7 @@ import { querySource, discoverColumns } from '../../connectors/pools.js'
 import { sampleHttp, inferFields, type HttpEndpoint } from '../../connectors/httpSource.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
+import { usageSummary } from '../../core/usage.js'
 import { removeDatasetDir } from '../../core/lake.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
 import { camadaDe, slugDeTabela } from '../databricks/publish.js'
@@ -172,6 +173,22 @@ datasetsRouter.get('/:slug', async (req, res) => {
     ...(row.kind === 'derived' && canEditSql ? { transformSql: (row.transform_sql as string) ?? null } : {}),
   }
   res.json({ dataset: detail })
+})
+
+// Uso do conjunto nos últimos 30 dias (MON-01 / D-DSP-2): quantas pessoas e
+// tokens, por onde, e o último acesso. Só para admin e dono — quem usa o quê é
+// informação sobre pessoas, não sobre o dado.
+datasetsRouter.get('/:slug/usage', async (req, res) => {
+  const row = (await db.query(
+    `select d.id, d.owner_email from datasets d join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and d.slug = $2`,
+    [req.user!.tenant, req.params.slug],
+  )).rows[0]
+  if (!row) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
+  if (!isAdmin(req) && row.owner_email !== req.user!.email) {
+    return res.status(403).json({ error: 'Só o dono do conjunto ou um administrador vê o uso.' })
+  }
+  res.json(await usageSummary(req.user!.tenant, 'dataset', String(row.id)))
 })
 
 // ─── Administração ─────────────────────────────────────────────

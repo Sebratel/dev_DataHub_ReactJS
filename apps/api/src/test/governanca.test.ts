@@ -211,14 +211,41 @@ describe('T-MON-02..05 monitoramento', () => {
     assert.equal(Number(ev!.detail.rows), 3)
   })
 
-  it('T-MON-02 leitura de conjunto e execução de notebook ficam registradas', {
-    todo: 'MON-01: consulta, abertura de painel, notebook e insight não deixam registro.',
-  }, async () => {
+  it('T-MON-02 leitura de conjunto e execução de notebook ficam registradas', async () => {
     await as('viewer').post('/api/v1/datasets/teste-comite-aberto/query', {})
     await as('viewer').post('/api/v1/notebooks/run', { sql: 'select 1 as x from teste_comite_aberto' })
     const todos = await auditDe(USERS.viewer, '')
     assert.ok(todos.some((e) => /query|read|consult/.test(e.action)), 'consulta não registrada')
     assert.ok(todos.some((e) => /notebook.*run|notebooks\.run/.test(e.action)), 'notebook não registrado')
+  })
+
+  it('T-MON-02 abrir painel fica registrado', async () => {
+    const d = await as('editor').post('/api/v1/dashboards', { name: 'TESTE-COMITE aberto no dia' })
+    assert.equal((await as('editor').get(`/api/v1/dashboards/${d.body.id}`)).status, 200)
+    const ev = await auditDe(USERS.editor, 'dashboards.open')
+    assert.ok(ev.some((e) => e.detail?.name === 'TESTE-COMITE aberto no dia'), 'abertura do painel não registrada')
+  })
+
+  it('MON-01 a Auditoria recebe 1 linha por pessoa/conjunto/dia, não 1 por consulta', async () => {
+    const v = as('viewer2')
+    const hits = async () => Number((await db.query(
+      `select coalesce(sum(u.hits), 0)::int as n from usage_daily u join datasets d on d.id = u.resource_id
+        where d.slug = 'teste-comite-privado' and u.actor = $1 and u.via = 'query'`, [USERS.viewer2],
+    )).rows[0]?.n)
+    const antes = await hits()
+    for (let i = 0; i < 3; i++) assert.equal((await v.post('/api/v1/datasets/teste-comite-privado/query', {})).status, 200)
+    assert.equal(await hits() - antes, 3, 'o contador diário tem de somar as 3 consultas')
+    const ev = (await auditDe(USERS.viewer2, 'datasets.query')).filter((e) => e.detail?.via === 'query')
+    assert.equal(ev.length, 1, `esperava 1 linha na Auditoria, vieram ${ev.length}`)
+  })
+
+  it('D-DSP-2 o dono vê o uso do conjunto; quem só lê, não', async () => {
+    const r = await as('editor2').get('/api/v1/datasets/teste-comite-privado/usage')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.ok(r.body.last30.people >= 1, JSON.stringify(r.body))
+    assert.ok(r.body.lastAccessAt, 'sem último acesso')
+    assert.ok(r.body.trackingSince, 'sem data de início do registro')
+    assert.equal((await as('viewer2').get('/api/v1/datasets/teste-comite-privado/usage')).status, 403)
   })
 
   it('T-MON-04 mudar visibilidade e remover convidado ficam registrados', {

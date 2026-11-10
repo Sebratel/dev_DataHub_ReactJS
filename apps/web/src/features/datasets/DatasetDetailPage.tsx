@@ -6,7 +6,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check,
   Compass, GitMerge, Shield, MoreVertical, Trash2, Database,
-  Rows3, Columns3, Clock, AlertTriangle, BadgeCheck,
+  Rows3, Columns3, Clock, AlertTriangle, BadgeCheck, Activity,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
@@ -57,6 +57,40 @@ function StatTile({ icon: Icon, label, value, accent }: {
   )
 }
 
+interface DatasetUsage {
+  trackingSince: string | null
+  lastAccessAt: string | null
+  last30: { people: number; tokens: number; hits: number; byVia: Record<string, number> }
+}
+
+const VIA_LABEL: Record<string, string> = {
+  query: 'consulta', export: 'exportação', notebook: 'notebook', ai: 'IA', api: 'API',
+}
+
+// "3 pessoas · 1 token" e, embaixo, o último acesso. O detalhe por caminho vai
+// no title: quem gerencia quer saber se o uso é painel, notebook ou API antes
+// de mexer no conjunto.
+function UsageValue({ usage }: { usage: DatasetUsage }) {
+  const { people, tokens, byVia } = usage.last30
+  const partes = [`${people} pessoa${people === 1 ? '' : 's'}`]
+  if (tokens) partes.push(`${tokens} token${tokens === 1 ? '' : 's'}`)
+  const porVia = Object.entries(byVia)
+    .sort((a, b) => b[1] - a[1])
+    .map(([v, n]) => `${VIA_LABEL[v] ?? v}: ${n.toLocaleString('pt-BR')}`)
+    .join(' · ')
+  const desde = usage.trackingSince
+    ? `Registro de uso desde ${new Date(`${usage.trackingSince}T12:00:00`).toLocaleDateString('pt-BR')}.`
+    : 'Nenhum uso registrado ainda.'
+  return (
+    <span className="flex min-w-0 flex-col" title={[porVia, desde].filter(Boolean).join('\n')}>
+      <span className="truncate text-[13px] font-medium">{partes.join(' · ')}</span>
+      <span className="truncate text-[11px] font-normal text-zinc-400">
+        último acesso: {usage.lastAccessAt ? relativeTime(usage.lastAccessAt) : 'nenhum'}
+      </span>
+    </span>
+  )
+}
+
 export default function DatasetDetailPage() {
   const { slug } = useParams()
   const navigate = useNavigate()
@@ -75,12 +109,22 @@ export default function DatasetDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
+  const [usage, setUsage] = useState<DatasetUsage | null>(null)
+
   const load = useCallback(() => {
     api<{ dataset: DatasetDetail }>(`/api/v1/datasets/${slug}`)
       .then((r) => setDataset(r.dataset))
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar.'))
   }, [slug])
   useEffect(() => { load() }, [load])
+
+  // Uso só para quem gerencia (admin ou dono): o backend recusa os demais, e
+  // aqui nem se pergunta — a falha não é erro da página.
+  const gerencia = !!dataset && (isAdmin || (!!userEmail && dataset.ownerEmail === userEmail))
+  useEffect(() => {
+    if (!gerencia || !slug) return
+    api<DatasetUsage>(`/api/v1/datasets/${slug}/usage`).then(setUsage).catch(() => setUsage(null))
+  }, [gerencia, slug])
 
   async function patchField(field: AdminDatasetField, patch: Partial<AdminDatasetField>) {
     if (!dataset) return
@@ -278,8 +322,12 @@ export default function DatasetDetailPage() {
           accent={dataset.lastSyncAt
             ? <span className={clsx('h-2 w-2 rounded-full', fresh ? 'bg-emerald-500' : 'bg-amber-500')} />
             : <span className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600" />} />
-        <StatTile icon={derived ? GitMerge : Database} label="Tipo"
-          value={<span className="text-[13px] font-medium">{derived ? 'Calculado' : 'Fonte'}</span>} />
+        {usage ? (
+          <StatTile icon={Activity} label="Uso (30 dias)" value={<UsageValue usage={usage} />} />
+        ) : (
+          <StatTile icon={derived ? GitMerge : Database} label="Tipo"
+            value={<span className="text-[13px] font-medium">{derived ? 'Calculado' : 'Fonte'}</span>} />
+        )}
       </div>
 
       {/* Campos (schema) */}

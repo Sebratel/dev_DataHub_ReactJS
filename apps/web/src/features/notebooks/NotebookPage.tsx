@@ -184,7 +184,7 @@ export default function NotebookPage() {
     try {
       const r = await api<NotebookRunResult>('/api/v1/notebooks/run', {
         method: 'POST',
-        body: JSON.stringify({ sql: cell.source, limit: 500 }),
+        body: JSON.stringify({ sql: cell.source, limit: 500, notebook: slug }),
         signal,
       })
       setState((s) => ({ ...s, [cell.id]: { running: false, result: r, error: null } }))

@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import { db } from '../../db/pool.js'
 import type { QueryDef, FieldType } from '@datahub/shared'
 import { canQuery, type AccessUser } from '../../core/access.js'
+import { recordUsage } from '../../core/usage.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 import { parquetGlob, datasetDir } from '../../core/lake.js'
@@ -146,6 +147,11 @@ export async function generateInsight(
       : msg)
   }
   const result = await duckQuery(compiled.sql, compiled.params, { timeoutMs: 30_000, adhoc: true })
+  // Uso (MON-01): o insight lê o conjunto do widget em nome de quem pediu.
+  await recordUsage({
+    tenant: user.tenant, actor: user.email, resourceType: 'dataset', resourceId: String(w.dataset_id), via: 'ai',
+    audit: { action: 'ai.query', resource: String(w.dataset_slug), detail: { dashboard: dashboardId } },
+  })
 
   if (!result.rows.length) {
     return {

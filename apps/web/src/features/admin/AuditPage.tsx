@@ -23,6 +23,12 @@ const ACTION_LABEL: Record<string, string> = {
   'datasets.sync': 'Sincronizou',
   'datasets.sync-config': 'Config. de sync',
   'datasets.export': 'Exportou',
+  // Uso: entra uma linha por pessoa, conjunto e dia (a 1ª do dia), não uma por
+  // consulta — ver migration 040.
+  'datasets.query': 'Consultou conjunto',
+  'notebooks.run': 'Rodou notebook',
+  'dashboards.open': 'Abriu dashboard',
+  'ai.query': 'IA consultou',
   'datasets.derived.create': 'Criou derivado',
   'datasets.derived.update': 'Editou derivado',
   'datasets.derived.materialize': 'Materializou derivado',

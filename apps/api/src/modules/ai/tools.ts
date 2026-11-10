@@ -9,6 +9,7 @@ import { db } from '../../db/pool.js'
 import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
+import { recordUsage } from '../../core/usage.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 import { embedQuery, toVectorLiteral, embeddingsEnabled } from './embeddings.js'
@@ -274,7 +275,13 @@ async function executeQueryDef(def: QueryDef, user: SessionUser) {
     glob: parquetGlob(dir),
     metrics: metrics as never,
   })
-  return duckQuery(compiled.sql, compiled.params, { timeoutMs: config.duck.queryTimeoutMs })
+  const result = await duckQuery(compiled.sql, compiled.params, { timeoutMs: config.duck.queryTimeoutMs })
+  // Uso (MON-01): a consulta é da IA, mas o acesso é da pessoa que perguntou.
+  await recordUsage({
+    tenant: user.tenant, actor: user.email, resourceType: 'dataset', resourceId: String(ds.id), via: 'ai',
+    audit: { action: 'ai.query', resource: String(ds.slug) },
+  })
+  return result
 }
 
 // ── Valores de um campo ──────────────────────────────────────────────────
