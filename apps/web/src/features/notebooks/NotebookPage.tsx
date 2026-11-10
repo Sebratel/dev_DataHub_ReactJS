@@ -424,8 +424,13 @@ export default function NotebookPage() {
           {canEdit && (
             <button
               onClick={() => update({ visibility: nb.visibility === 'tenant' ? 'private' : 'tenant' })}
-              title={nb.visibility === 'tenant' ? 'Visível para todo o time' : 'Só você'}
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[11.5px] font-medium text-zinc-600 transition-colors hover:border-zinc-300 dark:border-zinc-700 dark:text-zinc-300"
+              // D-DSP-1: abrir para o tenant é de admin, e mudar quem vê é do
+              // dono. Quem não pode, vê o estado mas não troca.
+              disabled={(nb.owner_email !== myEmail && !amAdmin) || (nb.visibility !== 'tenant' && !amAdmin)}
+              title={nb.visibility === 'tenant'
+                ? 'Visível para todo o time'
+                : amAdmin ? 'Só você' : 'Só você. Publicar para a empresa é só de administrador.'}
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-[11.5px] font-medium text-zinc-600 transition-colors hover:border-zinc-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300"
             >
               {nb.visibility === 'tenant' ? <Users size={12} /> : <Lock size={12} />}
               {nb.visibility === 'tenant' ? 'Time' : 'Privado'}

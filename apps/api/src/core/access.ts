@@ -51,6 +51,22 @@ export async function canQuery(user: AccessUser, datasetId: string): Promise<boo
   return (r.rowCount ?? 0) > 0
 }
 
+// ── Publicar para a empresa (D-DSP-1 do comitê) ───────────────────────────
+// Abrir um conteúdo para o tenant inteiro ('tenant') é de ADMIN — vale para
+// conjunto, painel e notebook. O dono segue compartilhando com times e
+// pessoas, e pode tirar da empresa o que é dele; só não pode pôr de volta.
+//
+// A trava é na TRANSIÇÃO para 'tenant'. Reenviar 'tenant' para o que já está
+// publicado não é publicar: o salvamento automático do notebook manda a
+// visibilidade junto com as células em toda gravação.
+export const PUBLICAR_SO_ADMIN =
+  'Publicar para toda a empresa é só de administrador. Compartilhe com um time ou com pessoas, ' +
+  'ou peça a um administrador para publicar.'
+
+export function publishBlocked(user: AccessUser, from: string | null | undefined, to: string): boolean {
+  return to === 'tenant' && from !== 'tenant' && !isAdmin(user)
+}
+
 // O usuário pode EXPORTAR este dataset? Admin/dono sempre; conjunto aberto ao
 // tenant é exportável por quem lê; por concessão, respeita o flag can_export.
 export async function canExport(user: AccessUser, datasetId: string): Promise<boolean> {

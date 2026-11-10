@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { X, Trash2, Loader2, Users, Lock, UsersRound, Mail, Download } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
 
 interface Grant {
   id: string
@@ -16,6 +17,7 @@ interface TeamOpt { id: string; name: string }
 interface GrantsResponse { visibility: 'tenant' | 'private'; teams: TeamOpt[]; grants: Grant[] }
 
 export default function AccessDialog({ slug, name, onClose }: { slug: string; name: string; onClose: () => void }) {
+  const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
   const [visibility, setVisibility] = useState<'tenant' | 'private'>('private')
   const [teams, setTeams] = useState<TeamOpt[]>([])
   const [grants, setGrants] = useState<Grant[]>([])
@@ -39,10 +41,17 @@ export default function AccessDialog({ slug, name, onClose }: { slug: string; na
   useEffect(load, [slug])
 
   async function setVis(v: 'tenant' | 'private') {
+    const prev = visibility
     setVisibility(v)
     await api(`/api/v1/admin/datasets/${slug}/visibility`, { method: 'PATCH', body: JSON.stringify({ visibility: v }) })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao salvar.'))
+      .catch((e) => {
+        setVisibility(prev) // não fingir que salvou
+        setError(e instanceof Error ? e.message : 'Falha ao salvar.')
+      })
   }
+
+  // D-DSP-1: abrir para a empresa é de admin; o dono só restringe.
+  const publicarTravado = !isAdmin && visibility !== 'tenant'
 
   async function addGrant() {
     setBusy(true)
@@ -87,11 +96,15 @@ export default function AccessDialog({ slug, name, onClose }: { slug: string; na
         {/* Visibilidade */}
         <div className="grid grid-cols-2 gap-2">
           {[
-            { v: 'private' as const, icon: Lock, label: 'Restrito', hint: 'Só quem receber acesso abaixo' },
-            { v: 'tenant' as const, icon: Users, label: 'Toda a empresa', hint: 'Qualquer pessoa do domínio vê' },
-          ].map(({ v, icon: Icon, label, hint }) => (
-            <button key={v} onClick={() => void setVis(v)}
-              className={`rounded-xl border p-3 text-left text-sm ${visibility === v
+            { v: 'private' as const, icon: Lock, label: 'Restrito', hint: 'Só quem receber acesso abaixo', travado: false },
+            {
+              v: 'tenant' as const, icon: Users, label: 'Toda a empresa',
+              hint: publicarTravado ? 'Só administrador publica para a empresa' : 'Qualquer pessoa do domínio vê',
+              travado: publicarTravado,
+            },
+          ].map(({ v, icon: Icon, label, hint, travado }) => (
+            <button key={v} onClick={() => void setVis(v)} disabled={travado}
+              className={`rounded-xl border p-3 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60 ${visibility === v
                 ? 'border-accent bg-accent-soft dark:bg-zinc-800'
                 : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-700'}`}>
               <Icon size={15} className={visibility === v ? 'text-accent' : 'text-zinc-400'} />

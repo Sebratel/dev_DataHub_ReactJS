@@ -22,6 +22,7 @@ import type { Request, Response } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit, invalidateTokenCache } from '../auth/middleware.js'
 import { listMasterAdmins, grantMaster, revokeMaster } from '../auth/masterAdmins.js'
+import { publishBlocked, PUBLICAR_SO_ADMIN } from '../../core/access.js'
 
 export const accessRouter = Router()
 
@@ -288,8 +289,11 @@ accessRouter.patch('/datasets/:slug/visibility', requireManageable(async (req, r
   if (!['tenant', 'private'].includes(visibility)) {
     return res.status(400).json({ error: "visibility deve ser 'tenant' ou 'private'." })
   }
+  // D-DSP-1: o dono restringe o próprio conjunto; abrir para a empresa é de admin.
+  const antes = (await db.query('select visibility from datasets where id = $1', [ds.id])).rows[0]?.visibility
+  if (publishBlocked(req.user!, antes, visibility)) return res.status(403).json({ error: PUBLICAR_SO_ADMIN })
   await db.query('update datasets set visibility = $2, updated_at = now() where id = $1', [ds.id, visibility])
-  await audit(req, 'access.dataset.visibility', { type: 'dataset', id: ds.slug }, { visibility })
+  await audit(req, 'access.dataset.visibility', { type: 'dataset', id: ds.slug }, { from: antes ?? null, visibility })
   res.json({ ok: true })
 }))
 

@@ -149,12 +149,28 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
     assert.ok(r.status === 201 || r.status === 200, `status ${r.status}`)
   })
 
-  it('T-DSP-03 painel recém-criado (rascunho) não aparece para os outros', {
-    todo: 'DSP-05: painel nasce visível para todo o tenant.',
-  }, async () => {
+  it('T-DSP-03 painel recém-criado (rascunho) não aparece para os outros', async () => {
     const d = await as('editor').post('/api/v1/dashboards', { name: 'TESTE-COMITE-GOV rascunho' })
     const lista = await as('viewer').get('/api/v1/dashboards')
     assert.ok(!JSON.stringify(lista.body).includes(String(d.body.id)))
+  })
+
+  it('D-DSP-1 só admin publica para a empresa; o dono restringe o que é dele', async () => {
+    const dono = as('editor')
+    const d = await dono.post('/api/v1/dashboards', { name: 'TESTE-COMITE publicar' })
+    assert.equal((await dono.patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'tenant' })).status, 403,
+      'editor publicou o painel para a empresa')
+    assert.equal((await as('admin').patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'tenant' })).status, 200)
+    assert.ok(JSON.stringify((await as('viewer').get('/api/v1/dashboards')).body).includes(String(d.body.id)),
+      'publicado pelo admin, o viewer vê')
+    assert.equal((await dono.patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'private' })).status, 200,
+      'o dono pode tirar da empresa')
+    // Notebook e conjunto seguem a mesma regra.
+    assert.equal((await as('viewer').post('/api/v1/notebooks', { name: 'TESTE-COMITE nb aberto', visibility: 'tenant' })).status, 403)
+    const nb = await as('viewer').post('/api/v1/notebooks', { name: 'TESTE-COMITE nb fechado' })
+    assert.equal((await as('viewer').put(`/api/v1/notebooks/${nb.body.notebook.slug}`, { visibility: 'tenant' })).status, 403)
+    assert.equal((await as('editor2').patch('/api/v1/admin/datasets/teste-comite-privado/visibility', { visibility: 'tenant' })).status, 403,
+      'o dono abriu o conjunto para a empresa')
   })
 
   it('T-DSP-05 calculado OFICIAL não muda de SQL sem aprovação', {
@@ -248,12 +264,13 @@ describe('T-MON-02..05 monitoramento', () => {
     assert.equal((await as('viewer2').get('/api/v1/datasets/teste-comite-privado/usage')).status, 403)
   })
 
-  it('T-MON-04 mudar visibilidade e remover convidado ficam registrados', {
-    todo: 'MON-05: só "Compartilhou dashboard" é auditado — visibilidade e remoção de convite, não.',
-  }, async () => {
+  it('T-MON-04 mudar visibilidade e remover convidado ficam registrados', async () => {
     const e = as('editor')
     const d = await e.post('/api/v1/dashboards', { name: 'TESTE-COMITE visibilidade' })
-    await e.patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'private' })
+    // O painel nasce privado (D-DSP-1) e só admin publica: o admin abre, o
+    // dono fecha de novo — essa é a mudança que o dono consegue fazer.
+    assert.equal((await as('admin').patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'tenant' })).status, 200)
+    assert.equal((await e.patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'private' })).status, 200)
     await e.post(`/api/v1/dashboards/${d.body.id}/shares`, { email: USERS.viewer, level: 'view' })
     const grants = (await e.get(`/api/v1/dashboards/${d.body.id}/shares`)).body.grants
     await e.del(`/api/v1/dashboards/${d.body.id}/shares/${grants[0].id}`)

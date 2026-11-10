@@ -43,6 +43,9 @@ const ACTION_LABEL: Record<string, string> = {
   'dashboards.create': 'Criou dashboard',
   'dashboards.delete': 'Excluiu dashboard',
   'dashboards.share': 'Compartilhou dashboard',
+  'dashboards.unshare': 'Removeu convidado',
+  'dashboards.visibility': 'Mudou visibilidade',
+  'notebooks.visibility': 'Mudou visibilidade',
   'metrics.create': 'Criou métrica',
   'metrics.delete': 'Excluiu métrica',
 }

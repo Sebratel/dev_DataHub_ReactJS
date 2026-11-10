@@ -20,7 +20,7 @@ import {
   lakeRefs, compileLakeSql, compileNotebookSql, validateTransformSql, assertReferencesAllowed,
 } from '../transform/derive.js'
 import { enqueueSync } from '../sync/ingest.js'
-import { canExport, type AccessUser } from '../../core/access.js'
+import { canExport, publishBlocked, PUBLICAR_SO_ADMIN, type AccessUser } from '../../core/access.js'
 import { recordUsage } from '../../core/usage.js'
 
 export const notebooksRouter = Router()
@@ -166,11 +166,14 @@ notebooksRouter.post('/', ...authed, async (req, res) => {
       ? req.body.cells
       : [{ id: 'c1', kind: 'sql', source: '' }]
 
+    const visibility = req.body?.visibility === 'tenant' ? 'tenant' : 'private'
+    if (publishBlocked(req.user!, null, visibility)) return res.status(403).json({ error: PUBLICAR_SO_ADMIN })
+
     const row = (await db.query(
       `insert into notebooks (tenant_id, slug, name, description, cells, visibility, owner_email)
        values ($1,$2,$3,$4,$5,$6,$7) returning *`,
       [tenant.id, slug, name, String(req.body?.description ?? ''), JSON.stringify(cells),
-       req.body?.visibility === 'tenant' ? 'tenant' : 'private', req.user!.email],
+       visibility, req.user!.email],
     )).rows[0]
     await audit(req, 'notebooks.create', { type: 'notebook', id: slug })
     res.status(201).json({ notebook: row })
@@ -190,6 +193,17 @@ notebooksRouter.put('/:slug', ...authed, async (req, res) => {
     return res.status(403).json({ error: 'Você tem acesso de leitura a este notebook.' })
   }
   const { name, description, cells, visibility } = req.body ?? {}
+  const novaVis = visibility === 'tenant' || visibility === 'private' ? String(visibility) : null
+  // O salvamento automático manda a visibilidade em toda gravação; só a
+  // MUDANÇA é decisão de acesso. Ela é do dono (como o compartilhamento) e,
+  // para a empresa inteira, de admin (D-DSP-1).
+  const mudaVis = !!novaVis && novaVis !== nb.visibility
+  if (mudaVis && !(await isOwner(req.user!, nb))) {
+    return res.status(403).json({ error: 'Só o dono (ou um administrador) muda quem vê o notebook.' })
+  }
+  if (mudaVis && publishBlocked(req.user!, nb.visibility, novaVis!)) {
+    return res.status(403).json({ error: PUBLICAR_SO_ADMIN })
+  }
   try {
     const row = (await db.query(
       `update notebooks set
@@ -200,9 +214,11 @@ notebooksRouter.put('/:slug', ...authed, async (req, res) => {
          updated_at = now()
        where id = $1 returning *`,
       [nb.id, name ?? null, description ?? null,
-       cells ? JSON.stringify(cells) : null,
-       visibility === 'tenant' || visibility === 'private' ? visibility : null],
+       cells ? JSON.stringify(cells) : null, novaVis],
     )).rows[0]
+    if (mudaVis) {
+      await audit(req, 'notebooks.visibility', { type: 'notebook', id: nb.slug }, { from: nb.visibility, to: novaVis })
+    }
     res.json({ notebook: row })
   } catch (e) { fail(res, e) }
 })
