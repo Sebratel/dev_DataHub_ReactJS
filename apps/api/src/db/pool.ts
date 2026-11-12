@@ -9,7 +9,7 @@
 import pg from 'pg'
 import { readdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { config } from '../core/config.js'
+import { config, mariaFaltando } from '../core/config.js'
 import { MariaPool, runMariaMigrations } from './mariadb/client.js'
 import { MIGRATIONS_DIR, MARIA_MIGRATIONS_DIR } from './paths.js'
 
@@ -47,6 +47,8 @@ export async function runMigrations(attempts = 10, delayMs = 3_000): Promise<voi
 async function tryMigrations(): Promise<void> {
   try {
     if (maria) {
+      const faltando = mariaFaltando()
+      if (faltando.length) throw new Error(`DATAHUB_DB_DRIVER=mariadb, mas falta na stack: ${faltando.join(', ')}`)
       await runMariaMigrations(maria, MIGRATIONS_DIR, MARIA_MIGRATIONS_DIR)
       dbAvailable = true
       console.log(`[db] banco datahub pronto (mariadb ${config.datahubMaria.host}/${config.datahubMaria.database}).`)

@@ -24,7 +24,7 @@
 import pg from 'pg'
 import mysql from 'mysql2/promise'
 import { createHash } from 'node:crypto'
-import { config } from '../core/config.js'
+import { config, mariaFaltando } from '../core/config.js'
 import { MariaPool, runMariaMigrations } from '../db/mariadb/client.js'
 import { MIGRATIONS_DIR, MARIA_MIGRATIONS_DIR } from '../db/paths.js'
 
@@ -116,7 +116,11 @@ async function main(): Promise<void> {
   log(`origem : postgres ${pgCfg.host}:${pgCfg.port}/${pgCfg.database}`)
   log(`destino: mariadb  ${myCfg.host}:${myCfg.port}/${myCfg.database} (usuário ${myCfg.user})`)
   log(`modo   : ${SO_CONFERIR ? 'só conferir' : 'copiar e conferir'}\n`)
-  if (!myCfg.password) falhar('DATAHUB_MARIA_PASSWORD vazia.')
+  const faltando = mariaFaltando()
+  if (faltando.length || !myCfg.host || !myCfg.password) {
+    falhar(`variável vazia no container: ${(faltando.length ? faltando : ['DATAHUB_MARIA_HOST/PASSWORD']).join(', ')}. ` +
+      'Preencha na stack do Portainer e clique em "Update the stack" (salvar não recria o container).')
+  }
 
   const src = new pg.Client({ ...pgCfg, application_name: 'datahub-meta-copy' })
   await src.connect()

@@ -8,6 +8,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 loadEnv({ path: resolve(__dirname, '../../../../.env') })
 loadEnv() // fallback: .env local do app, se existir
 
+const PROD = process.env.NODE_ENV === 'production'
+
+/** Variáveis DATAHUB_MARIA_* obrigatórias que estão vazias (lista vazia = ok). */
+export function mariaFaltando(): string[] {
+  return ['HOST', 'DATABASE', 'USER', 'PASSWORD']
+    .filter((k) => !process.env[`DATAHUB_MARIA_${k}`] && PROD)
+    .map((k) => `DATAHUB_MARIA_${k}`)
+}
+
 function dbDriver(v: string | undefined): 'postgres' | 'mariadb' {
   const d = (v || 'postgres').trim().toLowerCase()
   if (d !== 'postgres' && d !== 'mariadb') {
@@ -62,12 +71,16 @@ export const config = {
     user: process.env.DATAHUB_DB_USER || 'datahub',
     password: process.env.DATAHUB_DB_PASSWORD || 'datahub-dev',
   },
+  // Os padrões (localhost:3307, senha de dev) valem SÓ fora de produção. No
+  // container (NODE_ENV=production), variável vazia fica vazia e o boot/o
+  // copiador param dizendo qual falta — antes, uma stack sem DATAHUB_MARIA_HOST
+  // tentava "localhost" dentro do container e o erro não dizia por quê.
   datahubMaria: {
-    host: process.env.DATAHUB_MARIA_HOST || 'localhost',
-    port: Number(process.env.DATAHUB_MARIA_PORT) || 3307,
-    database: process.env.DATAHUB_MARIA_DATABASE || 'datahub',
-    user: process.env.DATAHUB_MARIA_USER || 'datahub',
-    password: process.env.DATAHUB_MARIA_PASSWORD || 'datahub-dev',
+    host: process.env.DATAHUB_MARIA_HOST || (PROD ? '' : 'localhost'),
+    port: Number(process.env.DATAHUB_MARIA_PORT) || (PROD ? 3306 : 3307),
+    database: process.env.DATAHUB_MARIA_DATABASE || (PROD ? '' : 'datahub'),
+    user: process.env.DATAHUB_MARIA_USER || (PROD ? '' : 'datahub'),
+    password: process.env.DATAHUB_MARIA_PASSWORD || (PROD ? '' : 'datahub-dev'),
   },
   /** O banco de metadados em uso (o do driver escolhido). */
   get datahubDb() {
