@@ -5,7 +5,7 @@
 // nem quando quem pergunta é admin (SEG-05).
 // ─────────────────────────────────────────────────────────────────────────
 import type { QueryDef, SessionUser, FieldType } from '@datahub/shared'
-import { db } from '../../db/pool.js'
+import { db, dbDriver } from '../../db/pool.js'
 import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { accessibleDatasetIds, canQuery } from '../../core/access.js'
@@ -173,6 +173,33 @@ export async function executeTool(
   }
 }
 
+// MariaDB (sem pgvector antes da 11.7): a distância de cosseno é calculada aqui,
+// a mesma que o operador <=> daria. O vetor fica gravado como o texto '[…]'.
+// São algumas centenas de conjuntos por tenant — ler os vetores e ordenar em
+// memória custa milissegundos.
+async function nearestInProcess(tenant: string, q: number[]): Promise<Record<string, unknown>[]> {
+  const cand = (await db.query(
+    `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at, d.embedding
+       from datasets d join tenants t on t.id = d.tenant_id
+      where t.slug = $1 and d.embedding is not null`,
+    [tenant],
+  )).rows
+  const norm = (v: number[]) => Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1
+  const nq = norm(q)
+  return cand
+    .map(({ embedding, ...r }) => {
+      let v: number[]
+      try { v = JSON.parse(String(embedding)) as number[] } catch { return null }
+      if (!Array.isArray(v) || v.length !== q.length) return null
+      let dot = 0
+      for (let i = 0; i < v.length; i++) dot += v[i] * q[i]
+      return { ...r, distance: 1 - dot / (norm(v) * nq) }
+    })
+    .filter((r): r is Record<string, unknown> & { distance: number } => r !== null)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 50)
+}
+
 // Busca semântica (RAG): se vier `query`, vetorizamos a intenção e ordenamos
 // os datasets pela DISTÂNCIA DE COSSENO (operador <=> do pgvector) — menor
 // distância = mais parecido. Filtramos pelo acesso do usuário e devolvemos o
@@ -184,7 +211,11 @@ async function searchDatasets(user: SessionUser, query?: string, scope?: Set<str
   let rows: Record<string, unknown>[] = []
   if (query && query.trim() && embeddingsEnabled()) {
     try {
-      const vec = toVectorLiteral(await embedQuery(query.trim()))
+      const q = await embedQuery(query.trim())
+      if (dbDriver === 'mariadb') {
+        rows = await nearestInProcess(user.tenant, q)
+      } else {
+      const vec = toVectorLiteral(q)
       rows = (await db.query(
         `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at,
                 (d.embedding <=> $2::vector) as distance
@@ -194,6 +225,7 @@ async function searchDatasets(user: SessionUser, query?: string, scope?: Set<str
           limit 50`,
         [user.tenant, vec],
       )).rows
+      }
     } catch (e) {
       // Vetorização indisponível → não quebra o chat; cai no fallback textual.
       console.warn(`[ai] busca semântica falhou, usando fallback textual: ${(e as Error).message}`)

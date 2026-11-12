@@ -81,8 +81,8 @@ aiRouter.get('/conversations/:id', ...authed, async (req, res) => {
 
 aiRouter.delete('/conversations/:id', ...authed, async (req, res) => {
   await db.query(
-    `delete from conversations c using tenants t
-      where c.tenant_id = t.id and t.slug = $1 and c.user_email = $2 and c.id = $3`,
+    `delete from conversations
+      where tenant_id = (select id from tenants where slug = $1) and user_email = $2 and id = $3`,
     [req.user!.tenant, req.user!.email, req.params.id],
   )
   res.json({ ok: true })

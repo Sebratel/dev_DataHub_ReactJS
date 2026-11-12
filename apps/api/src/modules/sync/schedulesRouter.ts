@@ -115,7 +115,7 @@ schedulesRouter.patch('/:id', ...masterOnScheduleMembers, async (req, res) => {
     const row = (await db.query(
       `update sync_schedules s set
          name = $3, interval_minutes = $4, start_time = $5, end_time = $6, weekdays = $7, updated_at = now()
-        from tenants t where s.tenant_id = t.id and t.slug = $1 and s.id = $2
+        where s.tenant_id = (select id from tenants where slug = $1) and s.id = $2
         returning s.id`,
       [req.user!.tenant, req.params.id, input.name, input.intervalMinutes, input.startTime, input.endTime, input.weekdays],
     )).rows[0]
@@ -171,8 +171,8 @@ schedulesRouter.post('/:id/assign', ...masterOnBatch, async (req, res) => {
   if (!sched) return res.status(404).json({ error: 'Agendamento não encontrado.' })
 
   const r = await db.query(
-    `update datasets d set sync_cadence = 'schedule', schedule_id = $2, updated_at = now()
-       from tenants t where d.tenant_id = t.id and t.slug = $1 and d.id = any($3::uuid[])`,
+    `update datasets set sync_cadence = 'schedule', schedule_id = $2, updated_at = now()
+      where tenant_id = (select id from tenants where slug = $1) and id = any($3::uuid[])`,
     [req.user!.tenant, req.params.id, ids],
   )
   await audit(req, 'schedules.assign', { type: 'schedule', id: req.params.id }, { datasetIds: ids, count: r.rowCount })
@@ -183,8 +183,8 @@ schedulesRouter.post('/unassign', ...masterOnBatch, async (req, res) => {
   const ids = Array.isArray(req.body?.datasetIds) ? (req.body.datasetIds as unknown[]).map(String) : []
   if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um conjunto.' })
   const r = await db.query(
-    `update datasets d set sync_cadence = 'daily', schedule_id = null, updated_at = now()
-       from tenants t where d.tenant_id = t.id and t.slug = $1 and d.id = any($2::uuid[]) and d.sync_cadence = 'schedule'`,
+    `update datasets set sync_cadence = 'daily', schedule_id = null, updated_at = now()
+      where tenant_id = (select id from tenants where slug = $1) and id = any($2::uuid[]) and sync_cadence = 'schedule'`,
     [req.user!.tenant, ids],
   )
   await audit(req, 'schedules.unassign', { type: 'dataset', id: ids.join(',') }, { count: r.rowCount })

@@ -94,6 +94,17 @@ services:
       DATAHUB_DB_DATABASE: ${DATAHUB_DB_DATABASE:-datahub}
       DATAHUB_DB_USER: ${DATAHUB_DB_USER:-datahub}
       DATAHUB_DB_PASSWORD: ${DATAHUB_DB_PASSWORD:?defina DATAHUB_DB_PASSWORD na stack}
+      # Onde ficam os METADADOS: 'postgres' (padrao, o servico datahub-db acima)
+      # ou 'mariadb' (D-DSP-4, banco DB_DataHub no MariaDB corporativo). As
+      # variaveis DATAHUB_MARIA_* podem ficar preenchidas antes da virada: elas
+      # so valem com o driver 'mariadb'. Virar e voltar e trocar SO o driver.
+      # Ver docs/MIGRACAO-MARIADB.md.
+      DATAHUB_DB_DRIVER: ${DATAHUB_DB_DRIVER:-postgres}
+      DATAHUB_MARIA_HOST: ${DATAHUB_MARIA_HOST:-}
+      DATAHUB_MARIA_PORT: ${DATAHUB_MARIA_PORT:-3306}
+      DATAHUB_MARIA_DATABASE: ${DATAHUB_MARIA_DATABASE:-DB_DataHub}
+      DATAHUB_MARIA_USER: ${DATAHUB_MARIA_USER:-datahub_app}
+      DATAHUB_MARIA_PASSWORD: ${DATAHUB_MARIA_PASSWORD:-}
       ETL_HOUR: ${ETL_HOUR:-3}
       SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-50000}
       SYNC_BATCH_PAUSE_MS: ${SYNC_BATCH_PAUSE_MS:-500}

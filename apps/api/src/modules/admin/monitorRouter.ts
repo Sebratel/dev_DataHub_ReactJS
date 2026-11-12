@@ -61,9 +61,8 @@ monitorRouter.patch('/:id', async (req, res) => {
   try {
     const p = parse(req.body)
     const row = (await db.query(
-      `update health_checks h set name=$3, url=$4, connection_id=$5, interval_minutes=$6, enabled=$7
-         from tenants t
-        where h.tenant_id = t.id and t.slug = $1 and h.id = $2 returning h.id`,
+      `update health_checks set name=$3, url=$4, connection_id=$5, interval_minutes=$6, enabled=$7
+        where tenant_id = (select id from tenants where slug = $1) and id = $2 returning id`,
       [req.user!.tenant, req.params.id, p.name, p.url, p.connectionId, p.interval, p.enabled],
     )).rows[0]
     if (!row) return res.status(404).json({ error: 'Verificação não encontrada.' })
@@ -75,8 +74,8 @@ monitorRouter.patch('/:id', async (req, res) => {
 
 monitorRouter.delete('/:id', async (req, res) => {
   await db.query(
-    `delete from health_checks h using tenants t
-      where h.tenant_id = t.id and t.slug = $1 and h.id = $2`,
+    `delete from health_checks
+      where tenant_id = (select id from tenants where slug = $1) and id = $2`,
     [req.user!.tenant, req.params.id],
   )
   await audit(req, 'monitor.delete', { type: 'health_check', id: req.params.id })

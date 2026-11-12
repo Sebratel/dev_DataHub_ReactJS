@@ -44,6 +44,11 @@ const DISPENSADAS: Record<string, string> = {
   DATAHUB_TEST_DB_PORT: 'testes de integração',
   DATAHUB_TEST_DB_USER: 'testes de integração',
   DATAHUB_TEST_DB_PASSWORD: 'testes de integração',
+  DATAHUB_TEST_DB_DRIVER: 'testes de integração',
+  DATAHUB_TEST_MARIA_HOST: 'testes de integração',
+  DATAHUB_TEST_MARIA_PORT: 'testes de integração',
+  DATAHUB_TEST_MARIA_USER: 'testes de integração',
+  DATAHUB_TEST_MARIA_PASSWORD: 'testes de integração',
   // Injetada pelo runtime/ferramentas, não pela stack.
   NODE_ENV: 'definida pelo runtime',
 }

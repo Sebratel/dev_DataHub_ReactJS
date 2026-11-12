@@ -3,8 +3,13 @@
 // observabilidade fica disponível SEM publicação manual. É incremental por `id`
 // (bigserial: único, crescente, não-nulo → keyset perfeito) e sincroniza de
 // hora em hora.
-import { db, isDbAvailable } from '../../db/pool.js'
+import { db, dbDriver, isDbAvailable } from '../../db/pool.js'
+import { config } from '../../core/config.js'
 import { recordSqlVersion } from '../transform/versions.js'
+
+// Onde a tabela está na fonte 'datahub-meta': no Postgres, o schema 'public';
+// no MariaDB, o "schema" de uma fonte MySQL é o próprio banco.
+const META_SCHEMA = dbDriver === 'mariadb' ? config.datahubMaria.database : 'public'
 
 const FIELDS: [key: string, label: string, type: string][] = [
   ['id', 'ID', 'number'],
@@ -24,6 +29,15 @@ const FIELDS: [key: string, label: string, type: string][] = [
 export async function ensureApiMetricsDataset(): Promise<void> {
   if (!isDbAvailable()) return
   try {
+    // Trocou de banco (virada ou volta): o conjunto já existe e só muda o
+    // endereço da tabela. Os ids da telemetria vieram junto na cópia, então o
+    // incremental por id continua de onde parou.
+    const moved = await db.query(
+      `update datasets set schema_name = $1, updated_at = now()
+        where connection_id = 'datahub-meta' and object_name = 'api_call_metrics' and schema_name <> $1`,
+      [META_SCHEMA],
+    )
+    if (moved.rowCount) console.log(`[api-metrics] fonte da telemetria agora em ${dbDriver} (${META_SCHEMA}).`)
     const tenants = (await db.query('select id, slug from tenants')).rows
     for (const t of tenants) {
       const exists = (await db.query(
@@ -39,11 +53,11 @@ export async function ensureApiMetricsDataset(): Promise<void> {
       const ds = (await db.query(
         `insert into datasets (tenant_id, connection_id, schema_name, object_name, slug, name, description,
                                sync_mode, incremental_key, sync_cadence)
-         values ($1, 'datahub-meta', 'public', 'api_call_metrics', $2,
+         values ($1, 'datahub-meta', $3, 'api_call_metrics', $2,
                  'Saúde das APIs', 'Latência, status e throughput de cada chamada HTTP ingerida.',
                  'incremental', 'id', 'hourly')
          returning id`,
-        [t.id, slug],
+        [t.id, slug, META_SCHEMA],
       )).rows[0]
 
       for (const [i, [key, label, type]] of FIELDS.entries()) {

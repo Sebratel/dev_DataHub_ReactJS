@@ -8,6 +8,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 loadEnv({ path: resolve(__dirname, '../../../../.env') })
 loadEnv() // fallback: .env local do app, se existir
 
+function dbDriver(v: string | undefined): 'postgres' | 'mariadb' {
+  const d = (v || 'postgres').trim().toLowerCase()
+  if (d !== 'postgres' && d !== 'mariadb') {
+    // valor errado não pode cair num padrão em silêncio: subiria no banco errado
+    throw new Error(`DATAHUB_DB_DRIVER="${v}" inválido — use "postgres" ou "mariadb".`)
+  }
+  return d
+}
+
 export const config = {
   apiPort: Number(process.env.API_PORT) || 8790,
   allowedDomain: (process.env.ALLOWED_DOMAIN || 'sebratel.com.br').toLowerCase(),
@@ -41,12 +50,28 @@ export const config = {
   },
 
   // Banco de METADADOS do hub (catálogo, usuários, dashboards…).
-  datahubDb: {
+  // DATAHUB_DB_DRIVER escolhe ONDE ele está: 'postgres' (padrão, o de sempre)
+  // ou 'mariadb' (D-DSP-4). Os dois conjuntos de variáveis convivem na stack —
+  // a virada é trocar o driver, e a volta é trocar de novo; o Postgres não é
+  // tocado. O copiador (scripts/metaCopy.ts) usa os dois ao mesmo tempo.
+  datahubDbDriver: dbDriver(process.env.DATAHUB_DB_DRIVER),
+  datahubPg: {
     host: process.env.DATAHUB_DB_HOST || 'localhost',
     port: Number(process.env.DATAHUB_DB_PORT) || 5433,
     database: process.env.DATAHUB_DB_DATABASE || 'datahub',
     user: process.env.DATAHUB_DB_USER || 'datahub',
     password: process.env.DATAHUB_DB_PASSWORD || 'datahub-dev',
+  },
+  datahubMaria: {
+    host: process.env.DATAHUB_MARIA_HOST || 'localhost',
+    port: Number(process.env.DATAHUB_MARIA_PORT) || 3307,
+    database: process.env.DATAHUB_MARIA_DATABASE || 'datahub',
+    user: process.env.DATAHUB_MARIA_USER || 'datahub',
+    password: process.env.DATAHUB_MARIA_PASSWORD || 'datahub-dev',
+  },
+  /** O banco de metadados em uso (o do driver escolhido). */
+  get datahubDb() {
+    return this.datahubDbDriver === 'mariadb' ? this.datahubMaria : this.datahubPg
   },
 
   // Fontes de dados: teto de execução por consulta na ORIGEM (Postgres e MySQL/

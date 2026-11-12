@@ -14,8 +14,15 @@ export type UsageVia = 'query' | 'export' | 'notebook' | 'dashboard' | 'ai' | 'a
 export type UsageResource = 'dataset' | 'dashboard' | 'notebook'
 
 // O "dia" do uso é o dia daqui, não o de Greenwich: às 21h de Brasília o UTC já
-// virou, e o acesso da noite contaria no dia seguinte.
+// virou, e o acesso da noite contaria no dia seguinte. Calculado aqui, e não
+// com "at time zone" no SQL: o mesmo código roda no Postgres e no MariaDB
+// (que só converte fuso se o servidor tiver as tabelas de fuso carregadas).
 const FUSO = 'America/Sao_Paulo'
+const diaFmt = new Intl.DateTimeFormat('en-CA', { timeZone: FUSO, year: 'numeric', month: '2-digit', day: '2-digit' })
+/** AAAA-MM-DD no fuso daqui, `dias` dias a partir de hoje. */
+export function diaLocal(dias = 0): string {
+  return diaFmt.format(new Date(Date.now() + dias * 86_400_000))
+}
 
 export interface UsageEvent {
   /** Slug do tenant. */
@@ -34,12 +41,12 @@ export async function recordUsage(e: UsageEvent): Promise<void> {
   try {
     const r = await db.query(
       `insert into usage_daily (tenant_id, day, resource_type, resource_id, actor, via)
-       select t.id, (now() at time zone '${FUSO}')::date, $2, $3, $4, $5
+       select t.id, $6::date, $2, $3, $4, $5
          from tenants t where t.slug = $1
        on conflict (tenant_id, day, resource_type, resource_id, actor, via)
        do update set hits = usage_daily.hits + 1, last_at = now()
        returning hits`,
-      [e.tenant, e.resourceType, e.resourceId, e.actor, e.via],
+      [e.tenant, e.resourceType, e.resourceId, e.actor, e.via, diaLocal()],
     )
     if (!e.audit || Number(r.rows[0]?.hits) !== 1) return
     await db.query(
@@ -73,9 +80,9 @@ export async function usageSummary(
     `select u.actor, u.via, sum(u.hits)::int as hits, max(u.last_at) as last_at
        from usage_daily u join tenants t on t.id = u.tenant_id
       where t.slug = $1 and u.resource_type = $2 and u.resource_id = $3
-        and u.day > (now() at time zone '${FUSO}')::date - 30
+        and u.day > $4::date
       group by u.actor, u.via`,
-    [tenant, resourceType, resourceId],
+    [tenant, resourceType, resourceId, diaLocal(-30)],
   )).rows
   const ultimo = (await db.query(
     `select max(u.last_at) as m from usage_daily u join tenants t on t.id = u.tenant_id

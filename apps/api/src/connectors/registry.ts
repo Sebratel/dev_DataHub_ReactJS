@@ -6,6 +6,7 @@
 //     com a senha JÁ descriptografada em memória (campo `config`). Ver store.ts.
 // Credencial NUNCA vai para o frontend.
 // ─────────────────────────────────────────────────────────────────────────
+import { config } from '../core/config.js'
 
 export type ConnectorKind = 'postgres' | 'mysql' | 'http' | 'soap' | 'gcs'
 
@@ -43,7 +44,11 @@ export const CONNECTORS: ConnectorDef[] = [
   { id: 'autoisp', name: 'AutoISP (ONU/PPPoE)', kind: 'postgres', envPrefix: 'DB_AUTOISP' },
   { id: 'maria', name: 'Massivas (MariaDB)', kind: 'mysql', envPrefix: 'DB_MARIA' },
   // Banco de metadados do próprio hub — fonte DEMO em dev e auditoria em prod.
-  { id: 'datahub-meta', name: 'Metadados do Hub (demo)', kind: 'postgres', envPrefix: 'DATAHUB_DB' },
+  // Segue o banco em uso (DATAHUB_DB_DRIVER): depois da virada para o MariaDB,
+  // ler do Postgres antigo congelaria a "Saúde das APIs" no dia da troca.
+  config.datahubDbDriver === 'mariadb'
+    ? { id: 'datahub-meta', name: 'Metadados do Hub (demo)', kind: 'mysql', envPrefix: 'DATAHUB_MARIA' }
+    : { id: 'datahub-meta', name: 'Metadados do Hub (demo)', kind: 'postgres', envPrefix: 'DATAHUB_DB' },
   // SOAP (RH) e GCS entram no módulo sync — não são fontes SQL navegáveis.
 ]
 

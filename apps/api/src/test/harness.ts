@@ -48,17 +48,34 @@ const lakeRoot = join(work, 'lake')
 mkdirSync(lakeRoot, { recursive: true })
 
 // ── Ambiente: ANTES de importar qualquer módulo da API ──────────────────────
+// DATAHUB_TEST_DB_DRIVER=mariadb roda a MESMA suíte com os metadados no
+// MariaDB (D-DSP-4). A "fonte de produção" de laboratório (schema `fonte`)
+// continua num Postgres nos dois casos — ela faz o papel do ERP, não do hub.
+const DRIVER = (process.env.DATAHUB_TEST_DB_DRIVER || 'postgres').toLowerCase()
+if (DRIVER !== 'postgres' && DRIVER !== 'mariadb') throw new Error(`DATAHUB_TEST_DB_DRIVER="${DRIVER}" inválido`)
+const LOCAL = /^(localhost|127\.0\.0\.1|::1|postgres|datahub-db|mariadb|datahub-mariadb)$/
 const host = process.env.DATAHUB_TEST_DB_HOST || 'localhost'
-if (!/^(localhost|127\.0\.0\.1|::1|postgres|datahub-db)$/.test(host)) {
-  throw new Error(
-    `DATAHUB_TEST_DB_HOST="${host}" não é local. O harness apaga e recria o banco ${TEST_DB}; ` +
-    'ele só roda contra um Postgres de desenvolvimento ou de CI.',
-  )
+const mariaHost = process.env.DATAHUB_TEST_MARIA_HOST || 'localhost'
+for (const h of DRIVER === 'mariadb' ? [host, mariaHost] : [host]) {
+  if (!LOCAL.test(h)) {
+    throw new Error(
+      `host de teste "${h}" não é local. O harness apaga e recria o banco ${TEST_DB}; ` +
+      'ele só roda contra um banco de desenvolvimento ou de CI.',
+    )
+  }
 }
 const TEST_ENV: Record<string, string> = {
+  DATAHUB_DB_DRIVER: DRIVER,
   DATAHUB_DB_HOST: host,
   DATAHUB_DB_PORT: process.env.DATAHUB_TEST_DB_PORT || process.env.DATAHUB_DB_PORT || '5433',
   DATAHUB_DB_DATABASE: TEST_DB,
+  ...(DRIVER === 'mariadb' ? {
+    DATAHUB_MARIA_HOST: mariaHost,
+    DATAHUB_MARIA_PORT: process.env.DATAHUB_TEST_MARIA_PORT || '3307',
+    DATAHUB_MARIA_DATABASE: TEST_DB,
+    DATAHUB_MARIA_USER: process.env.DATAHUB_TEST_MARIA_USER || 'root',
+    DATAHUB_MARIA_PASSWORD: process.env.DATAHUB_TEST_MARIA_PASSWORD || 'datahub-dev',
+  } : {}),
   FIREBASE_PROJECT_ID: PROJECT,
   ALLOWED_DOMAIN: DOMAIN,
   ADMIN_EMAILS: `${USERS.master},${USERS.admin}`,
@@ -109,18 +126,31 @@ process.on('unhandledRejection', (err) => {
 const { config } = await import('../core/config.js')
 const pg = (await import('pg')).default
 
-// Recria o banco de teste do zero — cada execução parte do mesmo estado.
+// Recria o(s) banco(s) de teste do zero — cada execução parte do mesmo estado.
+// No Postgres, o MESMO banco guarda os metadados e o schema `fonte`.
 {
-  const admin = new pg.Client({ ...config.datahubDb, database: 'postgres' })
+  const admin = new pg.Client({ ...config.datahubPg, database: 'postgres' })
   await admin.connect()
   await admin.query(`drop database if exists ${TEST_DB} with (force)`)
   await admin.query(`create database ${TEST_DB}`)
   await admin.end()
 }
+const mysql = DRIVER === 'mariadb' ? (await import('mysql2/promise')).default : null
+async function mariaAdmin(sql: string): Promise<void> {
+  const c = await mysql!.createConnection({ ...config.datahubMaria, database: undefined })
+  try { await c.query(sql) } finally { await c.end() }
+}
+if (mysql) {
+  await mariaAdmin(`DROP DATABASE IF EXISTS ${TEST_DB}`)
+  await mariaAdmin(`CREATE DATABASE ${TEST_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_nopad_bin`)
+}
 
 const { db, runMigrations, isDbAvailable } = await import('../db/pool.js')
 await runMigrations(1, 0)
 if (!isDbAvailable()) throw new Error('Migrations falharam no banco de teste (veja o log acima).')
+
+/** A "fonte de produção" de laboratório: Postgres, schema `fonte`. */
+export const fonteDb = new pg.Pool({ ...config.datahubPg, max: 3 })
 
 export { db }
 export const { duckQuery } = await import('../modules/query/duck.js')
@@ -264,8 +294,8 @@ export async function seedDataset(d: SeedDataset): Promise<string> {
  * produção" de mentira, lida pelo MESMO caminho de ingestão das de verdade.
  */
 export async function connectTestSource(): Promise<string> {
-  await db.query('create schema if not exists fonte')
-  const c = config.datahubDb as { host: string; port: number; user: string; password: string }
+  await fonteDb.query('create schema if not exists fonte')
+  const c = config.datahubPg
   const r = await as('admin').post('/api/v1/connections', {
     kind: 'postgres', name: 'TESTE-COMITE fonte', host: c.host, port: c.port,
     database: TEST_DB, username: c.user, password: c.password,
@@ -316,9 +346,11 @@ export async function shutdown(): Promise<void> {
   await new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()) })
   await closeAllPools()
   await db.end()
-  const admin = new pg.Client({ ...config.datahubDb, database: 'postgres' })
+  await fonteDb.end()
+  const admin = new pg.Client({ ...config.datahubPg, database: 'postgres' })
   await admin.connect()
   await admin.query(`drop database if exists ${TEST_DB} with (force)`)
   await admin.end()
+  if (mysql) await mariaAdmin(`DROP DATABASE IF EXISTS ${TEST_DB}`)
   rmSync(work, { recursive: true, force: true })
 }

@@ -80,7 +80,7 @@ accessRouter.get('/audit', adminOnly, async (req, res) => {
 accessRouter.get('/users', adminOnly, async (req, res) => {
   const rows = (await db.query(
     `select u.email, u.name, u.picture, u.last_login_at,
-            coalesce(array_agg(r.name order by r.name) filter (where r.name is not null), '{}') as roles
+            string_agg(r.name, ',' order by r.name) as roles
        from users u
        left join user_roles ur on ur.user_id = u.id
        left join roles r on r.id = ur.role_id
@@ -92,7 +92,8 @@ accessRouter.get('/users', adminOnly, async (req, res) => {
     users: rows.map((u) => ({
       email: u.email, name: u.name, picture: u.picture ?? null,
       lastLoginAt: u.last_login_at ? String(u.last_login_at) : null,
-      roles: (u.roles as string[]) ?? [],
+      // string_agg (e não array_agg): roda igual no Postgres e no MariaDB
+      roles: u.roles ? String(u.roles).split(',') : [],
     })),
   })
 })

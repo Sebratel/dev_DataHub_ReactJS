@@ -13,10 +13,10 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, db, shutdown, connectTestSource, publishSource, syncAndWait, lakeCount, lakeRows } from './harness.js'
+import { as, shutdown, connectTestSource, fonteDb, publishSource, syncAndWait, lakeCount, lakeRows } from './harness.js'
 
 let conn = ''
-const fonteCount = async (t: string) => Number((await db.query(`select count(*) n from fonte.${t}`)).rows[0].n)
+const fonteCount = async (t: string) => Number((await fonteDb.query(`select count(*) n from fonte.${t}`)).rows[0].n)
 
 before(async () => {
   conn = await connectTestSource()
@@ -26,7 +26,7 @@ after(shutdown)
 
 describe('T-QLD-01 reconciliar contagem', () => {
   it('T-QLD-01 snapshot: o lake tem exatamente as linhas da fonte, em várias páginas', async () => {
-    await db.query(`create table fonte.contratos as
+    await fonteDb.query(`create table fonte.contratos as
       select g as id, 'cliente ' || g as cliente, (g * 10)::numeric(12,2) as valor
         from generate_series(1, 137) g`)
     const ds = await publishSource(conn, 'contratos', { syncMode: 'snapshot' })
@@ -34,7 +34,7 @@ describe('T-QLD-01 reconciliar contagem', () => {
     assert.equal(await lakeCount(ds.slug), await fonteCount('contratos'))
     // Soma ao centavo (T-QLD-03 em miniatura): o valor não muda no caminho.
     const lakeSoma = (await lakeRows(ds.slug)).reduce((s, r) => s + Number(r.valor), 0)
-    const fonteSoma = Number((await db.query('select sum(valor) s from fonte.contratos')).rows[0].s)
+    const fonteSoma = Number((await fonteDb.query('select sum(valor) s from fonte.contratos')).rows[0].s)
     assert.equal(lakeSoma.toFixed(2), fonteSoma.toFixed(2))
   })
 
@@ -51,7 +51,7 @@ describe('QLD-01 keyset com chave repetida na fronteira do lote', () => {
   }, async () => {
     // Linhas 41..70 com o mesmo criado_em: o lote 1 (50 linhas) termina no
     // meio delas, o watermark vira esse carimbo, e o lote 2 pede "> carimbo".
-    await db.query(`create table fonte.faturas as
+    await fonteDb.query(`create table fonte.faturas as
       select g as id,
              case when g between 41 and 70 then timestamp '2026-09-30 23:00:00'
                   else timestamp '2026-09-01 00:00:00' + (g || ' minutes')::interval end as criado_em,
@@ -65,7 +65,7 @@ describe('QLD-01 keyset com chave repetida na fronteira do lote', () => {
 
 describe('T-QLD-05 edição chega sem duplicar', () => {
   it('T-QLD-05 duas chaves + identidade: a linha editada aparece uma vez, com o valor novo', async () => {
-    await db.query(`create table fonte.pedidos as
+    await fonteDb.query(`create table fonte.pedidos as
       select g as id, timestamp '2026-10-01 08:00:00' + (g || ' minutes')::interval as criado_em,
              timestamp '2026-10-01 08:00:00' + (g || ' minutes')::interval as modificado_em,
              'aberto' as status
@@ -76,7 +76,7 @@ describe('T-QLD-05 edição chega sem duplicar', () => {
     await syncAndWait(ds.id)
     assert.equal(await lakeCount(ds.slug), 20)
 
-    await db.query(`update fonte.pedidos set status = 'faturado', modificado_em = timestamp '2026-10-02 10:00:00' where id = 7`)
+    await fonteDb.query(`update fonte.pedidos set status = 'faturado', modificado_em = timestamp '2026-10-02 10:00:00' where id = 7`)
     await syncAndWait(ds.id)
     const linhas = (await lakeRows(ds.slug)).filter((r) => Number(r.id) === 7)
     assert.equal(linhas.length, 1, 'a linha editada entrou duplicada')
@@ -89,7 +89,7 @@ describe('QLD-03 folga de reconferência sem identidade', () => {
   it('QLD-03 duas cargas com folga e sem identidade não duplicam linhas', {
     todo: 'QLD-03: a folga relê a janela e, sem identidade, cada execução reinsere as mesmas linhas.',
   }, async () => {
-    await db.query(`create table fonte.chamados as
+    await fonteDb.query(`create table fonte.chamados as
       select g as id, now()::timestamp - (g || ' seconds')::interval as criado_em, 'novo' as status
         from generate_series(1, 10) g`)
     const ds = await publishSource(conn, 'chamados', {
@@ -105,13 +105,13 @@ describe('QLD-06 exclusão na fonte', () => {
   it('QLD-06 registro apagado na fonte some do lake', {
     todo: 'QLD-06: o incremental só lê o novo/editado; o apagado continua no lake e infla contagens.',
   }, async () => {
-    await db.query(`create table fonte.clientes as
+    await fonteDb.query(`create table fonte.clientes as
       select g as id, timestamp '2026-10-01' + (g || ' minutes')::interval as criado_em from generate_series(1, 10) g`)
     const ds = await publishSource(conn, 'clientes', {
       syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'],
     })
     await syncAndWait(ds.id)
-    await db.query('delete from fonte.clientes where id = 3')
+    await fonteDb.query('delete from fonte.clientes where id = 3')
     await syncAndWait(ds.id)
     assert.equal(await lakeCount(ds.slug), 9)
   })
@@ -122,7 +122,7 @@ describe('QLD-05 recarga com piso', () => {
     todo: 'QLD-05: a recarga zera o watermark mas respeita o piso — 60 dias acumulados viram 30, e a tela diz "lido inteiro".',
   }, async () => {
     // 60 dias de histórico, todos lidos enquanto ainda não havia piso…
-    await db.query(`create table fonte.leituras as
+    await fonteDb.query(`create table fonte.leituras as
       select g as id, (now() - (g || ' days')::interval)::timestamp as criado_em from generate_series(1, 60) g`)
     const ds = await publishSource(conn, 'leituras', { syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'] })
     await syncAndWait(ds.id)
@@ -139,8 +139,8 @@ describe('QLD-05 recarga com piso', () => {
 
 describe('T-QLD-07 fuso horário (regressão)', () => {
   it('T-QLD-07 coluna com fuso guarda a hora LOCAL da fonte no lake', async () => {
-    await db.query(`create table fonte.eventos (id int, ocorrido_em timestamptz, registrado_em timestamp)`)
-    await db.query(`insert into fonte.eventos values
+    await fonteDb.query(`create table fonte.eventos (id int, ocorrido_em timestamptz, registrado_em timestamp)`)
+    await fonteDb.query(`insert into fonte.eventos values
       (1, '2026-10-01 15:10:00-03', '2026-10-01 15:10:00'),
       (2, '2026-10-01 23:59:59-03', '2026-10-01 23:59:59')`)
     const ds = await publishSource(conn, 'eventos', { syncMode: 'snapshot' })
