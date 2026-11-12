@@ -135,6 +135,26 @@ no tempo e o container continua de pé para o copiador.
   MariaDB desde a virada (logins, edições, auditoria, uso). Não há cópia no
   sentido inverso. A volta precisa ser decidida já sabendo disso.
 
+### Tirar o Postgres da stack
+
+O compose já vem sem o serviço `datahub-db`: a API não depende mais dele e o
+driver padrão é `mariadb`. O volume `datahub-db-data` continua declarado e não
+é apagado pelo deploy.
+
+1. **Antes do merge que tira o serviço**, gerar um dump final dentro do próprio
+   volume. No Console do container `datahub-db`, rodar:
+   ```
+   pg_dump -U datahub -d datahub -Fc -f /var/lib/postgresql/data/datahub_final.dump && ls -lh /var/lib/postgresql/data/datahub_final.dump
+   ```
+2. Fazer o merge e clicar em **Update the stack**, marcando a opção que remove
+   os serviços que saíram do compose (no Portainer, "Prune services"). O
+   container `datahub-db` sai, e o volume fica.
+3. Apagar o volume `datahub-db-data` só depois do prazo combinado com a TI.
+
+Sem o Postgres, voltar exige restaurar o volume, ou o dump, num Postgres avulso
+e rodar o copiador no sentido inverso, que não existe hoje. Na prática, a volta
+deixa de existir.
+
 ## Diferenças conhecidas (e o que foi feito)
 
 | Ponto | Postgres | MariaDB | Tratamento |
