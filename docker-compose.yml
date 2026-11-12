@@ -105,6 +105,9 @@ services:
       DATAHUB_MARIA_DATABASE: ${DATAHUB_MARIA_DATABASE:-DB_DataHub}
       DATAHUB_MARIA_USER: ${DATAHUB_MARIA_USER:-datahub_app}
       DATAHUB_MARIA_PASSWORD: ${DATAHUB_MARIA_PASSWORD:-}
+      # true = a API sobe sem gravar nada (sem agendador, rotas em 503) para a
+      # copia final da troca de banco. Fora da janela, deixe vazio ou false.
+      DATAHUB_MANUTENCAO: ${DATAHUB_MANUTENCAO:-false}
       ETL_HOUR: ${ETL_HOUR:-3}
       SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-50000}
       SYNC_BATCH_PAUSE_MS: ${SYNC_BATCH_PAUSE_MS:-500}

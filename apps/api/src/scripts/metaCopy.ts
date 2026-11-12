@@ -272,16 +272,17 @@ async function main(): Promise<void> {
     log(`  ${ok ? 'ok  ' : 'DIFERENTE'} ${t.padEnd(24)} postgres ${String(a.linhas).padStart(9)} · mariadb ${String(b.linhas).padStart(9)}${ok ? '' : `  (impressões ${a.soma.toString(16)} × ${b.soma.toString(16)})`}`)
   }
 
-  await src.query('rollback') // só leitura: nada a confirmar no Postgres
-  await src.end()
-
   // ── 5. Leitura PELO APP: o mesmo objeto JavaScript dos dois lados ─────
   // A conferência acima prova que o dado é o mesmo. Esta prova que a API vai
   // VER o mesmo: lê uma amostra (até 2.000 linhas por tabela) pelo driver do
   // Postgres, como o app lê hoje, e pelo cliente MariaDB do app (tradutor +
   // conversão de tipos), e compara objeto por objeto — tipo incluído.
+  // O lado Postgres lê DENTRO da mesma foto (o `src` ainda está na transação e
+  // usa os tipos padrão do driver, como a API): com a API no ar, ler fora dela
+  // pegava last_sync_at já atualizado depois da cópia e acusava diferença
+  // que não era do cliente (ensaio de 12/11 no servidor).
   log('\nlendo pelo app (amostra por tabela, tipo a tipo)…')
-  const pgApp = new pg.Pool({ ...pgCfg, max: 2 })
+  const pgApp = src
   const tipoJs = (v: unknown): string => {
     if (v === null || v === undefined) return 'null'
     if (v instanceof Date) return `date:${v.toISOString()}`
@@ -332,7 +333,8 @@ async function main(): Promise<void> {
     if (difs) { diferencasApp++; log(`  DIFERENTE ${t.padEnd(24)} ${difs} de ${a.length} linhas — ${exemplo}`) }
     else log(`  ok   ${t.padEnd(24)} ${a.length} linhas iguais pelo app`)
   }
-  await pgApp.end()
+  await src.query('rollback') // só leitura: nada a confirmar no Postgres
+  await src.end()
 
   if (!SO_CONFERIR) {
     await dst.query(`INSERT INTO ${MARCA} (copiado_em, origem, linhas) VALUES (UTC_TIMESTAMP(6), ?, ?)`,

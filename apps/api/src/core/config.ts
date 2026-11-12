@@ -64,6 +64,9 @@ export const config = {
   // a virada é trocar o driver, e a volta é trocar de novo; o Postgres não é
   // tocado. O copiador (scripts/metaCopy.ts) usa os dois ao mesmo tempo.
   datahubDbDriver: dbDriver(process.env.DATAHUB_DB_DRIVER),
+  // Sobe sem gravar nada (sem migrations, agendador nem rotas; 503 para todos),
+  // para a cópia final da troca de banco. Ver index.ts e docs/MIGRACAO-MARIADB.md.
+  manutencao: ['1', 'true', 'sim'].includes((process.env.DATAHUB_MANUTENCAO || '').trim().toLowerCase()),
   datahubPg: {
     host: process.env.DATAHUB_DB_HOST || 'localhost',
     port: Number(process.env.DATAHUB_DB_PORT) || 5433,

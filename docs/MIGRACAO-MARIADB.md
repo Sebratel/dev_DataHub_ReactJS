@@ -99,18 +99,27 @@ com microssegundos). Resultado: as 44 tabelas idênticas, com a cópia em cerca 
      mede o tempo real da cópia.
    - Pode repetir quantas vezes quiser: a cada execução ele recria a cópia
      anterior.
-4. Medir quanto tempo a cópia levou e marcar a janela. Sem a medição de
-   produção, a estimativa é de minutos, mesmo com milhões de linhas de
-   telemetria.
+4. Medir quanto tempo a cópia levou e marcar a janela.
+   - Ensaio de 12/11/2026 no servidor: 44 tabelas, cerca de 690 mil linhas
+     (`sync_runs` 341 mil, `api_call_metrics` 339 mil). A cópia levou uns 35 s,
+     e a cópia com a conferência ficou em cerca de 1 minuto.
 
-### No dia (janela curta, com a API parada)
+### No dia (janela de uns 10 minutos)
 
-1. Parar o serviço `api` no Portainer, para que ninguém grave no Postgres
-   durante a cópia final.
-2. Rodar o copiador mais uma vez e conferir que terminou em `TUDO CONFERE`. Se
-   aparecer qualquer `DIFERENTE` ou `PAROU`, não vire: suba a API de novo com
-   `postgres`.
-3. Mudar `DATAHUB_DB_DRIVER=mariadb` na stack e subir a API.
+O copiador roda dentro do container da API, e a API normal grava sozinha,
+porque o agendador de cargas não para. Por isso a janela usa o **modo
+manutenção** (`DATAHUB_MANUTENCAO=true`): a API sobe sem migrations, sem
+agendador e sem rotas, e responde 503 para quem chamar. O Postgres fica parado
+no tempo e o container continua de pé para o copiador.
+
+1. Na stack, colocar `DATAHUB_MANUTENCAO=true` e clicar em **Update the stack**.
+   - O log deve mostrar `[api] MODO MANUTENÇÃO`.
+   - As telas e a API pública passam a responder 503 até o fim da janela.
+2. No Console do `datahub-api`, rodar o copiador e conferir que terminou em
+   `TUDO CONFERE`. Se aparecer qualquer `DIFERENTE` ou `PAROU`, não vire: tire
+   o `DATAHUB_MANUTENCAO` e volte ao normal com `postgres`.
+3. Na stack, mudar `DATAHUB_DB_DRIVER=mariadb` e `DATAHUB_MANUTENCAO=false`, e
+   clicar em **Update the stack**.
    - O log deve mostrar `[db] banco datahub pronto (mariadb 10.0.11.171/DB_DataHub).`
    - A fonte da telemetria muda sozinha:
      `[api-metrics] fonte da telemetria agora em mariadb (DB_DataHub).`
