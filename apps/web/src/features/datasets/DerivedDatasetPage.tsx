@@ -7,6 +7,7 @@ import { ArrowLeft, GitMerge, Loader2, Play, Save, Database, ChevronRight, Plus,
 import clsx from 'clsx'
 import type { DatasetSummary, DatasetDetail } from '@datahub/shared'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
 
 interface PreviewResult {
   columns: string[]
@@ -38,6 +39,11 @@ export default function DerivedDatasetPage() {
   const [error, setError] = useState<string | null>(null)
   const [helperSlug, setHelperSlug] = useState<string | null>(null)
   const [helperFields, setHelperFields] = useState<string[]>([])
+  const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
+  const [official, setOfficial] = useState(false)
+  // DSP-03: oficial congela o SQL para quem não é admin. O backend recusa de
+  // qualquer jeito; aqui a tela avisa antes de a pessoa reescrever à toa.
+  const sqlTravado = !!editingId && official && !isAdmin
 
   // Conjuntos do lake (fontes E derivados — cadeias derivado→derivado):
   // sincronizados primeiro; os não sincronizados aparecem desabilitados. Exclui
@@ -60,6 +66,7 @@ export default function DerivedDatasetPage() {
         setName(dataset.name)
         setDescription(dataset.description)
         setSql(dataset.transformSql ?? '')
+        setOfficial(dataset.official)
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar o conjunto.'))
   }, [editSlug])
@@ -151,10 +158,17 @@ export default function DerivedDatasetPage() {
                   somente SELECT · DuckDB
                 </span>
               </div>
+              {sqlTravado && (
+                <p className="mb-2 rounded-lg border border-zinc-200 px-3 py-2 text-[12px] text-zinc-500 dark:border-zinc-700">
+                  Conjunto oficial: o SQL está congelado. Só um administrador altera, e a versão anterior fica
+                  guardada. Nome e descrição você ainda pode mudar.
+                </p>
+              )}
               <div className="overflow-hidden rounded-lg border border-zinc-200 focus-within:border-accent dark:border-zinc-700">
-                <textarea value={sql} onChange={(e) => setSql(e.target.value)}
+                <textarea value={sql} onChange={(e) => setSql(e.target.value)} readOnly={sqlTravado}
                   placeholder={SQL_PLACEHOLDER} rows={15} spellCheck={false}
-                  className="w-full resize-y bg-white px-3 py-2.5 font-mono text-xs leading-relaxed outline-none dark:bg-zinc-950" />
+                  className={clsx('w-full resize-y bg-white px-3 py-2.5 font-mono text-xs leading-relaxed outline-none dark:bg-zinc-950',
+                    sqlTravado && 'cursor-not-allowed text-zinc-500')} />
               </div>
             </div>
 

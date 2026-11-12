@@ -22,6 +22,7 @@ import type { Request, Response } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit, invalidateTokenCache } from '../auth/middleware.js'
 import { listMasterAdmins, grantMaster, revokeMaster } from '../auth/masterAdmins.js'
+import { publishBlocked, PUBLICAR_SO_ADMIN } from '../../core/access.js'
 
 export const accessRouter = Router()
 
@@ -79,7 +80,7 @@ accessRouter.get('/audit', adminOnly, async (req, res) => {
 accessRouter.get('/users', adminOnly, async (req, res) => {
   const rows = (await db.query(
     `select u.email, u.name, u.picture, u.last_login_at,
-            coalesce(array_agg(r.name order by r.name) filter (where r.name is not null), '{}') as roles
+            string_agg(r.name, ',' order by r.name) as roles
        from users u
        left join user_roles ur on ur.user_id = u.id
        left join roles r on r.id = ur.role_id
@@ -91,7 +92,8 @@ accessRouter.get('/users', adminOnly, async (req, res) => {
     users: rows.map((u) => ({
       email: u.email, name: u.name, picture: u.picture ?? null,
       lastLoginAt: u.last_login_at ? String(u.last_login_at) : null,
-      roles: (u.roles as string[]) ?? [],
+      // string_agg (e não array_agg): roda igual no Postgres e no MariaDB
+      roles: u.roles ? String(u.roles).split(',') : [],
     })),
   })
 })
@@ -288,8 +290,11 @@ accessRouter.patch('/datasets/:slug/visibility', requireManageable(async (req, r
   if (!['tenant', 'private'].includes(visibility)) {
     return res.status(400).json({ error: "visibility deve ser 'tenant' ou 'private'." })
   }
+  // D-DSP-1: o dono restringe o próprio conjunto; abrir para a empresa é de admin.
+  const antes = (await db.query('select visibility from datasets where id = $1', [ds.id])).rows[0]?.visibility
+  if (publishBlocked(req.user!, antes, visibility)) return res.status(403).json({ error: PUBLICAR_SO_ADMIN })
   await db.query('update datasets set visibility = $2, updated_at = now() where id = $1', [ds.id, visibility])
-  await audit(req, 'access.dataset.visibility', { type: 'dataset', id: ds.slug }, { visibility })
+  await audit(req, 'access.dataset.visibility', { type: 'dataset', id: ds.slug }, { from: antes ?? null, visibility })
   res.json({ ok: true })
 }))
 

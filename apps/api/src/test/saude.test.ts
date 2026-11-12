@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, db, shutdown, connectTestSource, publishSource, syncAndWait, waitFor } from './harness.js'
+import { as, db, shutdown, connectTestSource, fonteDb, publishSource, syncAndWait, waitFor } from './harness.js'
 
 let conn = ''
 const saude = async () => {
@@ -25,10 +25,10 @@ describe('T-MON-08 / MON-14 o que precisa de atenção, numa tela', () => {
   let quebrado = { id: '', slug: '' }
 
   it('carga com erro aparece, com a mensagem, e sai quando a carga volta a funcionar', async () => {
-    await db.query(`create table fonte.estoque as select g as id from generate_series(1, 5) g`)
+    await fonteDb.query(`create table fonte.estoque as select g as id from generate_series(1, 5) g`)
     quebrado = await publishSource(conn, 'estoque', { syncMode: 'snapshot' })
     await syncAndWait(quebrado.id)
-    await db.query('alter table fonte.estoque rename to estoque_old')
+    await fonteDb.query('alter table fonte.estoque rename to estoque_old')
     await syncAndWait(quebrado.id).catch(() => { /* falha esperada */ })
 
     const h = await saude()
@@ -40,13 +40,13 @@ describe('T-MON-08 / MON-14 o que precisa de atenção, numa tela', () => {
     assert.ok(h.runs24h.error >= 1 && h.runs24h.failures.some((f: any) => f.slug === quebrado.slug),
       'a falha da noite aparece na lista de 24 h')
 
-    await db.query('alter table fonte.estoque_old rename to estoque')
+    await fonteDb.query('alter table fonte.estoque_old rename to estoque')
     await syncAndWait(quebrado.id)
     assert.ok(!(await ids()).includes(`sync-error:${quebrado.id}`), 'resolvido, saiu sozinho')
   })
 
   it('carga pausada aparece como crítica (e não duplicada como "falhou")', async () => {
-    await db.query('alter table fonte.estoque rename to estoque_old')
+    await fonteDb.query('alter table fonte.estoque rename to estoque_old')
     for (let i = 0; i < 3; i++) await syncAndWait(quebrado.id).catch(() => { /* falha esperada */ })
     const lista = await ids()
     assert.ok(lista.includes(`paused:${quebrado.id}`), JSON.stringify(lista))
@@ -54,17 +54,17 @@ describe('T-MON-08 / MON-14 o que precisa de atenção, numa tela', () => {
     const p = (await saude()).problems.find((x: any) => x.id === `paused:${quebrado.id}`)
     assert.equal(p.severity, 'crit')
     assert.equal((await saude()).problems[0].severity, 'crit', 'os críticos vêm primeiro')
-    await db.query('alter table fonte.estoque_old rename to estoque')
+    await fonteDb.query('alter table fonte.estoque_old rename to estoque')
   })
 
   it('verificação contínua falhando e conciliação divergente entram na mesma lista', async () => {
-    await db.query(`create table fonte.vendas as
+    await fonteDb.query(`create table fonte.vendas as
       select g as id, timestamp '2026-10-01' + (g || ' minutes')::interval as criado_em from generate_series(1, 10) g`)
     const ds = await publishSource(conn, 'vendas', {
       syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'], syncCadence: 'hourly',
     })
     await syncAndWait(ds.id)
-    await db.query('delete from fonte.vendas where id = 4')
+    await fonteDb.query('delete from fonte.vendas where id = 4')
     const r = await as('admin').post(`/api/v1/quality/datasets/${ds.id}/reconcile`)
     assert.equal(r.status, 202)
     await waitFor(async () => (await db.query(

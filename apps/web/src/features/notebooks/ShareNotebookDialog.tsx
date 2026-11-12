@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { X, Trash2, Loader2, Users, Lock, UsersRound, Mail, Pencil, Eye } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
 
 interface Grant {
   teamId: string | null
@@ -31,6 +32,7 @@ export default function ShareNotebookDialog({
   /** Avisa a tela de origem para ela não mostrar visibilidade defasada. */
   onVisibility?: (v: 'tenant' | 'private') => void
 }) {
+  const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
   const [visibility, setVisibility] = useState<'tenant' | 'private'>('private')
   const [canShare, setCanShare] = useState(false)
   const [teams, setTeams] = useState<TeamOpt[]>([])
@@ -97,6 +99,8 @@ export default function ShareNotebookDialog({
   }
 
   const locked = !canShare
+  // D-DSP-1: abrir para o tenant inteiro é de admin; o dono só restringe.
+  const publicarTravado = !isAdmin && visibility !== 'tenant'
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3 animate-fade-in" onClick={onClose}>
@@ -115,10 +119,14 @@ export default function ShareNotebookDialog({
         {/* Visibilidade */}
         <div className="grid grid-cols-2 gap-2">
           {[
-            { v: 'tenant' as const, icon: Users, label: 'Todo o time', hint: 'Qualquer pessoa do tenant abre' },
-            { v: 'private' as const, icon: Lock, label: 'Restrito', hint: 'Só você e os convidados' },
-          ].map(({ v, icon: Icon, label, hint }) => (
-            <button key={v} onClick={() => void setVis(v)} disabled={locked}
+            {
+              v: 'tenant' as const, icon: Users, label: 'Todo o time',
+              hint: publicarTravado ? 'Só administrador publica para a empresa' : 'Qualquer pessoa do tenant abre',
+              travado: publicarTravado,
+            },
+            { v: 'private' as const, icon: Lock, label: 'Restrito', hint: 'Só você e os convidados', travado: false },
+          ].map(({ v, icon: Icon, label, hint, travado }) => (
+            <button key={v} onClick={() => void setVis(v)} disabled={locked || travado}
               className={`rounded-xl border p-2.5 text-left disabled:cursor-not-allowed disabled:opacity-60 ${visibility === v
                 ? 'border-accent bg-accent-soft dark:bg-zinc-800'
                 : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-700'}`}>

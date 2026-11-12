@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, db, shutdown, connectTestSource, publishSource, syncAndWait, waitFor } from './harness.js'
+import { as, db, shutdown, connectTestSource, fonteDb, publishSource, syncAndWait, waitFor } from './harness.js'
 
 let conn = ''
 const estado = async (datasetId: string, check: string) =>
@@ -33,12 +33,12 @@ after(shutdown)
 
 describe('QLD-08 volume do snapshot', () => {
   it('snapshot que encolhe de uma carga para a outra é acusado, e o normal volta a avisar', async () => {
-    await db.query(`create table fonte.produtos as select g as id, 'p' || g as nome from generate_series(1, 1500) g`)
+    await fonteDb.query(`create table fonte.produtos as select g as id, 'p' || g as nome from generate_series(1, 1500) g`)
     const ds = await publishSource(conn, 'produtos', { syncMode: 'snapshot' })
     await syncAndWait(ds.id)
     assert.equal(await estado(ds.id, 'volume'), undefined, 'a primeira carga não tem com o que comparar')
 
-    await db.query('delete from fonte.produtos where id > 1000') // −33%
+    await fonteDb.query('delete from fonte.produtos where id > 1000') // −33%
     await syncAndWait(ds.id)
     const caiu = await esperaEstado(ds.id, 'volume', 'fail')
     assert.equal(caiu?.status, 'fail', JSON.stringify(caiu))
@@ -49,7 +49,7 @@ describe('QLD-08 volume do snapshot', () => {
     // estado volta ao normal (com um aviso só, logo abaixo).
     await syncAndWait(ds.id)
     assert.equal((await esperaEstado(ds.id, 'volume', 'ok'))?.status, 'ok', 'de 1.000 para 1.000 não é queda')
-    await db.query(`insert into fonte.produtos select g, 'p' || g from generate_series(1001, 1500) g`)
+    await fonteDb.query(`insert into fonte.produtos select g, 'p' || g from generate_series(1001, 1500) g`)
     await syncAndWait(ds.id)
     assert.equal((await esperaEstado(ds.id, 'volume', 'ok'))?.status, 'ok')
     assert.equal((await alertas(/^Volume caiu: Produtos$/)).length, 1, 'o mesmo aviso saiu duas vezes')
@@ -59,7 +59,7 @@ describe('QLD-08 volume do snapshot', () => {
 
 describe('QLD-04 identidade', () => {
   it('identidade vazia no lake é acusada depois da carga', async () => {
-    await db.query(`create table fonte.cupons as
+    await fonteDb.query(`create table fonte.cupons as
       select g as id, case when g <= 3 then null else 'C' || g end as codigo,
              timestamp '2026-10-01' + (g || ' minutes')::interval as criado_em
         from generate_series(1, 20) g`)
@@ -73,7 +73,7 @@ describe('QLD-04 identidade', () => {
   })
 
   it('identidade preenchida passa', async () => {
-    await db.query(`create table fonte.notas as
+    await fonteDb.query(`create table fonte.notas as
       select g as id, timestamp '2026-10-01' + (g || ' minutes')::interval as criado_em from generate_series(1, 30) g`)
     const ds = await publishSource(conn, 'notas', {
       syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'],
@@ -83,7 +83,7 @@ describe('QLD-04 identidade', () => {
   })
 
   it('a conciliação acusa identidade que não é única na fonte (linhas diferentes viram uma no lake)', async () => {
-    await db.query(`create table fonte.leituras_grupo as
+    await fonteDb.query(`create table fonte.leituras_grupo as
       select g as id, (g % 5) as grupo, timestamp '2026-10-02' + (g || ' minutes')::interval as criado_em
         from generate_series(1, 20) g`)
     const ds = await publishSource(conn, 'leituras_grupo', {
@@ -105,7 +105,7 @@ describe('QLD-04 identidade', () => {
 describe('MON-09 / QLD-10 prazo pela cadência', () => {
   it('conjunto de hora em hora parado há 3 h fica atrasado, e volta quando carrega', async () => {
     const { runStaleChecks } = await import('../modules/quality/checks.js')
-    await db.query(`create table fonte.chamados_h as
+    await fonteDb.query(`create table fonte.chamados_h as
       select g as id, timestamp '2026-10-03' + (g || ' minutes')::interval as criado_em from generate_series(1, 5) g`)
     const ds = await publishSource(conn, 'chamados_h', {
       syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'], syncCadence: 'hourly',

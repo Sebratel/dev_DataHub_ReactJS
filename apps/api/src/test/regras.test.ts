@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, db, shutdown, connectTestSource, publishSource } from './harness.js'
+import { as, db, shutdown, connectTestSource, fonteDb, publishSource } from './harness.js'
 
 let conn = ''
 let ds = { id: '', slug: '' }
@@ -21,7 +21,7 @@ const gravado = async () => (await db.query(
 
 before(async () => {
   conn = await connectTestSource()
-  await db.query(`create table fonte.regras as
+  await fonteDb.query(`create table fonte.regras as
     select g as id, timestamp '2026-10-01' + (g || ' minutes')::interval as criado_em
       from generate_series(1, 5) g`)
   ds = await publishSource(conn, 'regras', { ...BASE, syncCadence: 'hourly' })

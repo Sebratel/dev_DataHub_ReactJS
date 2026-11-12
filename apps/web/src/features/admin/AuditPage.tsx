@@ -19,13 +19,23 @@ interface AuditLog {
 const ACTION_LABEL: Record<string, string> = {
   'datasets.publish': 'Publicou conjunto',
   'datasets.unpublish': 'Removeu conjunto',
+  'datasets.trash': 'Mandou para a lixeira',
+  'datasets.restore': 'Restaurou da lixeira',
+  'datasets.purge': 'Excluiu de vez',
   'datasets.update': 'Editou conjunto',
   'datasets.sync': 'Sincronizou',
   'datasets.sync-config': 'Config. de sync',
   'datasets.export': 'Exportou',
+  // Uso: entra uma linha por pessoa, conjunto e dia (a 1ª do dia), não uma por
+  // consulta — ver migration 040.
+  'datasets.query': 'Consultou conjunto',
+  'notebooks.run': 'Rodou notebook',
+  'dashboards.open': 'Abriu dashboard',
+  'ai.query': 'IA consultou',
   'datasets.derived.create': 'Criou derivado',
   'datasets.derived.update': 'Editou derivado',
   'datasets.derived.materialize': 'Materializou derivado',
+  'datasets.derived.restore-version': 'Voltou versão do SQL',
   'access.dataset.grant': 'Concedeu acesso',
   'access.dataset.grant.revoke': 'Revogou acesso',
   'access.dataset.visibility': 'Mudou visibilidade',
@@ -37,6 +47,9 @@ const ACTION_LABEL: Record<string, string> = {
   'dashboards.create': 'Criou dashboard',
   'dashboards.delete': 'Excluiu dashboard',
   'dashboards.share': 'Compartilhou dashboard',
+  'dashboards.unshare': 'Removeu convidado',
+  'dashboards.visibility': 'Mudou visibilidade',
+  'notebooks.visibility': 'Mudou visibilidade',
   'metrics.create': 'Criou métrica',
   'metrics.delete': 'Excluiu métrica',
 }

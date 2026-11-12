@@ -53,8 +53,10 @@ export function listParquet(dir: string): string[] {
   return readdirSync(dir).filter((f) => f.endsWith('.parquet')).map((f) => join(dir, f))
 }
 
-// Apaga o diretório do conjunto no lake. Chamado ao EXCLUIR um conjunto: até
-// aqui a exclusão removia só a linha no banco e deixava os Parquet no disco,
+// Apaga o diretório do conjunto no lake. Era chamado ao EXCLUIR um conjunto;
+// desde a lixeira (catalog/trash.ts) a exclusão MOVE o diretório para
+// .lixeira/ e o apaga só no fim do prazo — pelos mesmos dois motivos. Antes
+// disso a exclusão removia só a linha no banco e deixava os Parquet no disco,
 // para sempre. Dois estragos, e o segundo é pior que o vazamento:
 //
 //   • espaço que nunca volta — cada conjunto excluído fica ocupando disco até

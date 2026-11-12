@@ -38,10 +38,10 @@ before(async () => {
 
 after(shutdown)
 
-async function auditDe(email: string, action: string): Promise<Array<{ action: string; detail: any }>> {
+async function auditDe(email: string, action: string): Promise<Array<{ action: string; resourceId: string | null; detail: any }>> {
   const r = await as('admin').get(`/api/v1/admin/audit?user=${encodeURIComponent(email)}&action=${encodeURIComponent(action)}&limit=300`)
   assert.equal(r.status, 200)
-  return (r.body.events ?? r.body.logs ?? r.body.rows ?? r.body) as Array<{ action: string; detail: any }>
+  return (r.body.events ?? r.body.logs ?? r.body.rows ?? r.body) as Array<{ action: string; resourceId: string | null; detail: any }>
 }
 
 // ── Funcionais ─────────────────────────────────────────────────────────────
@@ -149,28 +149,80 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
     assert.ok(r.status === 201 || r.status === 200, `status ${r.status}`)
   })
 
-  it('T-DSP-03 painel recém-criado (rascunho) não aparece para os outros', {
-    todo: 'DSP-05: painel nasce visível para todo o tenant.',
-  }, async () => {
+  it('T-DSP-03 painel recém-criado (rascunho) não aparece para os outros', async () => {
     const d = await as('editor').post('/api/v1/dashboards', { name: 'TESTE-COMITE-GOV rascunho' })
     const lista = await as('viewer').get('/api/v1/dashboards')
     assert.ok(!JSON.stringify(lista.body).includes(String(d.body.id)))
   })
 
-  it('T-DSP-05 calculado OFICIAL não muda de SQL sem aprovação', {
-    todo: 'DSP-03: o dono muda o SQL de um oficial, o selo continua e o SQL anterior se perde.',
-  }, async () => {
-    assert.equal((await as('admin').patch(`/api/v1/datasets/${calcId}`, { official: true })).status, 200)
-    const r = await as('editor').patch(`/api/v1/datasets/derived/${calcId}`, { sql: 'select id from teste_comite_aberto' })
-    assert.ok(r.status >= 400, `o dono reescreveu o oficial: ${r.status}`)
+  it('D-DSP-1 só admin publica para a empresa; o dono restringe o que é dele', async () => {
+    const dono = as('editor')
+    const d = await dono.post('/api/v1/dashboards', { name: 'TESTE-COMITE publicar' })
+    assert.equal((await dono.patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'tenant' })).status, 403,
+      'editor publicou o painel para a empresa')
+    assert.equal((await as('admin').patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'tenant' })).status, 200)
+    assert.ok(JSON.stringify((await as('viewer').get('/api/v1/dashboards')).body).includes(String(d.body.id)),
+      'publicado pelo admin, o viewer vê')
+    assert.equal((await dono.patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'private' })).status, 200,
+      'o dono pode tirar da empresa')
+    // Notebook e conjunto seguem a mesma regra.
+    assert.equal((await as('viewer').post('/api/v1/notebooks', { name: 'TESTE-COMITE nb aberto', visibility: 'tenant' })).status, 403)
+    const nb = await as('viewer').post('/api/v1/notebooks', { name: 'TESTE-COMITE nb fechado' })
+    assert.equal((await as('viewer').put(`/api/v1/notebooks/${nb.body.notebook.slug}`, { visibility: 'tenant' })).status, 403)
+    assert.equal((await as('editor2').patch('/api/v1/admin/datasets/teste-comite-privado/visibility', { visibility: 'tenant' })).status, 403,
+      'o dono abriu o conjunto para a empresa')
   })
 
-  it('T-DSP-06 o dono arquiva ou exclui o próprio calculado sem dependentes', {
-    todo: 'DSP-07: exclusão de conjunto é só de admin; o editor cria e não consegue limpar.',
-  }, async () => {
+  it('T-DSP-05 calculado OFICIAL não muda de SQL sem aprovação', async () => {
+    assert.equal((await as('admin').patch(`/api/v1/datasets/${calcId}`, { official: true })).status, 200)
+    const original = 'select id, cliente, valor from teste_comite_aberto'
+    const r = await as('editor').patch(`/api/v1/datasets/derived/${calcId}`, { sql: 'select id from teste_comite_aberto' })
+    assert.ok(r.status >= 400, `o dono reescreveu o oficial: ${r.status}`)
+    const sqlAgora = async () => String((await db.query('select transform_sql from datasets where id = $1', [calcId])).rows[0].transform_sql)
+    assert.equal(await sqlAgora(), original, 'a recusa mexeu no SQL')
+    // O dono ainda mexe no que não muda o número: nome e descrição.
+    assert.equal((await as('editor').patch(`/api/v1/datasets/derived/${calcId}`, { description: 'chancelado' })).status, 200)
+
+    // O admin altera, e o SQL anterior fica guardado como versão.
+    const adm = await as('admin').patch(`/api/v1/datasets/derived/${calcId}`, { sql: 'select id, valor from teste_comite_aberto', note: 'pedido da diretoria' })
+    assert.equal(adm.status, 200, JSON.stringify(adm.body))
+    const v = await as('editor').get(`/api/v1/datasets/derived/${calcId}/versions`)
+    assert.equal(v.status, 200)
+    assert.deepEqual(v.body.versions.map((x: { version: number }) => x.version), [2, 1])
+    assert.equal(v.body.versions[1].sql, original, 'o SQL chancelado se perdeu')
+    assert.equal(v.body.versions[0].note, 'pedido da diretoria')
+    assert.equal(v.body.versions[0].current, true)
+
+    // Voltar à versão chancelada segue a mesma regra: dono não, admin sim.
+    assert.equal((await as('editor').post(`/api/v1/datasets/derived/${calcId}/versions/1/restore`)).status, 409)
+    const volta = await as('admin').post(`/api/v1/datasets/derived/${calcId}/versions/1/restore`)
+    assert.equal(volta.status, 200, JSON.stringify(volta.body))
+    assert.equal(volta.body.version, 3)
+    assert.equal(await sqlAgora(), original)
+  })
+
+  it('DSP-03 todo SQL de calculado vira versão; o dono restaura a anterior do que não é oficial', async () => {
+    const ed = as('editor')
+    const c = await ed.post('/api/v1/datasets/derived', { name: 'TESTE-COMITE versões', sql: 'select id from teste_comite_aberto' })
+    assert.equal(c.status, 201, JSON.stringify(c.body))
+    assert.equal((await ed.patch(`/api/v1/datasets/derived/${c.body.id}`, { sql: 'select id, valor from teste_comite_aberto' })).body.version, 2)
+    const igual = await ed.patch(`/api/v1/datasets/derived/${c.body.id}`, { sql: 'select id, valor from teste_comite_aberto' })
+    assert.equal(igual.body.version, null, 'salvar o mesmo SQL criou versão')
+    const volta = await ed.post(`/api/v1/datasets/derived/${c.body.id}/versions/1/restore`)
+    assert.equal(volta.status, 200, JSON.stringify(volta.body))
+    const v = (await ed.get(`/api/v1/datasets/derived/${c.body.id}/versions`)).body.versions
+    assert.deepEqual(v.map((x: { version: number }) => x.version), [3, 2, 1])
+    assert.equal(v[0].sql, 'select id from teste_comite_aberto')
+    assert.equal(v[0].note, 'Restaurada da versão 1.')
+    // Quem não é o dono nem admin não restaura.
+    assert.equal((await as('editor2').post(`/api/v1/datasets/derived/${c.body.id}/versions/2/restore`)).status, 404)
+  })
+
+  it('T-DSP-06 o dono arquiva ou exclui o próprio calculado sem dependentes', async () => {
     const r = await as('editor').post('/api/v1/datasets/derived', { name: 'TESTE-COMITE descartável', sql: 'select 1 as um from teste_comite_aberto' })
     const del = await as('editor').del(`/api/v1/datasets/${r.body.id}`)
-    assert.ok(del.status < 300, `status ${del.status}`)
+    assert.ok(del.status < 300, `status ${del.status} ${JSON.stringify(del.body)}`)
+    assert.ok(del.body.trashId, 'foi excluído sem passar pela lixeira')
   })
 
   // `skip`, e não `todo`: o defeito É uma rejeição não tratada, e o executor de
@@ -186,9 +238,7 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
     assert.ok((r as Response).status >= 400)
   })
 
-  it('T-DSP-08 excluir conjunto com dependentes lista os dependentes e bloqueia', {
-    todo: 'DSP-01: exclusão definitiva e em cascata — a métrica some junto, sem aviso nem lixeira.',
-  }, async () => {
+  it('T-DSP-08 excluir conjunto com dependentes lista os dependentes e bloqueia', async () => {
     // Calculado próprio (C1): o do T-DSP-05 pode ter tido o SQL reescrito.
     const c1 = await as('editor').post('/api/v1/datasets/derived', {
       name: 'TESTE-COMITE C1', sql: 'select id, valor from teste_comite_aberto',
@@ -199,6 +249,94 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
     assert.equal(m.status, 201, JSON.stringify(m.body))
     const del = await as('admin').del(`/api/v1/datasets/${c1.body.id}`)
     assert.equal(del.status, 409, 'deveria recusar e listar a métrica dependente')
+    assert.ok(del.body.dependents.some((d: { type: string; name: string }) => d.type === 'metric' && d.name === 'TESTE-COMITE M1'),
+      JSON.stringify(del.body))
+    // A métrica continua lá: a recusa não apagou nada.
+    assert.ok((await db.query('select 1 from metrics where id = $1', [m.body.id])).rows[0], 'a métrica sumiu')
+    // A tela pergunta antes: a mesma lista sai em /dependents.
+    const deps = await as('editor').get(`/api/v1/datasets/${c1.body.slug}/dependents`)
+    assert.equal(deps.status, 200)
+    assert.equal(deps.body.dependents.length, 1)
+  })
+
+  it('D-DSP-3 lixeira: some do catálogo, volta com os dados e as concessões', async () => {
+    const ed = as('editor')
+    const c = await ed.post('/api/v1/datasets/derived', { name: 'TESTE-COMITE lixeira', sql: 'select id, cliente from teste_comite_aberto' })
+    assert.equal(c.status, 201, JSON.stringify(c.body))
+    await waitFor(async () => Number((await db.query('select row_count from datasets where id = $1', [c.body.id])).rows[0]?.row_count) === 3)
+    assert.equal((await ed.post(`/api/v1/admin/datasets/${c.body.slug}/grants`, { email: USERS.viewer2, canExport: false })).status, 201)
+
+    const del = await ed.del(`/api/v1/datasets/${c.body.id}`)
+    assert.equal(del.status, 200, JSON.stringify(del.body))
+    assert.equal((await ed.get(`/api/v1/datasets/${c.body.slug}`)).status, 404, 'continua no catálogo')
+    const lista = await ed.get('/api/v1/trash')
+    assert.ok(lista.body.items.some((i: { id: string }) => i.id === del.body.trashId), 'não aparece na lixeira de quem excluiu')
+    assert.ok(!(await as('viewer').get('/api/v1/trash')).body.items.some((i: { id: string }) => i.id === del.body.trashId),
+      'a lixeira de outra pessoa mostra o item')
+
+    const back = await ed.post(`/api/v1/trash/${del.body.trashId}/restore`)
+    assert.equal(back.status, 200, JSON.stringify(back.body))
+    assert.equal(back.body.slug, c.body.slug)
+    const q = await as('viewer2').post(`/api/v1/datasets/${c.body.slug}/query`, {})
+    assert.equal(q.status, 200, `a concessão não voltou: ${JSON.stringify(q.body)}`)
+    assert.equal(q.body.rows.length, 3, 'os Parquet não voltaram')
+    assert.equal((await ed.post(`/api/v1/trash/${del.body.trashId}/restore`)).status, 409, 'restaurou duas vezes')
+  })
+
+  it('D-DSP-3 nome reaproveitado: o conjunto novo nasce limpo e o restaurado volta com sufixo', async () => {
+    const ed = as('editor')
+    const a = await ed.post('/api/v1/datasets/derived', { name: 'TESTE-COMITE reuso', sql: 'select id from teste_comite_aberto' })
+    await waitFor(async () => Number((await db.query('select row_count from datasets where id = $1', [a.body.id])).rows[0]?.row_count) === 3)
+    const del = await ed.del(`/api/v1/datasets/${a.body.id}`)
+    assert.equal(del.status, 200, JSON.stringify(del.body))
+
+    const b = await ed.post('/api/v1/datasets/derived', { name: 'TESTE-COMITE reuso', sql: 'select id from teste_comite_aberto where id = 1' })
+    assert.equal(b.body.slug, a.body.slug, 'o slug não foi liberado')
+    await waitFor(async () => Number((await db.query('select row_count from datasets where id = $1', [b.body.id])).rows[0]?.row_count) === 1)
+    assert.equal((await ed.post(`/api/v1/datasets/${b.body.slug}/query`, {})).body.rows.length, 1, 'o novo enxergou os dados do excluído')
+
+    const back = await ed.post(`/api/v1/trash/${del.body.trashId}/restore`)
+    assert.equal(back.status, 200, JSON.stringify(back.body))
+    assert.equal(back.body.slug, `${a.body.slug}-2`)
+    assert.equal(back.body.renamed, true)
+    assert.equal((await ed.post(`/api/v1/datasets/${back.body.slug}/query`, {})).body.rows.length, 3)
+  })
+
+  it('D-DSP-2 excluir de vez é só de admin; depois disso não há restauração', async () => {
+    const ed = as('editor')
+    const c = await ed.post('/api/v1/datasets/derived', { name: 'TESTE-COMITE de vez', sql: 'select id from teste_comite_aberto' })
+    await waitFor(async () => Number((await db.query('select row_count from datasets where id = $1', [c.body.id])).rows[0]?.row_count) === 3)
+    const del = await ed.del(`/api/v1/datasets/${c.body.id}`)
+    assert.equal(del.status, 200, JSON.stringify(del.body))
+    assert.equal((await ed.del(`/api/v1/trash/${del.body.trashId}`)).status, 403, 'editor excluiu de vez')
+    assert.equal((await as('admin').del(`/api/v1/trash/${del.body.trashId}`)).status, 200)
+    assert.equal((await ed.post(`/api/v1/trash/${del.body.trashId}/restore`)).status, 410)
+    const item = (await db.query('select purged_at, purged_by, lake_path from trash_items where id = $1', [del.body.trashId])).rows[0]
+    assert.ok(item?.purged_at, 'a linha da lixeira tem de ficar, marcada')
+    const { LAKE_ROOT } = await import('../core/lake.js')
+    const { existsSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    assert.ok(!existsSync(join(LAKE_ROOT, String(item.lake_path))), 'os Parquet ficaram no disco')
+  })
+
+  it('D-DSP-3 o prazo de 30 dias exclui de vez sozinho', async () => {
+    const ed = as('editor')
+    const c = await ed.post('/api/v1/datasets/derived', { name: 'TESTE-COMITE prazo', sql: 'select id from teste_comite_aberto' })
+    await waitFor(async () => Number((await db.query('select row_count from datasets where id = $1', [c.body.id])).rows[0]?.row_count) === 3)
+    const del = await ed.del(`/api/v1/datasets/${c.body.id}`)
+    assert.equal(del.status, 200, JSON.stringify(del.body))
+    await db.query(`update trash_items set deleted_at = now() - interval '31 days' where id = $1`, [del.body.trashId])
+    const { purgeExpiredTrash } = await import('../modules/catalog/trash.js')
+    assert.ok(await purgeExpiredTrash() >= 1)
+    const item = (await db.query('select purged_by from trash_items where id = $1', [del.body.trashId])).rows[0]
+    assert.equal(item?.purged_by, 'sistema')
+  })
+
+  it('DSP-07 o editor não exclui fonte nem calculado oficial', async () => {
+    assert.equal((await as('editor').del(`/api/v1/datasets/${abertoId}`)).status, 403, 'editor excluiu uma fonte')
+    const c = await as('editor').post('/api/v1/datasets/derived', { name: 'TESTE-COMITE oficial', sql: 'select id from teste_comite_aberto' })
+    assert.equal((await as('admin').patch(`/api/v1/datasets/${c.body.id}`, { official: true })).status, 200)
+    assert.equal((await as('editor').del(`/api/v1/datasets/${c.body.id}`)).status, 403, 'dono excluiu um oficial')
   })
 })
 
@@ -211,9 +349,7 @@ describe('T-MON-02..05 monitoramento', () => {
     assert.equal(Number(ev!.detail.rows), 3)
   })
 
-  it('T-MON-02 leitura de conjunto e execução de notebook ficam registradas', {
-    todo: 'MON-01: consulta, abertura de painel, notebook e insight não deixam registro.',
-  }, async () => {
+  it('T-MON-02 leitura de conjunto e execução de notebook ficam registradas', async () => {
     await as('viewer').post('/api/v1/datasets/teste-comite-aberto/query', {})
     await as('viewer').post('/api/v1/notebooks/run', { sql: 'select 1 as x from teste_comite_aberto' })
     const todos = await auditDe(USERS.viewer, '')
@@ -221,12 +357,43 @@ describe('T-MON-02..05 monitoramento', () => {
     assert.ok(todos.some((e) => /notebook.*run|notebooks\.run/.test(e.action)), 'notebook não registrado')
   })
 
-  it('T-MON-04 mudar visibilidade e remover convidado ficam registrados', {
-    todo: 'MON-05: só "Compartilhou dashboard" é auditado — visibilidade e remoção de convite, não.',
-  }, async () => {
+  it('T-MON-02 abrir painel fica registrado', async () => {
+    const d = await as('editor').post('/api/v1/dashboards', { name: 'TESTE-COMITE aberto no dia' })
+    assert.equal((await as('editor').get(`/api/v1/dashboards/${d.body.id}`)).status, 200)
+    const ev = await auditDe(USERS.editor, 'dashboards.open')
+    assert.ok(ev.some((e) => e.detail?.name === 'TESTE-COMITE aberto no dia'), 'abertura do painel não registrada')
+  })
+
+  it('MON-01 a Auditoria recebe 1 linha por pessoa/conjunto/dia, não 1 por consulta', async () => {
+    const v = as('viewer2')
+    const hits = async () => Number((await db.query(
+      `select coalesce(sum(u.hits), 0)::int as n from usage_daily u join datasets d on d.id = u.resource_id
+        where d.slug = 'teste-comite-privado' and u.actor = $1 and u.via = 'query'`, [USERS.viewer2],
+    )).rows[0]?.n)
+    const antes = await hits()
+    for (let i = 0; i < 3; i++) assert.equal((await v.post('/api/v1/datasets/teste-comite-privado/query', {})).status, 200)
+    assert.equal(await hits() - antes, 3, 'o contador diário tem de somar as 3 consultas')
+    const ev = (await auditDe(USERS.viewer2, 'datasets.query'))
+      .filter((e) => e.detail?.via === 'query' && e.resourceId === 'teste-comite-privado')
+    assert.equal(ev.length, 1, `esperava 1 linha na Auditoria, vieram ${ev.length}`)
+  })
+
+  it('D-DSP-2 o dono vê o uso do conjunto; quem só lê, não', async () => {
+    const r = await as('editor2').get('/api/v1/datasets/teste-comite-privado/usage')
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+    assert.ok(r.body.last30.people >= 1, JSON.stringify(r.body))
+    assert.ok(r.body.lastAccessAt, 'sem último acesso')
+    assert.ok(r.body.trackingSince, 'sem data de início do registro')
+    assert.equal((await as('viewer2').get('/api/v1/datasets/teste-comite-privado/usage')).status, 403)
+  })
+
+  it('T-MON-04 mudar visibilidade e remover convidado ficam registrados', async () => {
     const e = as('editor')
     const d = await e.post('/api/v1/dashboards', { name: 'TESTE-COMITE visibilidade' })
-    await e.patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'private' })
+    // O painel nasce privado (D-DSP-1) e só admin publica: o admin abre, o
+    // dono fecha de novo — essa é a mudança que o dono consegue fazer.
+    assert.equal((await as('admin').patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'tenant' })).status, 200)
+    assert.equal((await e.patch(`/api/v1/dashboards/${d.body.id}`, { visibility: 'private' })).status, 200)
     await e.post(`/api/v1/dashboards/${d.body.id}/shares`, { email: USERS.viewer, level: 'view' })
     const grants = (await e.get(`/api/v1/dashboards/${d.body.id}/shares`)).body.grants
     await e.del(`/api/v1/dashboards/${d.body.id}/shares/${grants[0].id}`)

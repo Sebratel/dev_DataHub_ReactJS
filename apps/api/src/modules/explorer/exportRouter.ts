@@ -38,6 +38,7 @@ import { requireAuth, audit } from '../auth/middleware.js'
 import { config } from '../../core/config.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
 import { canExport } from '../../core/access.js'
+import { recordUsage } from '../../core/usage.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery, duckStream } from '../query/duck.js'
 
@@ -185,6 +186,7 @@ async function runExport(
     res.end()
     if (!aborted) {
       await audit(req, 'datasets.export', { type: 'dataset', id: String(ds.slug) }, { format, rows: rowCount })
+      await usoDoExport(user, ds.id)
     }
     return
   }
@@ -224,7 +226,17 @@ async function runExport(
   await wb.commit()
   if (!aborted) {
     await audit(req, 'datasets.export', { type: 'dataset', id: String(ds.slug) }, { format, rows: rowCount })
+    await usoDoExport(user, ds.id)
   }
+}
+
+// Exportar também é uso do conjunto (D-DSP-2). Sem linha extra na Auditoria:
+// o "Exportou" acima já registra cada exportação, com formato e linhas.
+function usoDoExport(user: SessionUser, datasetId: string): Promise<void> {
+  return recordUsage({
+    tenant: user.tenant, actor: user.email,
+    resourceType: 'dataset', resourceId: String(datasetId), via: 'export',
+  })
 }
 
 // Se a resposta já começou não há status para trocar. O jeito honesto de

@@ -15,6 +15,7 @@ import { db, isDbAvailable } from '../../db/pool.js'
 import { config } from '../../core/config.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { datasetDir, parquetGlob, listParquet } from '../../core/lake.js'
+import { recordUsage } from '../../core/usage.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 import { executeWrite, type WriteColumn } from '../../connectors/writeProducts.js'
@@ -170,7 +171,15 @@ function publicGate(req: Request, res: Response, next: NextFunction): void {
   res.setHeader('X-Request-Id', requestId)
 
   res.on('finish', () => {
-    const locals = res.locals as { consumer?: Consumer; dataSlug?: string; rows?: number; erro?: string }
+    const locals = res.locals as { consumer?: Consumer; dataSlug?: string; dataId?: string; rows?: number; erro?: string }
+    // Uso do conjunto por token (D-DSP-2: "sem requisição em 90 dias"). Só as
+    // leituras que deram certo; quem fica na conta é a credencial, não a pessoa.
+    if (res.statusCode < 400 && locals.dataId && locals.consumer) {
+      void recordUsage({
+        tenant: locals.consumer.tenantSlug, actor: `token:${locals.consumer.id}`,
+        resourceType: 'dataset', resourceId: locals.dataId, via: 'api',
+      })
+    }
     recordCall({
       checkType: 'public',
       requestId,
@@ -220,6 +229,7 @@ publicRouter.get('/datasets/:slug/rows', async (req, res) => {
   )).rows[0]
   if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
   res.locals.dataSlug = ds.slug
+  res.locals.dataId = String(ds.id)
   const dir = datasetDir(String(cred.tenantSlug), String(ds.slug))
   if (!listParquet(dir).length) return res.status(409).json({ error: 'Conjunto ainda não sincronizado.' })
 
@@ -289,6 +299,7 @@ publicRouter.post('/datasets/:slug/query', async (req, res) => {
   )).rows[0]
   if (!ds) return res.status(404).json({ error: 'Conjunto de dados não encontrado.' })
   res.locals.dataSlug = ds.slug
+  res.locals.dataId = String(ds.id)
   const dir = datasetDir(String(cred.tenantSlug), String(ds.slug))
   if (!listParquet(dir).length) return res.status(409).json({ error: 'Conjunto ainda não sincronizado.' })
 
@@ -417,6 +428,7 @@ publicRouter.get('/p/:slug', async (req, res) => {
   )).rows[0]
   if (!ds) return res.status(404).json({ error: 'Dataset da API não encontrado.' })
   res.locals.dataSlug = ds.slug
+  res.locals.dataId = String(ds.id)
   const dir = datasetDir(String(cred.tenantSlug), String(ds.slug))
   if (!listParquet(dir).length) return res.status(409).json({ error: 'Dataset ainda não sincronizado.' })
 

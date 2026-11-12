@@ -36,6 +36,9 @@
     "databricks:sql": "tsx src/dev/databricksSql.ts",
     "public-query:smoke": "tsx src/dev/publicQuerySmoke.ts",
     "sandbox:smoke": "tsx src/dev/sqlSandboxSmoke.ts",
+    "mariadb:smoke": "tsx src/dev/mariadbTranslateSmoke.ts",
+    "mariadb:scan": "tsx src/dev/mariadbScan.ts",
+    "meta:copy": "tsx src/scripts/metaCopy.ts",
     "sandbox:audit": "tsx src/dev/sqlSandboxAudit.ts",
     "test:it": "node --import tsx --test --test-reporter=spec \"src/test/*.test.ts\""
   },

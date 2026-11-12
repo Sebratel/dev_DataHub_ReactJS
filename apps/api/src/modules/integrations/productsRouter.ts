@@ -276,7 +276,7 @@ productsRouter.post('/:id/test', async (req, res) => {
 productsRouter.post('/:id/approve', requireAuth({ role: 'admin' }), async (req, res) => {
   const row = (await db.query(
     `update api_products p set status='active', enabled=true, reviewed_by=$3, reviewed_at=now()
-       from tenants t where p.tenant_id=t.id and t.slug=$1 and p.id=$2 and p.kind='write' returning p.slug`,
+      where p.tenant_id = (select id from tenants where slug = $1) and p.id=$2 and p.kind='write' returning p.slug`,
     [req.user!.tenant, req.params.id, req.user!.email],
   )).rows[0]
   if (!row) return res.status(404).json({ error: 'API de escrita pendente não encontrada.' })
@@ -287,7 +287,7 @@ productsRouter.post('/:id/approve', requireAuth({ role: 'admin' }), async (req, 
 productsRouter.post('/:id/reject', requireAuth({ role: 'admin' }), async (req, res) => {
   const row = (await db.query(
     `update api_products p set status='rejected', enabled=false, reviewed_by=$3, reviewed_at=now()
-       from tenants t where p.tenant_id=t.id and t.slug=$1 and p.id=$2 and p.kind='write' returning p.slug`,
+      where p.tenant_id = (select id from tenants where slug = $1) and p.id=$2 and p.kind='write' returning p.slug`,
     [req.user!.tenant, req.params.id, req.user!.email],
   )).rows[0]
   if (!row) return res.status(404).json({ error: 'API de escrita não encontrada.' })

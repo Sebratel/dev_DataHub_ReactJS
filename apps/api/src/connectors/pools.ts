@@ -133,12 +133,35 @@ function getPgPool(def: ConnectorDef): pg.Pool {
   return pool
 }
 
+// A fonte 'datahub-meta' no MariaDB é o banco de metadados do PRÓPRIO hub, que
+// grava data/hora em UTC (a sessão do hub é +00:00). Como fonte, ela precisa
+// entregar o que a mesma tabela entregava no Postgres: o relógio LOCAL (a sessão
+// de fonte Postgres fica no fuso do processo) e boolean de verdade. Sem isto, a
+// "Saúde das APIs" pularia 3 horas no lake no dia da virada, e a coluna `ok`
+// viraria 0/1. Só esta fonte: nas outras MySQL, o texto atravessa intacto.
+const pad2 = (n: number, w = 2) => String(n).padStart(w, '0')
+const relogioLocal = (d: Date) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad2(d.getMilliseconds(), 3)}`
+type CastField = { type: string; length: number; string: () => string | null }
+const metaDoHubComoFonte = (field: CastField, next: () => unknown): unknown => {
+  if (field.type === 'DATETIME' || field.type === 'TIMESTAMP') {
+    const s = field.string()
+    return s === null ? null : relogioLocal(new Date(`${s.replace(' ', 'T')}Z`))
+  }
+  if (field.type === 'TINY' && field.length === 1) {
+    const s = field.string()
+    return s === null ? null : s !== '0'
+  }
+  return next()
+}
+
 function getMysqlPool(def: ConnectorDef): mysql.Pool {
   let pool = mysqlPools.get(def.id)
   if (pool) return pool
   requireConfigured(def)
   const c = resolveConfig(def, 3306)
   pool = mysql.createPool({
+    ...(def.id === 'datahub-meta' ? { typeCast: metaDoHubComoFonte as never } : {}),
     host: c.host,
     port: c.port,
     database: c.database,

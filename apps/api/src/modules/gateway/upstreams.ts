@@ -244,8 +244,7 @@ export async function updateUpstream(
        strip_prefix = $${base + 3}, forward_headers = $${base + 4},
        ${statusSql},
        updated_at = now()
-     from tenants t
-     where u.id = $1 and u.tenant_id = t.id and t.slug = $2
+     where u.id = $1 and u.tenant_id = (select id from tenants where slug = $2)
      returning u.*`,
     params,
   )).rows[0]
@@ -263,8 +262,7 @@ export async function reviewUpstream(
   const row = (await db.query(
     `update gateway_upstreams u
         set status = $3, reviewed_by = $4, reviewed_at = now(), updated_at = now()
-      from tenants t
-      where u.id = $1 and u.tenant_id = t.id and t.slug = $2
+      where u.id = $1 and u.tenant_id = (select id from tenants where slug = $2)
       returning u.*`,
     [id, tenantSlug, status, reviewer],
   )).rows[0]
@@ -277,8 +275,8 @@ export async function setUpstreamEnabled(
   tenantSlug: string, id: string, enabled: boolean,
 ): Promise<void> {
   await db.query(
-    `update gateway_upstreams u set enabled = $3, updated_at = now()
-      from tenants t where u.id = $1 and u.tenant_id = t.id and t.slug = $2`,
+    `update gateway_upstreams set enabled = $3, updated_at = now()
+      where id = $1 and tenant_id = (select id from tenants where slug = $2)`,
     [id, tenantSlug, enabled],
   )
   await reloadUpstreams()
@@ -286,8 +284,8 @@ export async function setUpstreamEnabled(
 
 export async function deleteUpstream(tenantSlug: string, id: string): Promise<void> {
   await db.query(
-    `delete from gateway_upstreams u using tenants t
-      where u.id = $1 and u.tenant_id = t.id and t.slug = $2`,
+    `delete from gateway_upstreams
+      where id = $1 and tenant_id = (select id from tenants where slug = $2)`,
     [id, tenantSlug],
   )
   await reloadUpstreams()

@@ -6,17 +6,18 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, Eye, EyeOff, ShieldAlert, Table2, Loader2, Pencil, Check,
   Compass, GitMerge, Shield, MoreVertical, Trash2, Database,
-  Rows3, Columns3, Clock, AlertTriangle, BadgeCheck,
+  Rows3, Columns3, Clock, AlertTriangle, BadgeCheck, Activity,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import type { DatasetDetail, AdminDatasetField } from '@datahub/shared'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import OfficialBadge from '@/components/OfficialBadge'
 import SyncPanel from './SyncPanel'
 import DatabricksPanel from './DatabricksPanel'
 import DerivedCadencePanel from './DerivedCadencePanel'
+import SqlVersions from './SqlVersions'
 import DataTable from './DataTable'
 import AccessDialog from './AccessDialog'
 import EditDatasetDialog from './EditDatasetDialog'
@@ -57,6 +58,55 @@ function StatTile({ icon: Icon, label, value, accent }: {
   )
 }
 
+// O que quebra se o conjunto sair do catálogo (GET /datasets/:slug/dependents).
+interface Dependent { type: 'metric' | 'dashboard' | 'derived' | 'api' | 'model' | 'token'; id: string; name: string }
+
+const DEP_LABEL: Record<Dependent['type'], string> = {
+  metric: 'Métrica', dashboard: 'Painel', derived: 'Calculado', api: 'API', model: 'Modelo', token: 'Token',
+}
+
+function depLink(d: Dependent): string | null {
+  if (d.type === 'dashboard') return `/dashboards/${d.id}`
+  if (d.type === 'metric') return '/metrics'
+  if (d.type === 'api') return '/gateway-apis#apis'
+  if (d.type === 'token') return '/gateway-apis#tokens'
+  return null
+}
+
+interface DatasetUsage {
+  trackingSince: string | null
+  lastAccessAt: string | null
+  last30: { people: number; tokens: number; hits: number; byVia: Record<string, number> }
+}
+
+const VIA_LABEL: Record<string, string> = {
+  query: 'consulta', export: 'exportação', notebook: 'notebook', ai: 'IA', api: 'API',
+}
+
+// "3 pessoas · 1 token" e, embaixo, o último acesso. O detalhe por caminho vai
+// no title: quem gerencia quer saber se o uso é painel, notebook ou API antes
+// de mexer no conjunto.
+function UsageValue({ usage }: { usage: DatasetUsage }) {
+  const { people, tokens, byVia } = usage.last30
+  const partes = [`${people} pessoa${people === 1 ? '' : 's'}`]
+  if (tokens) partes.push(`${tokens} token${tokens === 1 ? '' : 's'}`)
+  const porVia = Object.entries(byVia)
+    .sort((a, b) => b[1] - a[1])
+    .map(([v, n]) => `${VIA_LABEL[v] ?? v}: ${n.toLocaleString('pt-BR')}`)
+    .join(' · ')
+  const desde = usage.trackingSince
+    ? `Registro de uso desde ${new Date(`${usage.trackingSince}T12:00:00`).toLocaleDateString('pt-BR')}.`
+    : 'Nenhum uso registrado ainda.'
+  return (
+    <span className="flex min-w-0 flex-col" title={[porVia, desde].filter(Boolean).join('\n')}>
+      <span className="truncate text-[13px] font-medium">{partes.join(' · ')}</span>
+      <span className="truncate text-[11px] font-normal text-zinc-400">
+        último acesso: {usage.lastAccessAt ? relativeTime(usage.lastAccessAt) : 'nenhum'}
+      </span>
+    </span>
+  )
+}
+
 export default function DatasetDetailPage() {
   const { slug } = useParams()
   const navigate = useNavigate()
@@ -74,6 +124,10 @@ export default function DatasetDetailPage() {
   const [showEdit, setShowEdit] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // null = conferindo; [] = nada depende; com itens = exclusão bloqueada.
+  const [deps, setDeps] = useState<Dependent[] | null>(null)
+
+  const [usage, setUsage] = useState<DatasetUsage | null>(null)
 
   const load = useCallback(() => {
     api<{ dataset: DatasetDetail }>(`/api/v1/datasets/${slug}`)
@@ -81,6 +135,14 @@ export default function DatasetDetailPage() {
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar.'))
   }, [slug])
   useEffect(() => { load() }, [load])
+
+  // Uso só para quem gerencia (admin ou dono): o backend recusa os demais, e
+  // aqui nem se pergunta — a falha não é erro da página.
+  const gerencia = !!dataset && (isAdmin || (!!userEmail && dataset.ownerEmail === userEmail))
+  useEffect(() => {
+    if (!gerencia || !slug) return
+    api<DatasetUsage>(`/api/v1/datasets/${slug}/usage`).then(setUsage).catch(() => setUsage(null))
+  }, [gerencia, slug])
 
   async function patchField(field: AdminDatasetField, patch: Partial<AdminDatasetField>) {
     if (!dataset) return
@@ -139,6 +201,23 @@ export default function DatasetDetailPage() {
     }
   }
 
+  // Excluir manda para a lixeira (D-DSP-3). O admin exclui qualquer conjunto;
+  // o dono, os calculados não oficiais que criou (DSP-07) — a mesma regra do
+  // backend, para o item de menu não aparecer para quem levaria 403.
+  const podeExcluir = isAdmin || (derived && !!userEmail && dataset.ownerEmail === userEmail && !dataset.official)
+
+  // Os dependentes vêm ANTES do botão: descobrir na hora de confirmar que um
+  // painel usa o conjunto é pior do que já abrir o diálogo sabendo.
+  function abrirExclusao() {
+    if (!dataset) return
+    setMenuOpen(false)
+    setConfirmDelete(true)
+    setDeps(null)
+    api<{ dependents: Dependent[] }>(`/api/v1/datasets/${dataset.slug}/dependents`)
+      .then((r) => setDeps(r.dependents))
+      .catch(() => setDeps([])) // a própria exclusão confere de novo e devolve a lista
+  }
+
   async function doDelete() {
     if (!dataset) return
     setDeleting(true)
@@ -146,8 +225,10 @@ export default function DatasetDetailPage() {
       await api(`/api/v1/datasets/${dataset.id}`, { method: 'DELETE' })
       navigate('/datasets')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Falha ao excluir.')
+      const corpo = e instanceof ApiError ? (e.body as { dependents?: Dependent[] } | undefined) : undefined
       setDeleting(false)
+      if (corpo?.dependents?.length) { setDeps(corpo.dependents); return }
+      setError(e instanceof Error ? e.message : 'Falha ao excluir.')
       setConfirmDelete(false)
     }
   }
@@ -244,7 +325,8 @@ export default function DatasetDetailPage() {
                         automatica, mais abaixo na pagina, ja tem o mesmo botao
                         com status e erro reais -- em vez do timeout as-cegas
                         de 2,5s que existia aqui. */}
-                    {derived && canManage && (
+                    {/* Oficial: o SQL congela para o dono (DSP-03); só admin edita. */}
+                    {derived && canManage && (isAdmin || !dataset.official) && (
                       <Link to={`/datasets/derived/new?slug=${dataset.slug}`} className={menuItem}>
                         <GitMerge size={15} className="text-zinc-400" /> Editar SQL
                       </Link>
@@ -254,11 +336,15 @@ export default function DatasetDetailPage() {
                         <Table2 size={15} className="text-zinc-400" /> Preview da fonte
                       </button>
                     )}
-                    <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
-                    <button className={clsx(menuItem, 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40')}
-                      onClick={() => { setConfirmDelete(true); setMenuOpen(false) }}>
-                      <Trash2 size={15} /> Excluir conjunto
-                    </button>
+                    {podeExcluir && (
+                      <>
+                        <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+                        <button className={clsx(menuItem, 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40')}
+                          onClick={abrirExclusao}>
+                          <Trash2 size={15} /> Excluir conjunto
+                        </button>
+                      </>
+                    )}
                   </div>
                 </>
               )}
@@ -278,8 +364,12 @@ export default function DatasetDetailPage() {
           accent={dataset.lastSyncAt
             ? <span className={clsx('h-2 w-2 rounded-full', fresh ? 'bg-emerald-500' : 'bg-amber-500')} />
             : <span className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600" />} />
-        <StatTile icon={derived ? GitMerge : Database} label="Tipo"
-          value={<span className="text-[13px] font-medium">{derived ? 'Calculado' : 'Fonte'}</span>} />
+        {usage ? (
+          <StatTile icon={Activity} label="Uso (30 dias)" value={<UsageValue usage={usage} />} />
+        ) : (
+          <StatTile icon={derived ? GitMerge : Database} label="Tipo"
+            value={<span className="text-[13px] font-medium">{derived ? 'Calculado' : 'Fonte'}</span>} />
+        )}
       </div>
 
       {/* Campos (schema) */}
@@ -356,6 +446,8 @@ export default function DatasetDetailPage() {
           <pre className="overflow-x-auto rounded-xl border border-zinc-200 bg-white p-3 font-mono text-xs leading-relaxed shadow-card dark:border-zinc-800 dark:bg-zinc-950">
             {dataset.transformSql}
           </pre>
+          <SqlVersions datasetId={dataset.id} official={dataset.official}
+            canRestore={isAdmin || (canManage && !dataset.official)} onRestored={load} />
         </section>
       )}
 
@@ -416,23 +508,57 @@ export default function DatasetDetailPage() {
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/40">
                 <AlertTriangle size={18} />
               </div>
-              <div>
-                <h2 className="font-semibold">Excluir “{dataset.name}”?</h2>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Remove o conjunto do catálogo e todas as suas configurações — campos, métricas,
-                  dashboards vinculados e concessões de acesso. Esta ação não pode ser desfeita.
-                </p>
+              <div className="min-w-0 flex-1">
+                {deps === null ? (
+                  <>
+                    <h2 className="font-semibold">Excluir “{dataset.name}”?</h2>
+                    <p className="mt-1 flex items-center gap-2 text-sm text-zinc-500">
+                      <Loader2 size={13} className="animate-spin" /> Conferindo o que depende deste conjunto…
+                    </p>
+                  </>
+                ) : deps.length > 0 ? (
+                  <>
+                    <h2 className="font-semibold">Ainda não dá para excluir “{dataset.name}”</h2>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      {deps.length === 1 ? 'Isto depende' : `Estes ${deps.length} itens dependem`} dele e
+                      quebrariam junto. Remova ou troque o conjunto de cada um e tente de novo.
+                    </p>
+                    <ul className="mt-2.5 max-h-56 space-y-1 overflow-y-auto">
+                      {deps.map((d) => (
+                        <li key={`${d.type}:${d.id}`} className="flex items-center gap-2 rounded-lg border border-zinc-100 px-2.5 py-1.5 text-[12.5px] dark:border-zinc-800">
+                          <span className="w-[68px] shrink-0 text-[11px] font-medium uppercase tracking-wider text-zinc-400">
+                            {DEP_LABEL[d.type]}
+                          </span>
+                          {depLink(d)
+                            ? <Link to={depLink(d)!} className="min-w-0 truncate hover:text-accent">{d.name}</Link>
+                            : <span className="min-w-0 truncate">{d.name}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="font-semibold">Excluir “{dataset.name}”?</h2>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      Nada depende dele. O conjunto vai para a <Link to="/lixeira" className="text-info hover:underline dark:text-info-dark">Lixeira</Link>:
+                      por 30 dias, quem excluiu, o dono ou um administrador o restaura com os dados e os
+                      acessos. Depois disso, é excluído de vez.
+                    </p>
+                  </>
+                )}
               </div>
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button onClick={() => setConfirmDelete(false)}
                 className="rounded-lg border border-zinc-200 px-4 py-2 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800">
-                Cancelar
+                {deps?.length ? 'Fechar' : 'Cancelar'}
               </button>
-              <button onClick={() => void doDelete()} disabled={deleting}
-                className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
-                {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Excluir
-              </button>
+              {deps !== null && deps.length === 0 && (
+                <button onClick={() => void doDelete()} disabled={deleting}
+                  className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                  {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Mover para a lixeira
+                </button>
+              )}
             </div>
           </div>
         </div>

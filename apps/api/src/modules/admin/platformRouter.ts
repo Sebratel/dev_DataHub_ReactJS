@@ -86,11 +86,11 @@ export async function platformProblems(tenant: string): Promise<PlatformProblem[
   for (const r of (await db.query(
     `select d.id, d.slug, d.name, d.kind, r.error, r.finished_at
        from datasets d join tenants t on t.id = d.tenant_id
-       cross join lateral (
-         select status, error, finished_at from sync_runs s
+       join sync_runs r on r.id = (
+         select s.id from sync_runs s
           where s.dataset_id = d.id and s.status in ('done', 'error')
           order by s.started_at desc limit 1
-       ) r
+       )
       where t.slug = $1 and d.sync_paused_reason is null and r.status = 'error'`, [tenant],
   )).rows) {
     out.push({
@@ -105,11 +105,11 @@ export async function platformProblems(tenant: string): Promise<PlatformProblem[
   for (const r of (await db.query(
     `select d.id, d.slug, d.name, x.status, x.error, x.source_rows, x.lake_rows, x.finished_at
        from datasets d join tenants t on t.id = d.tenant_id
-       cross join lateral (
-         select status, error, source_rows, lake_rows, finished_at from reconcile_runs rr
+       join reconcile_runs x on x.id = (
+         select rr.id from reconcile_runs rr
           where rr.dataset_id = d.id and rr.status in ('match', 'diverged', 'error')
           order by rr.created_at desc limit 1
-       ) x
+       )
       where t.slug = $1 and x.status in ('diverged', 'error')`, [tenant],
   )).rows) {
     const diverge = r.status === 'diverged'
@@ -127,11 +127,11 @@ export async function platformProblems(tenant: string): Promise<PlatformProblem[
   for (const r of (await db.query(
     `select d.id, d.slug, d.name, x.error_message, x.finished_at
        from datasets d join tenants t on t.id = d.tenant_id
-       cross join lateral (
-         select status, error_message, finished_at from databricks_sync_runs b
+       join databricks_sync_runs x on x.id = (
+         select b.id from databricks_sync_runs b
           where b.dataset_id = d.id and b.status in ('SUCCESS', 'FAILED')
           order by b.started_at desc limit 1
-       ) x
+       )
       where t.slug = $1 and d.databricks_enabled and x.status = 'FAILED'`, [tenant],
   )).rows) {
     out.push({
@@ -145,11 +145,11 @@ export async function platformProblems(tenant: string): Promise<PlatformProblem[
   for (const h of (await db.query(
     `select h.id, h.name, h.url, m.status, m.error, m.created_at
        from health_checks h join tenants t on t.id = h.tenant_id
-       cross join lateral (
-         select ok, status, error, created_at from api_call_metrics a
+       join api_call_metrics m on m.id = (
+         select a.id from api_call_metrics a
           where a.check_type = 'healthcheck' and a.endpoint = h.url
           order by a.created_at desc limit 1
-       ) m
+       )
       where t.slug = $1 and h.enabled and not m.ok`, [tenant],
   )).rows) {
     out.push({

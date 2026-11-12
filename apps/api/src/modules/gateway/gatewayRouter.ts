@@ -98,8 +98,7 @@ gatewayRouter.put('/credentials/:id/policy', ...adminOnly, async (req, res) => {
     const row = (await db.query(
       `update api_credentials c set
          rate_limit_per_min = $3, quota_per_day = $4, upstream_slugs = $5
-       from tenants t
-       where c.id = $1 and c.tenant_id = t.id and t.slug = $2
+       where c.id = $1 and c.tenant_id = (select id from tenants where slug = $2)
        returning c.id, c.name, c.rate_limit_per_min, c.quota_per_day, c.upstream_slugs`,
       [req.params.id, req.user!.tenant, int(rateLimitPerMin), int(quotaPerDay),
        Array.isArray(upstreamSlugs) ? upstreamSlugs : []],

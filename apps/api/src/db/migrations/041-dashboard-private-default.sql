@@ -1,0 +1,13 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- Painel nasce PRIVADO (D-DSP-1, achado DSP-05 do comitê).
+--
+-- O padrão era 'tenant' (migration 006): o painel aparecia para a empresa
+-- inteira no instante em que era criado, ainda vazio ou pela metade. Conjunto
+-- (008) e notebook (025) já nasciam privados; o painel era a exceção.
+--
+-- Os painéis que já existem ficam como estão: muitos estão em uso pela
+-- empresa, e escondê-los de uma vez seria tirar do ar o que funciona. A regra
+-- nova vale daqui para a frente, junto com "só admin publica para a empresa"
+-- (no código das rotas).
+-- ─────────────────────────────────────────────────────────────────────────
+alter table dashboards alter column visibility set default 'private';

@@ -20,7 +20,9 @@ import {
   lakeRefs, compileLakeSql, compileNotebookSql, validateTransformSql, assertReferencesAllowed,
 } from '../transform/derive.js'
 import { enqueueSync } from '../sync/ingest.js'
-import { canExport, type AccessUser } from '../../core/access.js'
+import { canExport, publishBlocked, PUBLICAR_SO_ADMIN, type AccessUser } from '../../core/access.js'
+import { recordUsage } from '../../core/usage.js'
+import { recordSqlVersion } from '../transform/versions.js'
 
 export const notebooksRouter = Router()
 
@@ -165,11 +167,14 @@ notebooksRouter.post('/', ...authed, async (req, res) => {
       ? req.body.cells
       : [{ id: 'c1', kind: 'sql', source: '' }]
 
+    const visibility = req.body?.visibility === 'tenant' ? 'tenant' : 'private'
+    if (publishBlocked(req.user!, null, visibility)) return res.status(403).json({ error: PUBLICAR_SO_ADMIN })
+
     const row = (await db.query(
       `insert into notebooks (tenant_id, slug, name, description, cells, visibility, owner_email)
        values ($1,$2,$3,$4,$5,$6,$7) returning *`,
       [tenant.id, slug, name, String(req.body?.description ?? ''), JSON.stringify(cells),
-       req.body?.visibility === 'tenant' ? 'tenant' : 'private', req.user!.email],
+       visibility, req.user!.email],
     )).rows[0]
     await audit(req, 'notebooks.create', { type: 'notebook', id: slug })
     res.status(201).json({ notebook: row })
@@ -189,6 +194,17 @@ notebooksRouter.put('/:slug', ...authed, async (req, res) => {
     return res.status(403).json({ error: 'Você tem acesso de leitura a este notebook.' })
   }
   const { name, description, cells, visibility } = req.body ?? {}
+  const novaVis = visibility === 'tenant' || visibility === 'private' ? String(visibility) : null
+  // O salvamento automático manda a visibilidade em toda gravação; só a
+  // MUDANÇA é decisão de acesso. Ela é do dono (como o compartilhamento) e,
+  // para a empresa inteira, de admin (D-DSP-1).
+  const mudaVis = !!novaVis && novaVis !== nb.visibility
+  if (mudaVis && !(await isOwner(req.user!, nb))) {
+    return res.status(403).json({ error: 'Só o dono (ou um administrador) muda quem vê o notebook.' })
+  }
+  if (mudaVis && publishBlocked(req.user!, nb.visibility, novaVis!)) {
+    return res.status(403).json({ error: PUBLICAR_SO_ADMIN })
+  }
   try {
     const row = (await db.query(
       `update notebooks set
@@ -199,9 +215,11 @@ notebooksRouter.put('/:slug', ...authed, async (req, res) => {
          updated_at = now()
        where id = $1 returning *`,
       [nb.id, name ?? null, description ?? null,
-       cells ? JSON.stringify(cells) : null,
-       visibility === 'tenant' || visibility === 'private' ? visibility : null],
+       cells ? JSON.stringify(cells) : null, novaVis],
     )).rows[0]
+    if (mudaVis) {
+      await audit(req, 'notebooks.visibility', { type: 'notebook', id: nb.slug }, { from: nb.visibility, to: novaVis })
+    }
     res.json({ notebook: row })
   } catch (e) { fail(res, e) }
 })
@@ -339,6 +357,29 @@ async function prepararCelula(user: AccessUser, sql: string) {
   return compileNotebookSql(sql, refs, { admin: user.roles.includes('admin') })
 }
 
+// Uso (MON-01): cada conjunto citado pela célula conta como usado "por
+// notebook" e vai à Auditoria na 1ª vez do dia. O notebook em si conta quando
+// a tela diz qual é (a célula pode rodar avulsa, sem notebook salvo).
+async function usoDaCelula(req: Request, datasets: { id?: string; slug: string }[]): Promise<void> {
+  const user = req.user!
+  const nbSlug = typeof req.body?.notebook === 'string' ? req.body.notebook : null
+  for (const d of datasets) {
+    if (!d.id) continue // lakeRefs sempre traz o id; o tipo é que o deixa opcional
+    await recordUsage({
+      tenant: user.tenant, actor: user.email,
+      resourceType: 'dataset', resourceId: d.id, via: 'notebook',
+      audit: { action: 'notebooks.run', resource: d.slug, detail: { notebook: nbSlug ?? 'avulso' }, ip: req.ip },
+    })
+  }
+  if (!nbSlug) return
+  const nb = await findReadable(user, nbSlug)
+  if (nb) {
+    await recordUsage({
+      tenant: user.tenant, actor: user.email, resourceType: 'notebook', resourceId: nb.id, via: 'notebook',
+    })
+  }
+}
+
 notebooksRouter.post('/run', ...authed, async (req, res) => {
   const sql = String(req.body?.sql ?? '').trim()
   if (!sql) return res.status(400).json({ error: 'Célula vazia.' })
@@ -346,7 +387,7 @@ notebooksRouter.post('/run', ...authed, async (req, res) => {
   const started = Date.now()
 
   try {
-    const { sql: wrapped } = await prepararCelula(req.user!, sql)
+    const { sql: wrapped, datasets } = await prepararCelula(req.user!, sql)
 
     // Pede uma linha a mais que o limite: é assim que dá para dizer "há mais"
     // com honestidade, sem contar o total (que custaria uma segunda varredura).
@@ -355,6 +396,7 @@ notebooksRouter.post('/run', ...authed, async (req, res) => {
       [],
       { timeoutMs: config.duck.queryTimeoutMs, adhoc: true },
     )
+    await usoDaCelula(req, datasets)
     const truncated = result.rows.length > limit
     res.json({
       columns: result.columns,
@@ -454,6 +496,7 @@ notebooksRouter.post('/materialize', requireAuth({ role: 'editor' }), requireDb,
        String(req.body?.description ?? 'Materializado a partir de um notebook.'), req.user!.email],
     )).rows[0]
 
+    await recordSqlVersion(db, String(ds.id), sql, req.user!.email, 'Criado a partir de um notebook.')
     void enqueueSync(String(ds.id)) // primeira materialização em background
     await audit(req, 'notebooks.materialize', { type: 'dataset', id: slug }, { from: 'notebook' })
     res.status(201).json({ id: ds.id, slug })

@@ -349,8 +349,9 @@ autotuneRouter.get('/sync-queue', ...adminOnly, async (req, res) => {
 //
 // Leitura só do banco do hub — diferente do diagnóstico acima, não consulta o
 // catálogo das fontes, então pode ser aberta a qualquer hora sem custo para a
-// produção. A última execução vem por LATERAL + limit 1, que usa o índice
-// (dataset_id, started_at desc) em vez de varrer o histórico inteiro.
+// produção. A última execução vem por subconsulta "limit 1" na chave, que usa
+// o índice (dataset_id, started_at desc) em vez de varrer o histórico inteiro
+// (antes era LATERAL, que o MariaDB não tem).
 autotuneRouter.get('/sync-rules', ...adminOnly, async (req, res) => {
   const rows = (await db.query(
     `select d.id, d.slug, d.name, d.kind, d.connection_id, d.schema_name, d.object_name,
@@ -365,10 +366,10 @@ autotuneRouter.get('/sync-rules', ...adminOnly, async (req, res) => {
        from datasets d
        join tenants t on t.id = d.tenant_id
        left join sync_schedules s on s.id = d.schedule_id
-       left join lateral (
-         select status, rows, started_at, finished_at, error from sync_runs
-          where dataset_id = d.id order by started_at desc limit 1
-       ) r on true
+       left join sync_runs r on r.id = (
+         select x.id from sync_runs x
+          where x.dataset_id = d.id order by x.started_at desc limit 1
+       )
       where t.slug = $1
       order by d.name`,
     [req.user!.tenant],

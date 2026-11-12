@@ -73,7 +73,7 @@ jobs:
           for s in routes:check perms:smoke env:smoke auth:smoke sandbox:smoke \
                    lake:smoke export:smoke public-query:smoke staging:smoke tz:smoke \
                    autotune:smoke derived:smoke sqlconfig:smoke databricks:smoke ml:smoke \
-                   queue:smoke connboot:smoke quality:smoke agent:smoke; do
+                   queue:smoke connboot:smoke quality:smoke agent:smoke mariadb:smoke; do
             echo "::group::$s"
             npm run "$s"
             echo "::endgroup::"
@@ -86,7 +86,76 @@ jobs:
           DATAHUB_TEST_DB_PORT: '5432'
           DATAHUB_TEST_DB_USER: datahub
           DATAHUB_TEST_DB_PASSWORD: ci-somente-teste
-        run: npm run test:it
+        # Falha vira ANOTACAO do GitHub: o motivo fica legivel pela API publica do
+        # run, sem baixar o log inteiro (que exige permissao de admin no repo).
+        run: |
+          set -o pipefail
+          if ! npm run test:it 2>&1 | tee it.log; then
+            resumo=$(grep -E "^✖ |^ +✖|AssertionError|Error:|PAROU|\[db\]|\[mariadb\]|rejei" it.log | grep -v " # " | head -80 | cut -c1-300 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); print }')
+            echo "::error title=Falhas da suite (Postgres)::${resumo}"
+            exit 1
+          fi
+
+  # A MESMA suíte com os metadados no MariaDB (D-DSP-4), na versão do servidor
+  # corporativo. Enquanto produção roda em Postgres, é isto que garante que a
+  # virada continua possível: uma consulta nova que só funcione no Postgres
+  # quebra aqui, não no dia da troca. A "fonte de produção" de laboratório
+  # (schema `fonte`) segue no Postgres — ela faz o papel do ERP.
+  api-mariadb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TZ: America/Sao_Paulo
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: datahub
+          POSTGRES_PASSWORD: ci-somente-teste
+          POSTGRES_DB: datahub
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U datahub"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      mariadb:
+        image: mariadb:10.11.10
+        env:
+          MARIADB_ROOT_PASSWORD: ci-somente-teste
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Varredura das consultas pelo tradutor
+        working-directory: apps/api
+        run: npm run mariadb:scan
+      - name: Testes de integração do comitê com metadados no MariaDB
+        working-directory: apps/api
+        env:
+          DATAHUB_TEST_DB_DRIVER: mariadb
+          DATAHUB_TEST_DB_HOST: localhost
+          DATAHUB_TEST_DB_PORT: '5432'
+          DATAHUB_TEST_DB_USER: datahub
+          DATAHUB_TEST_DB_PASSWORD: ci-somente-teste
+          DATAHUB_TEST_MARIA_HOST: '127.0.0.1'
+          DATAHUB_TEST_MARIA_PORT: '3306'
+          DATAHUB_TEST_MARIA_USER: root
+          DATAHUB_TEST_MARIA_PASSWORD: ci-somente-teste
+        # Falha vira ANOTACAO do GitHub: o motivo fica legivel pela API publica do
+        # run, sem baixar o log inteiro (que exige permissao de admin no repo).
+        run: |
+          set -o pipefail
+          if ! npm run test:it 2>&1 | tee it.log; then
+            resumo=$(grep -E "^✖ |^ +✖|AssertionError|Error:|PAROU|\[db\]|\[mariadb\]|rejei" it.log | grep -v " # " | head -80 | cut -c1-300 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); print }')
+            echo "::error title=Falhas da suite (MariaDB)::${resumo}"
+            exit 1
+          fi
 
   web:
     runs-on: ubuntu-latest
@@ -113,12 +182,13 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [api, web, imagem]
+    needs: [api, api-mariadb, web, imagem]
     runs-on: ubuntu-latest
     steps:
       - name: Todos os jobs passaram?
         run: |
-          echo "api=${{ needs.api.result }} web=${{ needs.web.result }} imagem=${{ needs.imagem.result }}"
+          echo "api=${{ needs.api.result }} api-mariadb=${{ needs.api-mariadb.result }} web=${{ needs.web.result }} imagem=${{ needs.imagem.result }}"
           test "${{ needs.api.result }}" = success
+          test "${{ needs.api-mariadb.result }}" = success
           test "${{ needs.web.result }}" = success
           test "${{ needs.imagem.result }}" = success

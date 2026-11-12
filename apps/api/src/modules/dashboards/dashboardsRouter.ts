@@ -1,4 +1,5 @@
-// Dashboards e widgets. Todos do tenant veem; editores criam; dono ou admin
+// Dashboards e widgets. Editores criam; o painel nasce privado (dono +
+// convidados) e só admin o publica para a empresa (D-DSP-1); dono ou admin
 // edita/apaga. O dado do widget vem do endpoint de query (o widget só guarda
 // a definição: dataset + dimensão + métrica + filtros).
 import { Router } from 'express'
@@ -6,6 +7,8 @@ import type { Request, Response, NextFunction } from 'express'
 import type { DashboardSummary, Widget, QueryFilter, DashboardTab } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
+import { recordUsage } from '../../core/usage.js'
+import { publishBlocked, PUBLICAR_SO_ADMIN } from '../../core/access.js'
 
 export const dashboardsRouter = Router()
 
@@ -117,9 +120,12 @@ dashboardsRouter.get('/', requireAuth(), requireDb, async (req, res) => {
 dashboardsRouter.post('/', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
   const { name, description } = req.body ?? {}
   if (!name) return res.status(400).json({ error: 'Informe o nome do dashboard.' })
+  // Nasce PRIVADO (D-DSP-1): um rascunho não aparece para a empresa. Explícito
+  // aqui, e não só no default da coluna (migration 041), para não depender de
+  // a migration ter rodado.
   const row = (await db.query(
-    `insert into dashboards (tenant_id, name, description, owner_email)
-     select t.id, $1, $2, $3 from tenants t where t.slug = $4 returning id`,
+    `insert into dashboards (tenant_id, name, description, owner_email, visibility)
+     select t.id, $1, $2, $3, 'private' from tenants t where t.slug = $4 returning id`,
     [String(name).trim(), String(description || ''), req.user!.email, req.user!.tenant],
   )).rows[0]
   // Todo dashboard nasce com uma aba "Geral" (o modelo novo exige ao menos uma).
@@ -170,6 +176,14 @@ dashboardsRouter.get('/:id', requireAuth(), requireDb, async (req, res) => {
       }))
     : []
 
+  // Uso (MON-01): abrir o painel. O dado de cada widget vem pela consulta do
+  // conjunto, que registra o uso do conjunto por conta própria.
+  await recordUsage({
+    tenant: req.user!.tenant, actor: req.user!.email,
+    resourceType: 'dashboard', resourceId: String(row.id), via: 'dashboard',
+    audit: { action: 'dashboards.open', resource: String(row.id), detail: { name: row.name }, ip: req.ip },
+  })
+
   res.json({
     dashboard: { ...toSummary(row), tabs: tabs.map(toTab), widgets: widgets.map(toWidget), schedules },
   })
@@ -178,15 +192,25 @@ dashboardsRouter.get('/:id', requireAuth(), requireDb, async (req, res) => {
 dashboardsRouter.patch('/:id', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
   if (!(await canEdit(req, req.params.id))) return res.status(403).json({ error: 'Apenas o dono (ou admin) pode editar.' })
   const { name, description, visibility, settings } = req.body ?? {}
+  const novaVis = ['tenant', 'private'].includes(visibility) ? String(visibility) : null
+  const antes = novaVis
+    ? ((await db.query('select visibility from dashboards where id = $1', [req.params.id])).rows[0]?.visibility as string | undefined)
+    : undefined
+  if (novaVis && publishBlocked(req.user!, antes, novaVis)) {
+    return res.status(403).json({ error: PUBLICAR_SO_ADMIN })
+  }
   await db.query(
     `update dashboards set name = coalesce($2, name), description = coalesce($3, description),
        visibility = coalesce($4, visibility),
        settings = case when $5::jsonb is not null then $5::jsonb else settings end,
        updated_at = now() where id = $1`,
-    [req.params.id, name ?? null, description ?? null,
-     ['tenant', 'private'].includes(visibility) ? visibility : null,
+    [req.params.id, name ?? null, description ?? null, novaVis,
      settings != null ? JSON.stringify(settings) : null],
   )
+  // MON-05: mudar quem enxerga o painel é decisão de acesso — fica registrada.
+  if (novaVis && antes !== novaVis) {
+    await audit(req, 'dashboards.visibility', { type: 'dashboard', id: req.params.id }, { from: antes ?? null, to: novaVis })
+  }
   res.json({ ok: true })
 })
 
@@ -248,7 +272,15 @@ dashboardsRouter.post('/:id/shares', requireAuth({ role: 'editor' }), requireDb,
 
 dashboardsRouter.delete('/:id/shares/:grantId', requireAuth({ role: 'editor' }), requireDb, async (req, res) => {
   if (!(await canEdit(req, req.params.id))) return res.status(403).json({ error: 'Apenas o dono (ou admin) pode compartilhar.' })
-  await db.query(`delete from dashboard_grants where id = $2 and dashboard_id = $1`, [req.params.id, req.params.grantId])
+  const removido = (await db.query(
+    `delete from dashboard_grants where id = $2 and dashboard_id = $1 returning grantee_email, team_id, level`,
+    [req.params.id, req.params.grantId],
+  )).rows[0]
+  // MON-05: tirar alguém do painel fica registrado como o convite.
+  if (removido) {
+    await audit(req, 'dashboards.unshare', { type: 'dashboard', id: req.params.id },
+      { email: removido.grantee_email ?? null, teamId: removido.team_id ?? null, level: removido.level })
+  }
   res.json({ ok: true })
 })
 

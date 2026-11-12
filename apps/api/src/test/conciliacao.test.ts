@@ -12,7 +12,7 @@ import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { as, db, shutdown, connectTestSource, publishSource, syncAndWait, waitFor } from './harness.js'
+import { as, db, shutdown, connectTestSource, fonteDb, publishSource, syncAndWait, waitFor } from './harness.js'
 
 let conn = ''
 const tenantId = async () => String((await db.query(`select id from tenants where slug = 'sebratel'`)).rows[0].id)
@@ -54,7 +54,7 @@ after(async () => {
 
 describe('T-QLD-01/03 conciliação que bate', () => {
   it('snapshot: fonte e lake com as mesmas linhas e a mesma soma de controle', async () => {
-    await db.query(`create table fonte.cadastro as
+    await fonteDb.query(`create table fonte.cadastro as
       select g as id, 'item ' || g as nome from generate_series(1, 137) g`)
     const ds = await publishSource(conn, 'cadastro', { syncMode: 'snapshot' })
     const run = await reconcileAndWait(ds.id)
@@ -68,7 +68,7 @@ describe('T-QLD-01/03 conciliação que bate', () => {
   })
 
   it('incremental por data: a carga antes da conferência traz o que entrou depois da última', async () => {
-    await db.query(`create table fonte.pedidos_ok as
+    await fonteDb.query(`create table fonte.pedidos_ok as
       select g as id, timestamp '2026-10-01 08:00:00' + (g || ' hours')::interval as criado_em
         from generate_series(1, 80) g`)
     const ds = await publishSource(conn, 'pedidos_ok', {
@@ -77,7 +77,7 @@ describe('T-QLD-01/03 conciliação que bate', () => {
     await syncAndWait(ds.id)
     // Entra depois da carga: sem a carga ANTES da conferência, isto seria
     // acusado como perda — e não é defeito, é o próximo ciclo.
-    await db.query(`insert into fonte.pedidos_ok values (81, timestamp '2026-10-05 08:00:00')`)
+    await fonteDb.query(`insert into fonte.pedidos_ok values (81, timestamp '2026-10-05 08:00:00')`)
     const run = await reconcileAndWait(ds.id)
     assert.equal(run.status, 'match', JSON.stringify(run))
     assert.equal(run.method, 'per-day')
@@ -90,7 +90,7 @@ describe('T-QLD-01/03 conciliação que bate', () => {
 describe('Defeitos silenciosos que a conciliação acusa', () => {
   it('QLD-01: o empate na fronteira do lote aparece no dia certo', async () => {
     // 30 linhas com o MESMO carimbo cruzando o lote de 50: o keyset pula 20.
-    await db.query(`create table fonte.faturas_empate as
+    await fonteDb.query(`create table fonte.faturas_empate as
       select g as id,
              case when g between 41 and 70 then timestamp '2026-09-30 23:00:00'
                   else timestamp '2026-09-01 00:00:00' + (g || ' minutes')::interval end as criado_em
@@ -107,13 +107,13 @@ describe('Defeitos silenciosos que a conciliação acusa', () => {
   })
 
   it('QLD-06: registro apagado na fonte aparece como linha a mais no lake', async () => {
-    await db.query(`create table fonte.clientes_del as
+    await fonteDb.query(`create table fonte.clientes_del as
       select g as id, timestamp '2026-10-01' + (g || ' minutes')::interval as criado_em from generate_series(1, 10) g`)
     const ds = await publishSource(conn, 'clientes_del', {
       syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'],
     })
     await syncAndWait(ds.id)
-    await db.query('delete from fonte.clientes_del where id = 3')
+    await fonteDb.query('delete from fonte.clientes_del where id = 3')
     const run = await reconcileAndWait(ds.id)
     assert.equal(run.status, 'diverged')
     assert.deepEqual([run.sourceRows, run.lakeRows], [9, 10])
@@ -121,7 +121,7 @@ describe('Defeitos silenciosos que a conciliação acusa', () => {
   })
 
   it('QLD-07: linha sem chave de criação nunca entra, e a conferência conta', async () => {
-    await db.query(`create table fonte.sem_chave as
+    await fonteDb.query(`create table fonte.sem_chave as
       select g as id, case when g <= 4 then null else timestamp '2026-10-02' + (g || ' minutes')::interval end as criado_em
         from generate_series(1, 20) g`)
     const ds = await publishSource(conn, 'sem_chave', {
@@ -202,13 +202,13 @@ describe('P-QLD-2: a divergência chega ao canal, uma vez', () => {
        on conflict (tenant_id) do update set webhook_enc = excluded.webhook_enc, enabled = true`,
       [await tenantId(), encryptSecret(webhookUrl)],
     )
-    await db.query(`create table fonte.avisos as
+    await fonteDb.query(`create table fonte.avisos as
       select g as id, timestamp '2026-10-03' + (g || ' minutes')::interval as criado_em from generate_series(1, 6) g`)
     const ds = await publishSource(conn, 'avisos', {
       syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'],
     })
     await syncAndWait(ds.id)
-    await db.query('delete from fonte.avisos where id = 2')
+    await fonteDb.query('delete from fonte.avisos where id = 2')
 
     const antes = recebidos.length
     assert.equal((await reconcileAndWait(ds.id)).status, 'diverged')
@@ -224,16 +224,16 @@ describe('P-QLD-2: a divergência chega ao canal, uma vez', () => {
     assert.equal(recebidos.length, depois, 'o mesmo alerta saiu duas vezes')
 
     // Conserta a fonte (o registro volta): a conferência bate e o canal sabe.
-    await db.query(`insert into fonte.avisos values (2, timestamp '2026-10-03' + interval '2 minutes')`)
+    await fonteDb.query(`insert into fonte.avisos values (2, timestamp '2026-10-03' + interval '2 minutes')`)
     assert.equal((await reconcileAndWait(ds.id)).status, 'match')
     const fechou = await waitFor(async () => recebidos.some((m) => /voltou a bater: avisos/i.test(m.text)), 5_000)
     assert.ok(fechou, 'o aviso de que voltou a bater não chegou')
   })
 
   it('a carga pausada por falhas seguidas também avisa (MON-03)', async () => {
-    await db.query(`create table fonte.quebra as select g as id from generate_series(1, 3) g`)
+    await fonteDb.query(`create table fonte.quebra as select g as id from generate_series(1, 3) g`)
     const ds = await publishSource(conn, 'quebra', { syncMode: 'snapshot' })
-    await db.query('drop table fonte.quebra')
+    await fonteDb.query('drop table fonte.quebra')
     for (let i = 0; i < 3; i++) await syncAndWait(ds.id).catch(() => { /* falha esperada */ })
     const chegou = await waitFor(async () => recebidos.some((m) => /Carga pausada: quebra/.test(m.text)), 5_000)
     assert.ok(chegou, 'a pausa automática não avisou ninguém')

@@ -144,9 +144,8 @@ const hintOf = (key: string) => (key.length > 4 ? key.slice(-4) : null)
 // Só UM padrão por tenant (garantido também por índice parcial no banco).
 async function clearOtherDefaults(tenantSlug: string, keepId: string | null): Promise<void> {
   await db.query(
-    `update ai_providers p set is_default = false, updated_at = now()
-       from tenants t
-      where p.tenant_id = t.id and t.slug = $1 and p.is_default and ($2::uuid is null or p.id <> $2)`,
+    `update ai_providers set is_default = false, updated_at = now()
+      where tenant_id = (select id from tenants where slug = $1) and is_default and ($2::uuid is null or id <> $2)`,
     [tenantSlug, keepId],
   )
 }
@@ -195,8 +194,7 @@ export async function updateProvider(
        api_key_enc = case when $11 then $12 else p.api_key_enc end,
        key_hint    = case when $11 then $13 else p.key_hint end,
        updated_at = now()
-     from tenants t
-     where p.id = $1 and p.tenant_id = t.id and t.slug = $2
+     where p.id = $1 and p.tenant_id = (select id from tenants where slug = $2)
      returning p.*`,
     [id, tenantSlug, input.name.trim(), input.kind, input.model.trim(),
      input.baseUrl?.trim() || null, input.maxTokens ?? 16_000, input.effort || null,
@@ -211,8 +209,8 @@ export async function updateProvider(
 
 export async function deleteProvider(tenantSlug: string, id: string): Promise<void> {
   await db.query(
-    `delete from ai_providers p using tenants t
-      where p.id = $1 and p.tenant_id = t.id and t.slug = $2`,
+    `delete from ai_providers
+      where id = $1 and tenant_id = (select id from tenants where slug = $2)`,
     [id, tenantSlug],
   )
   await reloadAiProviders()
@@ -221,8 +219,8 @@ export async function deleteProvider(tenantSlug: string, id: string): Promise<vo
 export async function setDefault(tenantSlug: string, id: string): Promise<void> {
   await clearOtherDefaults(tenantSlug, id)
   const r = await db.query(
-    `update ai_providers p set is_default = true, enabled = true, updated_at = now()
-       from tenants t where p.id = $1 and p.tenant_id = t.id and t.slug = $2`,
+    `update ai_providers set is_default = true, enabled = true, updated_at = now()
+      where id = $1 and tenant_id = (select id from tenants where slug = $2)`,
     [id, tenantSlug],
   )
   if (!r.rowCount) throw new Error('Provedor não encontrado.')

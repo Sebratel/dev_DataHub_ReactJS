@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { X, Trash2, Loader2, Users, Lock, UsersRound, Mail, Pencil } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/store/authStore'
 
 interface Grant {
   id: string
@@ -16,7 +17,8 @@ interface TeamOpt { id: string; name: string }
 interface SharesResponse { visibility: 'tenant' | 'private'; teams: TeamOpt[]; grants: Grant[] }
 
 export default function ShareDialog({ dashboardId, onClose }: { dashboardId: string; onClose: () => void }) {
-  const [visibility, setVisibility] = useState<'tenant' | 'private'>('tenant')
+  const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
+  const [visibility, setVisibility] = useState<'tenant' | 'private'>('private')
   const [teams, setTeams] = useState<TeamOpt[]>([])
   const [grants, setGrants] = useState<Grant[]>([])
   const [mode, setMode] = useState<'team' | 'email'>('team')
@@ -39,10 +41,18 @@ export default function ShareDialog({ dashboardId, onClose }: { dashboardId: str
   useEffect(load, [dashboardId])
 
   async function setVis(v: 'tenant' | 'private') {
+    const prev = visibility
     setVisibility(v)
     await api(`/api/v1/dashboards/${dashboardId}`, { method: 'PATCH', body: JSON.stringify({ visibility: v }) })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao salvar.'))
+      .catch((e) => {
+        setVisibility(prev) // não fingir que salvou
+        setError(e instanceof Error ? e.message : 'Falha ao salvar.')
+      })
   }
+
+  // D-DSP-1: publicar para a empresa é de admin. O dono tira da empresa o que
+  // é dele, mas não põe de volta.
+  const publicarTravado = !isAdmin && visibility !== 'tenant'
 
   async function invite() {
     setBusy(true)
@@ -79,11 +89,15 @@ export default function ShareDialog({ dashboardId, onClose }: { dashboardId: str
         {/* Visibilidade */}
         <div className="grid grid-cols-2 gap-2">
           {[
-            { v: 'tenant' as const, icon: Users, label: 'Toda a empresa', hint: 'Qualquer pessoa do domínio vê' },
-            { v: 'private' as const, icon: Lock, label: 'Restrito', hint: 'Só você e os convidados' },
-          ].map(({ v, icon: Icon, label, hint }) => (
-            <button key={v} onClick={() => void setVis(v)}
-              className={`rounded-xl border p-3 text-left text-sm ${visibility === v
+            {
+              v: 'tenant' as const, icon: Users, label: 'Toda a empresa',
+              hint: publicarTravado ? 'Só administrador publica para a empresa' : 'Qualquer pessoa do domínio vê',
+              travado: publicarTravado,
+            },
+            { v: 'private' as const, icon: Lock, label: 'Restrito', hint: 'Só você e os convidados', travado: false },
+          ].map(({ v, icon: Icon, label, hint, travado }) => (
+            <button key={v} onClick={() => void setVis(v)} disabled={travado}
+              className={`rounded-xl border p-3 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60 ${visibility === v
                 ? 'border-accent bg-accent-soft dark:bg-zinc-800'
                 : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-700'}`}>
               <Icon size={15} className={visibility === v ? 'text-accent' : 'text-zinc-400'} />

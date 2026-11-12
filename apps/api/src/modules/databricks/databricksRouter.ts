@@ -40,10 +40,10 @@ databricksAdminRouter.get('/status', ...adminOnly, async (_req, res) => {
             r.status, r.row_count, r.source_parts, r.attempts,
             r.error_message, r.started_at, r.finished_at
        from datasets d
-       left join lateral (
-         select * from databricks_sync_runs x
+       left join databricks_sync_runs r on r.id = (
+         select x.id from databricks_sync_runs x
           where x.dataset_slug = d.slug order by x.started_at desc limit 1
-       ) r on true
+       )
       where d.databricks_enabled = true
       order by d.slug`,
   )

@@ -2,21 +2,31 @@
 // Migrations SQL simples, versionadas em src/db/migrations e aplicadas no boot.
 // Se o banco estiver fora, a API sobe em modo degradado (health/conexões ainda
 // funcionam) e loga o aviso — útil em dev antes do `docker compose up datahub-db`.
+//
+// DATAHUB_DB_DRIVER=mariadb troca o banco (D-DSP-4): o mesmo SQL passa pelo
+// tradutor em db/mariadb/ e as migrations vêm de src/db/migrations-mariadb
+// (mesmos nomes). O padrão continua sendo o Postgres.
 import pg from 'pg'
 import { readdir, readFile } from 'node:fs/promises'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { config } from '../core/config.js'
+import { MariaPool, runMariaMigrations } from './mariadb/client.js'
+import { MIGRATIONS_DIR, MARIA_MIGRATIONS_DIR } from './paths.js'
 
 const { Pool } = pg
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const MIGRATIONS_DIR = resolve(__dirname, 'migrations')
 
-export const db = new Pool({
-  ...config.datahubDb,
-  max: 10,
-  connectionTimeoutMillis: 5_000,
-})
+export const dbDriver = config.datahubDbDriver
+
+// O tipo exposto é o do pg.Pool (query/connect/end): o cliente MariaDB tem a
+// mesma forma, e assim nenhum dos ~60 arquivos que consultam o banco muda.
+const maria = dbDriver === 'mariadb' ? new MariaPool(config.datahubMaria) : null
+export const db: pg.Pool = maria
+  ? (maria as unknown as pg.Pool)
+  : new Pool({
+    ...config.datahubPg,
+    max: 10,
+    connectionTimeoutMillis: 5_000,
+  })
 
 let dbAvailable = false
 export function isDbAvailable(): boolean {
@@ -36,6 +46,12 @@ export async function runMigrations(attempts = 10, delayMs = 3_000): Promise<voi
 
 async function tryMigrations(): Promise<void> {
   try {
+    if (maria) {
+      await runMariaMigrations(maria, MIGRATIONS_DIR, MARIA_MIGRATIONS_DIR)
+      dbAvailable = true
+      console.log(`[db] banco datahub pronto (mariadb ${config.datahubMaria.host}/${config.datahubMaria.database}).`)
+      return
+    }
     await db.query(`create table if not exists schema_migrations (
       name text primary key, applied_at timestamptz not null default now()
     )`)
@@ -65,6 +81,8 @@ async function tryMigrations(): Promise<void> {
   } catch (e) {
     dbAvailable = false
     console.warn(`[db] banco datahub indisponível. (${(e as Error).message})`)
-    console.warn('[db] se não estiver rodando, suba com: docker compose up -d datahub-db')
+    console.warn(maria
+      ? `[db] confira DATAHUB_MARIA_* (host ${config.datahubMaria.host}:${config.datahubMaria.port}, banco ${config.datahubMaria.database}).`
+      : '[db] se não estiver rodando, suba com: docker compose up -d datahub-db')
   }
 }

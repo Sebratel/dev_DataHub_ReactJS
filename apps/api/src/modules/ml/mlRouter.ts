@@ -51,10 +51,10 @@ mlRouter.get('/', ...editorOnly, async (req, res) => {
        from ml_models m
        join tenants t on t.id = m.tenant_id
        left join ml_model_versions v on v.id = m.promoted_version_id
-       left join lateral (
-         select status, error, started_at from ml_training_runs
-          where model_id = m.id order by started_at desc limit 1
-       ) r on true
+       left join ml_training_runs r on r.id = (
+         select x.id from ml_training_runs x
+          where x.model_id = m.id order by x.started_at desc limit 1
+       )
       where t.slug = $1
       order by m.updated_at desc`,
     [req.user!.tenant],
@@ -156,8 +156,7 @@ mlRouter.put('/:slug', ...editorOnly, async (req, res) => {
          slug = $3, name = $4, description = $5, task = $6, algorithm = $7,
          feature_sql = $8, target_column = $9, excluded_columns = $10,
          holdout_pct = $11, max_rows = $12, retrain = $13, hyperparams = $14, updated_at = now()
-       from tenants t
-       where m.tenant_id = t.id and t.slug = $1 and m.slug = $2
+       where m.tenant_id = (select id from tenants where slug = $1) and m.slug = $2
        returning m.*`,
       [req.user!.tenant, req.params.slug, i.slug, i.name, i.description, i.task, i.algorithm,
        i.featureSql, i.targetColumn, i.excludedColumns, i.holdoutPct, i.maxRows, i.retrain,
@@ -171,8 +170,8 @@ mlRouter.put('/:slug', ...editorOnly, async (req, res) => {
 
 mlRouter.delete('/:slug', ...adminOnly, async (req, res) => {
   const row = (await db.query(
-    `delete from ml_models m using tenants t
-      where m.tenant_id = t.id and t.slug = $1 and m.slug = $2 returning m.id`,
+    `delete from ml_models
+      where tenant_id = (select id from tenants where slug = $1) and slug = $2 returning id`,
     [req.user!.tenant, req.params.slug],
   )).rows[0]
   if (!row) return res.status(404).json({ error: 'Modelo não encontrado.' })
@@ -227,15 +226,19 @@ mlRouter.post('/:slug/train', ...editorOnly, async (req, res) => {
 // Trocar o que responde em produção. Voltar atrás é promover a anterior — sem
 // retreinar, porque a versão é imutável.
 mlRouter.post('/:slug/promote/:versionId', ...adminOnly, async (req, res) => {
-  const row = (await db.query(
-    `update ml_models m set promoted_version_id = v.id, updated_at = now()
-       from tenants t, ml_model_versions v
-      where m.tenant_id = t.id and t.slug = $1 and m.slug = $2
-        and v.id = $3 and v.model_id = m.id
-      returning m.id, v.version`,
+  // A versão tem de ser DESTE modelo: confere antes, atualiza depois (sem
+  // "update … from", que o MariaDB não tem).
+  const v = (await db.query(
+    `select m.id, v.id as version_id, v.version
+       from ml_models m
+       join tenants t on t.id = m.tenant_id
+       join ml_model_versions v on v.model_id = m.id
+      where t.slug = $1 and m.slug = $2 and v.id = $3`,
     [req.user!.tenant, req.params.slug, req.params.versionId],
   )).rows[0]
-  if (!row) return res.status(404).json({ error: 'Modelo ou versão não encontrada.' })
+  if (!v) return res.status(404).json({ error: 'Modelo ou versão não encontrada.' })
+  await db.query(`update ml_models set promoted_version_id = $2, updated_at = now() where id = $1`, [v.id, v.version_id])
+  const row = { id: v.id, version: v.version }
   await audit(req, 'ml.model.promote', { type: 'ml_model', id: String(row.id) }, { version: row.version })
   res.json({ ok: true, version: row.version })
 })
