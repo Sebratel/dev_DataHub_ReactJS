@@ -89,7 +89,9 @@ async function loadRegistry(conn: PoolConnection): Promise<void> {
   for (const r of cols as Array<{ c: string; n: string; ty: string }>) {
     all.add(r.c)
     if (r.n === 'YES') nullable.add(r.c)
-    if (String(r.ty).toLowerCase() !== 'datetime') notDt.add(r.c)
+    // TIMESTAMP também (api_call_metrics.created_at, migration 044): recusa o
+    // mesmo texto ISO com fuso que o DATETIME recusa.
+    if (!['datetime', 'timestamp'].includes(String(r.ty).toLowerCase())) notDt.add(r.c)
   }
   registry = {
     json, pk,

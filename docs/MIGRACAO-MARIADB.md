@@ -141,6 +141,7 @@ no tempo e o container continua de pé para o copiador.
 |---|---|---|---|
 | Vetor da busca semântica | pgvector (`<=>`) | não existe na 10.11 | distância de cosseno em memória (`nearestInProcess`); o tradutor recusa `<=>` |
 | Data/hora | `timestamptz` | `DATETIME(6)` em UTC | sessão `+00:00`; texto ISO com fuso convertido quando vai para coluna de data |
+| Telemetria como fonte (`datahub-meta`) | sessão da fonte no fuso local | DATETIME não tem fuso | `api_call_metrics.created_at` vira `TIMESTAMP(6)` (044) e a sessão da fonte usa o fuso local: leitura, filtro incremental e "por dia" da conciliação iguais aos do Postgres. Limite do TIMESTAMP: 2038. |
 | JSON e arrays | `jsonb`, `text[]` | `JSON` (texto validado) | o cliente devolve objeto e array, como o driver do Postgres |
 | Índice único parcial | `where …` | não existe | coluna gerada invisível + `UNIQUE` (provedor padrão, conciliação pendente) |
 | `UPDATE … RETURNING` | existe | não existe | emulado em 3 passos numa transação |
