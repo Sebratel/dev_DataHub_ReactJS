@@ -54,9 +54,9 @@ services:
     memswap_limit: ${API_MEMSWAP_LIMIT:-18g}
     networks:
       - datahub
-    depends_on:
-      datahub-db:
-        condition: service_healthy
+    # Sem depends_on: desde 12/11/2026 os metadados ficam no MariaDB corporativo
+    # (fora da stack). Se o banco estiver fora no boot, a API retenta por ~30 s e
+    # depois sobe em modo degradado, avisando no log.
     environment:
       API_PORT: 8790
       # Fuso do PROCESSO. O agendador compara a janela dos agendamentos com a
@@ -89,17 +89,19 @@ services:
       # tres dias. Esta chave cifra as senhas das conexoes, as chaves de IA e
       # os segredos do gateway: se ela mudar, nada disso se le de novo.
       CONNECTIONS_SECRET: '${CONNECTIONS_SECRET:?defina CONNECTIONS_SECRET na stack. E a chave que cifra as senhas das conexoes, as chaves de IA e os segredos do gateway. Use a MESMA de antes, porque uma chave nova torna os cadastros existentes ilegiveis. Para gerar uma nova, openssl rand -base64 32}'
+      # Postgres ANTIGO dos metadados. Saiu da stack depois da virada para o
+      # MariaDB (12/11/2026); estas variaveis ficam opcionais, so para o
+      # copiador (scripts/metaCopy.ts) se um dia for preciso restaurar o volume
+      # datahub-db-data num Postgres avulso. Ver docs/MIGRACAO-MARIADB.md.
       DATAHUB_DB_HOST: datahub-db
       DATAHUB_DB_PORT: 5432
       DATAHUB_DB_DATABASE: ${DATAHUB_DB_DATABASE:-datahub}
       DATAHUB_DB_USER: ${DATAHUB_DB_USER:-datahub}
-      DATAHUB_DB_PASSWORD: ${DATAHUB_DB_PASSWORD:?defina DATAHUB_DB_PASSWORD na stack}
-      # Onde ficam os METADADOS: 'postgres' (padrao, o servico datahub-db acima)
-      # ou 'mariadb' (D-DSP-4, banco DB_DataHub no MariaDB corporativo). As
-      # variaveis DATAHUB_MARIA_* podem ficar preenchidas antes da virada: elas
-      # so valem com o driver 'mariadb'. Virar e voltar e trocar SO o driver.
-      # Ver docs/MIGRACAO-MARIADB.md.
-      DATAHUB_DB_DRIVER: ${DATAHUB_DB_DRIVER:-postgres}
+      DATAHUB_DB_PASSWORD: ${DATAHUB_DB_PASSWORD:-}
+      # Onde ficam os METADADOS: 'mariadb' (banco DB_DataHub no MariaDB
+      # corporativo, D-DSP-4) desde 12/11/2026. 'postgres' so funciona com um
+      # Postgres de volta na stack.
+      DATAHUB_DB_DRIVER: ${DATAHUB_DB_DRIVER:-mariadb}
       DATAHUB_MARIA_HOST: ${DATAHUB_MARIA_HOST:-}
       DATAHUB_MARIA_PORT: ${DATAHUB_MARIA_PORT:-3306}
       DATAHUB_MARIA_DATABASE: ${DATAHUB_MARIA_DATABASE:-DB_DataHub}
@@ -207,35 +209,17 @@ services:
       retries: 3
       start_period: 10s
 
-  datahub-db:
-    image: pgvector/pgvector:pg16
-    container_name: datahub-db
-    restart: unless-stopped
-    logging: *default-logging
-    mem_limit: ${DB_MEM_LIMIT:-3g}          # metadados + pgvector (embeddings)
-    memswap_limit: ${DB_MEMSWAP_LIMIT:-3g}
-    networks:
-      - datahub
-    environment:
-      POSTGRES_DB: ${DATAHUB_DB_DATABASE:-datahub}
-      POSTGRES_USER: ${DATAHUB_DB_USER:-datahub}
-      POSTGRES_PASSWORD: ${DATAHUB_DB_PASSWORD:-datahub-dev}
-    ports:
-      - '${DATAHUB_DB_PORT:-5433}:5432'
-    volumes:
-      - datahub-db-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
+  # O servico datahub-db (Postgres dos metadados) saiu da stack em 12/11/2026:
+  # os metadados estao no MariaDB corporativo (D-DSP-4). O volume abaixo fica
+  # guardado, com o banco inteiro e um dump final, ate a TI liberar a exclusao.
 
 networks:
   datahub:
     driver: bridge
 
 volumes:
+  # Postgres antigo dos metadados (fora de uso desde 12/11/2026). Declarado so
+  # para nao virar volume "solto": apagar e decisao manual, depois do prazo.
   datahub-db-data:
   datahub-lake:
   datahub-models:
