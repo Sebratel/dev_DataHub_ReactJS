@@ -159,7 +159,7 @@ function render(segs: Seg[], params: unknown[], ids?: string): string {
 
 // ── Linhas: o formato do driver do Postgres ──────────────────────────────
 // Tipos do protocolo (mysql2/lib/constants/types)
-const T = { TINY: 1, TIMESTAMP: 7, LONGLONG: 8, DATE: 10, DATETIME: 12, NEWDATE: 14 }
+const T = { TINY: 1, TIMESTAMP: 7, LONGLONG: 8, DATE: 10, DATETIME: 12, NEWDATE: 14, NEWDECIMAL: 246 }
 type Conv = ((v: unknown) => unknown) | null
 
 function converter(f: FieldPacket): Conv {
@@ -176,6 +176,10 @@ function converter(f: FieldPacket): Conv {
       // tratada pelo hint): número, como o int do Postgres.
       if (col.orgTable) return null
       return (v) => { if (v === null) return null; const n = Number(v); return Number.isSafeInteger(n) ? n : v }
+    case T.NEWDECIMAL:
+      // numeric do Postgres sai sem zeros à toa ('0.5'); DECIMAL(65,30) sairia
+      // '0.500000000000000000000000000000'. Mesmo texto que o pg devolveria.
+      return (v) => { if (v === null) return null; const s = String(v); return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s }
   }
   if (col.orgTable && registry.json.has(`${col.orgTable}.${col.orgName}`)) {
     return (v) => (v === null ? null : JSON.parse(Buffer.isBuffer(v) ? v.toString('utf8') : String(v)))
@@ -287,12 +291,21 @@ export class MariaPool {
     })
   }
 
+  private registryLoaded = false
+
   private async conn(): Promise<PoolConnection> {
     const c = await this.raw.getConnection()
     const core = (c as unknown as { connection: object }).connection
     if (!this.ready.has(core)) {
       await setupSession(c)
       this.ready.add(core)
+    }
+    // Sem o mapa do esquema (colunas JSON, chaves, NOT NULL), JSON voltaria
+    // como texto. Carrega na primeira consulta, venha ela de onde vier — não
+    // depende de alguém lembrar de rodar as migrations antes.
+    if (!this.registryLoaded) {
+      this.registryLoaded = true
+      try { await loadRegistry(c) } catch (e) { this.registryLoaded = false; c.release(); throw e }
     }
     return c
   }
@@ -323,7 +336,7 @@ export class MariaPool {
   /** Recarrega o que o banco sabe do esquema (depois de migration). */
   async refreshRegistry(): Promise<void> {
     const c = await this.conn()
-    try { await loadRegistry(c) } finally { c.release() }
+    try { await loadRegistry(c); this.registryLoaded = true } finally { c.release() }
   }
 }
 

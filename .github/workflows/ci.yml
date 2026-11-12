@@ -86,7 +86,15 @@ jobs:
           DATAHUB_TEST_DB_PORT: '5432'
           DATAHUB_TEST_DB_USER: datahub
           DATAHUB_TEST_DB_PASSWORD: ci-somente-teste
-        run: npm run test:it
+        # Falha vira ANOTACAO do GitHub: o motivo fica legivel pela API publica do
+        # run, sem baixar o log inteiro (que exige permissao de admin no repo).
+        run: |
+          set -o pipefail
+          if ! npm run test:it 2>&1 | tee it.log; then
+            resumo=$(grep -E "^✖ |^ +✖|AssertionError|Error:|PAROU|\[db\]|\[mariadb\]|rejei" it.log | grep -v " # " | head -80 | cut -c1-300 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); print }')
+            echo "::error title=Falhas da suite (Postgres)::${resumo}"
+            exit 1
+          fi
 
   # A MESMA suíte com os metadados no MariaDB (D-DSP-4), na versão do servidor
   # corporativo. Enquanto produção roda em Postgres, é isto que garante que a
@@ -139,7 +147,15 @@ jobs:
           DATAHUB_TEST_MARIA_PORT: '3306'
           DATAHUB_TEST_MARIA_USER: root
           DATAHUB_TEST_MARIA_PASSWORD: ci-somente-teste
-        run: npm run test:it
+        # Falha vira ANOTACAO do GitHub: o motivo fica legivel pela API publica do
+        # run, sem baixar o log inteiro (que exige permissao de admin no repo).
+        run: |
+          set -o pipefail
+          if ! npm run test:it 2>&1 | tee it.log; then
+            resumo=$(grep -E "^✖ |^ +✖|AssertionError|Error:|PAROU|\[db\]|\[mariadb\]|rejei" it.log | grep -v " # " | head -80 | cut -c1-300 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); print }')
+            echo "::error title=Falhas da suite (MariaDB)::${resumo}"
+            exit 1
+          fi
 
   web:
     runs-on: ubuntu-latest

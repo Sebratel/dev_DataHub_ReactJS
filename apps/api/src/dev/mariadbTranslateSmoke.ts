@@ -41,7 +41,7 @@ igual('cast de coluna vira CAST', 'select count(*)::int as n from datasets',
 igual('cast de data', 'select created_at::date as d from datasets where created_at > $1::timestamptz',
   'select CAST(created_at AS DATE) as "d" from datasets where created_at > CAST(<datetime:0> AS DATETIME(6))')
 igual('cast numérico dentro de função', 'select round(avg(x)::numeric, 2) as m from t',
-  'select round(CAST(avg(x) AS DECIMAL(38,10)), 2) as "m" from t')
+  'select round(CAST(avg(x) AS DECIMAL(65,30)), 2) as "m" from t')
 
 // ── any / all ────────────────────────────────────────────────────────────
 igual('= any($1::uuid[]) vira IN lista', 'select id from datasets where id = any($1::uuid[])',

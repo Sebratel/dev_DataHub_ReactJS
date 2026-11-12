@@ -613,8 +613,9 @@ CREATE TABLE IF NOT EXISTS ml_drift_checks (
   rows_scored INT,
   prediction_stats JSON NOT NULL DEFAULT '{}',
   live_metrics JSON,
-  -- numeric no Postgres (texto no driver); DECIMAL no MariaDB também volta texto
-  drift_score DECIMAL(38,10),
+  -- numeric no Postgres (texto no driver); DECIMAL no MariaDB também volta texto.
+  -- 30 casas: um double do JavaScript cabe inteiro (com 10, 0.123456789012 virava 0.1234567890).
+  drift_score DECIMAL(65,30),
   alert BOOLEAN NOT NULL DEFAULT FALSE,
   PRIMARY KEY (id),
   KEY ml_drift_checks_model_idx (model_id, checked_at DESC),

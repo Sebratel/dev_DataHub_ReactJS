@@ -8,16 +8,12 @@
 // (mesmos nomes). O padrão continua sendo o Postgres.
 import pg from 'pg'
 import { readdir, readFile } from 'node:fs/promises'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { config } from '../core/config.js'
 import { MariaPool, runMariaMigrations } from './mariadb/client.js'
+import { MIGRATIONS_DIR, MARIA_MIGRATIONS_DIR } from './paths.js'
 
 const { Pool } = pg
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const MIGRATIONS_DIR = resolve(__dirname, 'migrations')
-export const MARIA_MIGRATIONS_DIR = resolve(__dirname, 'migrations-mariadb')
-export { MIGRATIONS_DIR }
 
 export const dbDriver = config.datahubDbDriver
 

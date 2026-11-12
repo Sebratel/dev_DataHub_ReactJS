@@ -296,7 +296,7 @@ function castTarget(type: string, sql: string): CastTarget {
     case 'bigint': case 'int8':
       return { sql: 'SIGNED', param: 'int' }
     case 'numeric': case 'decimal':
-      return { sql: 'DECIMAL(38,10)' }
+      return { sql: 'DECIMAL(65,30)' }
     case 'float': case 'float8': case 'double precision': case 'real': case 'float4':
       return { sql: 'DOUBLE' }
     case 'text': case 'varchar': case 'character varying': case 'char': case 'name':
