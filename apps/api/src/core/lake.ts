@@ -254,6 +254,15 @@ function somaDir(dir: string): number {
   return total
 }
 
+/** Uso do volume do lake, em %, só pelo statfs — barato, para o sino e o alerta. */
+export function lakeDiskPercent(): number | null {
+  try {
+    const fs = statfsSync(LAKE_ROOT)
+    const total = fs.blocks * fs.bsize
+    return total > 0 ? Math.round(((total - fs.bavail * fs.bsize) / total) * 1000) / 10 : null
+  } catch { return null }
+}
+
 export function diskUsage(): UsoDeDisco {
   const fs = statfsSync(LAKE_ROOT)
   const totalBytes = fs.blocks * fs.bsize

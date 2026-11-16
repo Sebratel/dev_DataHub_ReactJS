@@ -23,6 +23,7 @@ import { runDailyPick } from '../quality/reconcile.js'
 import { runStaleChecks } from '../quality/checks.js'
 import { purgeExpiredTrash } from '../catalog/trash.js'
 import { purgeExpiredConversations } from '../ai/retention.js'
+import { checkDiskAlert } from '../alerts/disk.js'
 import { isWithinSchedule } from '@datahub/shared'
 
 function msUntilNextMinute(): number {
@@ -112,6 +113,9 @@ async function tick(): Promise<void> {
   if (now.getMinutes() % 15 === 0) {
     void runStaleChecks(now).catch((e) =>
       console.warn(`[qualidade] verificação de prazo falhou: ${(e as Error).message}`))
+    // Disco do lake acima do limite vai para o Chat (MON-03, D-MON-3).
+    void checkDiskAlert().catch((e) =>
+      console.warn(`[alertas] verificação do disco falhou: ${(e as Error).message}`))
   }
 }
 

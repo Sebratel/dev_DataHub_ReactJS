@@ -6,8 +6,10 @@
 //
 // Existe porque a pergunta "está tudo bem?" pedia umas dez telas (MON-14): a
 // fila numa, o disco noutra, os calculados um a um, as conferências em outra.
-// E porque o canal escolhido para avisar é a própria plataforma — o admin
-// abre o Data Hub e vê, sem depender de e-mail nem chat.
+// O admin abre o Data Hub e vê. Desde a R6 (13/11, D-MON-3) o mesmo aviso
+// também sai no Google Chat: cada problema daqui vira alerta na TROCA de
+// estado, perto de onde nasce (checks.ts, reconcile.ts, ingest.ts,
+// databricks/publish.ts, connectors/healthChecks.ts e alerts/disk.ts).
 //
 // "Precisa de atenção agora" é montado do ESTADO atual, não de eventos: cada
 // problema sai da lista sozinho quando a causa é resolvida. Um evento ("a
@@ -16,11 +18,10 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
-import { statfsSync } from 'node:fs'
 import type { PlatformHealth, PlatformProblem, PlatformRun, PlatformBadge } from '@datahub/shared'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { config } from '../../core/config.js'
-import { diskUsage, LAKE_ROOT } from '../../core/lake.js'
+import { diskUsage, lakeDiskPercent } from '../../core/lake.js'
 import { engineLoad } from '../query/duck.js'
 import { currentSync, pendingSyncs } from '../sync/ingest.js'
 import { requireAuth } from '../auth/middleware.js'
@@ -40,15 +41,6 @@ const CHECK: Record<string, { title: string; severity: PlatformProblem['severity
   stale: { title: 'atrasado', severity: 'warn', area: 'carga' },
   volume: { title: 'volume caiu', severity: 'crit', area: 'qualidade' },
   identity: { title: 'identidade vazia ou repetida', severity: 'crit', area: 'qualidade' },
-}
-
-/** Uso do volume do lake só pelo statfs — barato, para o sino. */
-function diskPercent(): number | null {
-  try {
-    const fs = statfsSync(LAKE_ROOT)
-    const total = fs.blocks * fs.bsize
-    return total > 0 ? Math.round(((total - fs.bavail * fs.bsize) / total) * 1000) / 10 : null
-  } catch { return null }
 }
 
 /** Tudo que precisa de atenção agora, dos mais graves para os mais leves. */
@@ -162,7 +154,7 @@ export async function platformProblems(tenant: string): Promise<PlatformProblem[
   }
 
   // ── Disco do lake ───────────────────────────────────────────────────
-  const pct = diskPercent()
+  const pct = lakeDiskPercent()
   if (pct != null && pct >= config.sync.diskWarnPercent) {
     out.push({
       id: 'disk', severity: 'crit', area: 'infraestrutura',

@@ -184,7 +184,8 @@ job de carga a ler.
   `403` e `404` **não** são repetidos (credencial, permissão ou volume errado —
   nada disso melhora sozinho); rede, `429` e `5xx` repetem com backoff.
 - **Duas falhas seguidas** no mesmo conjunto imprimem `[databricks][ALERTA]` no
-  log do contêiner.
+  log do contêiner e mandam um alerta para o chat; o envio que volta a
+  funcionar depois disso também avisa. Envio pulado ("nada mudou") não conta.
 - **O envio nunca atrasa a sincronização:** ele roda solto, depois do `sync_runs`
   já estar fechado. Databricks fora do ar não segura a fila.
 - Histórico no banco:
@@ -290,13 +291,18 @@ Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos d
   lake, QLD-07) contam como divergência.
 - **Ficam fora:** calculados, modo ao vivo e fontes que não são Postgres/MySQL
   (a tela mostra o motivo de cada um).
-- **Alertas ficam DENTRO do sistema:** divergência, conciliação não concluída,
-  "voltou a bater", verificação falhando e carga pausada aparecem em
-  **Operar › Saúde da plataforma** (histórico com "marcar como visto") e no
-  **sino do cabeçalho** (só admin), que conta os problemas abertos. Mandar
-  também para um chat é opcional: um webhook `{"text": …}` (Google Chat, n8n)
-  que só o master cadastra, recolhido no cartão de alertas. O mesmo assunto não
-  se repete no chat em 12 h.
+- **Onde os alertas aparecem:** em **Operar › Saúde da plataforma** (histórico
+  com "marcar como visto"), no **sino do cabeçalho** (só admin) e, desde a R6
+  (D-MON-3), no **Google Chat**. O webhook `{"text": …}` só o master cadastra,
+  no cartão de alertas; sem ele, o alerta fica só no sistema ("sem canal").
+  O mesmo assunto não se repete no chat em 12 h, e cada alerta sai na troca
+  de estado (passou a falhar / voltou):
+  - divergência, conciliação não concluída e "voltou a bater";
+  - verificação contínua falhando e carga pausada;
+  - envio ao Databricks com 2 falhas seguidas;
+  - endpoint da verificação de saúde com 2 falhas seguidas (≈ 10 min na
+    cadência padrão de 5 min);
+  - disco do lake acima de `SYNC_DISK_WARN_PERCENT` (conferido a cada 15 min).
 - **Divergiu, e agora?** Abra a linha: o dia que não bate aponta a causa. Linha
   a menos num dia com muitos registros de mesmo carimbo = empate na fronteira do
   lote (QLD-01); linha a mais = registro apagado na fonte (QLD-06); "nunca
