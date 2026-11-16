@@ -225,17 +225,18 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
     assert.ok(del.body.trashId, 'foi excluído sem passar pela lixeira')
   })
 
-  // `skip`, e não `todo`: o defeito É uma rejeição não tratada, e o executor de
-  // testes derruba o arquivo inteiro quando ela acontece. Vira `it` normal no
-  // dia em que as rotas assíncronas tratarem o erro (DSP-18).
-  it('T-DSP-10 endereço inválido de painel responde em segundos', {
-    skip: 'DSP-18 (confirmado à mão): id inválido gera rejeição não tratada e a requisição fica pendurada até o timeout do nginx.',
-  }, async () => {
-    const r = await fetch(`${baseUrl}/api/v1/dashboards/teste-invalido`, {
-      headers: { Authorization: `Bearer ${as('viewer').token}` }, signal: AbortSignal.timeout(5_000),
-    }).catch((e: Error) => e)
-    assert.ok(!(r instanceof Error), 'sem resposta em 5 s')
-    assert.ok((r as Response).status >= 400)
+  // DSP-18: a rejeição de rota async passou a virar resposta (core/asyncRoutes.ts).
+  it('T-DSP-10 endereço inválido de painel responde em segundos', async () => {
+    for (const p of ['/api/v1/dashboards/teste-invalido', '/api/v1/ai/conversations/teste-invalido']) {
+      const r = await fetch(`${baseUrl}${p}`, {
+        headers: { Authorization: `Bearer ${as('viewer').token}` }, signal: AbortSignal.timeout(5_000),
+      }).catch((e: Error) => e)
+      assert.ok(!(r instanceof Error), `${p}: sem resposta em 5 s`)
+      const res = r as Response
+      assert.ok(res.status >= 400 && res.status < 500, `${p}: ${res.status}`)
+      const corpo = await res.json() as { error?: unknown }
+      assert.equal(typeof corpo.error, 'string', 'a resposta de erro é JSON com a mensagem')
+    }
   })
 
   it('T-DSP-08 excluir conjunto com dependentes lista os dependentes e bloqueia', async () => {
