@@ -338,6 +338,21 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
     assert.equal((await as('admin').patch(`/api/v1/datasets/${c.body.id}`, { official: true })).status, 200)
     assert.equal((await as('editor').del(`/api/v1/datasets/${c.body.id}`)).status, 403, 'dono excluiu um oficial')
   })
+
+  it('D-DSP-3 fonte e oficial: só o master manda para a lixeira e exclui de vez', async () => {
+    const fonte = await seedDataset({
+      slug: 'teste-comite-fonte-lixeira', fields: [{ key: 'id', type: 'number' }], rowsSql: 'select 1 as id',
+    })
+    assert.equal((await as('admin').del(`/api/v1/datasets/${fonte}`)).status, 403, 'admin sem master excluiu uma fonte')
+    const c = await as('editor').post('/api/v1/datasets/derived', { name: 'TESTE-COMITE oficial 2', sql: 'select id from teste_comite_aberto' })
+    assert.equal((await as('admin').patch(`/api/v1/datasets/${c.body.id}`, { official: true })).status, 200)
+    assert.equal((await as('admin').del(`/api/v1/datasets/${c.body.id}`)).status, 403, 'admin sem master excluiu um oficial')
+
+    const ok = await as('master').del(`/api/v1/datasets/${fonte}`)
+    assert.equal(ok.status, 200, JSON.stringify(ok.body))
+    assert.equal((await as('admin').del(`/api/v1/trash/${ok.body.trashId}`)).status, 403, 'admin sem master excluiu de vez uma fonte')
+    assert.equal((await as('master').del(`/api/v1/trash/${ok.body.trashId}`)).status, 200)
+  })
 })
 
 // ── Monitoramento ──────────────────────────────────────────────────────────

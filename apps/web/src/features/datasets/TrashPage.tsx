@@ -18,6 +18,7 @@ interface TrashItem {
   id: string
   kind: 'dataset'
   datasetKind: 'source' | 'derived'
+  official: boolean
   slug: string
   name: string
   ownerEmail: string | null
@@ -35,6 +36,8 @@ export default function TrashPage() {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
+  // Fonte e oficial, só o master exclui de vez (D-DSP-3); o resto, o admin.
+  const isMaster = useAuthStore((s) => !!s.user?.master)
   const [items, setItems] = useState<TrashItem[] | null>(null)
   const [days, setDays] = useState(30)
   const [error, setError] = useState<string | null>(null)
@@ -146,7 +149,7 @@ export default function TrashPage() {
                             {busy === it.id ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
                             Restaurar
                           </button>
-                          {isAdmin && (
+                          {(it.datasetKind === 'derived' && !it.official ? isAdmin : isMaster) && (
                             <button
                               onClick={() => void excluirDeVez(it)}
                               disabled={busy === it.id}

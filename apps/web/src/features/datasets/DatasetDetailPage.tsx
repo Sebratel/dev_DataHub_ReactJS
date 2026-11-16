@@ -112,6 +112,7 @@ export default function DatasetDetailPage() {
   const navigate = useNavigate()
   const isAdmin = useAuthStore((s) => !!s.user?.roles.includes('admin'))
   const userEmail = useAuthStore((s) => s.user?.email ?? null)
+  const isMaster = useAuthStore((s) => !!s.user?.master)
 
   const [dataset, setDataset] = useState<DatasetDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -201,10 +202,12 @@ export default function DatasetDetailPage() {
     }
   }
 
-  // Excluir manda para a lixeira (D-DSP-3). O admin exclui qualquer conjunto;
-  // o dono, os calculados não oficiais que criou (DSP-07) — a mesma regra do
+  // Excluir manda para a lixeira (D-DSP-3). Fonte e oficial, só o master; o
+  // calculado não oficial, o admin ou o dono (DSP-07) — a mesma regra do
   // backend, para o item de menu não aparecer para quem levaria 403.
-  const podeExcluir = isAdmin || (derived && !!userEmail && dataset.ownerEmail === userEmail && !dataset.official)
+  const podeExcluir = (!derived || dataset.official)
+    ? isMaster
+    : isAdmin || (!!userEmail && dataset.ownerEmail === userEmail)
 
   // Os dependentes vêm ANTES do botão: descobrir na hora de confirmar que um
   // painel usa o conjunto é pior do que já abrir o diálogo sabendo.
