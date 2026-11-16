@@ -264,6 +264,11 @@ catálogo e volume forem mantidos. O provisionamento é a sequência acima.
   ```
 - Reindexar tudo (admin): `POST /api/v1/datasets/reindex-embeddings`. Também roda
   no boot, no tick do scheduler e ao publicar/editar um conjunto.
+- **Prazo das conversas (D-MON-4, R6):** a conversa com a IA é apagada 30 dias
+  depois da última mensagem, na rotina de hora em hora. Antes de apagar, ela é
+  somada em `ai_usage_daily` (dia × pessoa: conversas, perguntas, respostas,
+  consultas e consultas com erro). Apagar pela tela também soma. Nada do
+  conteúdo fica.
 
 ---
 
