@@ -378,11 +378,15 @@ export default function ExplorerPage() {
             <tr>
               {(result?.columns ?? []).map((c) => {
                 const sort = orderBy.find((o) => o.field === c.name)
+                // Campo sensível não ordena para não-admin (T-SEG-01): a API
+                // recusa, então o cabeçalho nem oferece.
+                const sensivel = !user?.roles.includes('admin') && visibleFields.some((f) => f.key === c.name && f.sensitive)
+                const ordena = !groupBy && !sensivel
                 return (
                   <th
                     key={c.name}
-                    onClick={() => !groupBy && toggleSort(c.name)}
-                    className={clsx('whitespace-nowrap px-3 py-2 font-medium', !groupBy && 'cursor-pointer select-none hover:text-accent')}
+                    onClick={() => ordena && toggleSort(c.name)}
+                    className={clsx('whitespace-nowrap px-3 py-2 font-medium', ordena && 'cursor-pointer select-none hover:text-accent')}
                   >
                     <span className="inline-flex items-center gap-1">
                       {fieldLabel(c.name)}

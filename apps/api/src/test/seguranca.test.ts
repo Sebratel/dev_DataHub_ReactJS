@@ -239,12 +239,21 @@ describe('T-SEG-01 máscara no explorador', () => {
     assert.ok(g.status >= 400, `agrupamento: ${g.status}`)
   })
 
-  it('T-SEG-01 ordenar pelo sensível também é recusado (oráculo de ordenação)', {
-    todo: 'Fraqueza conhecida: ordenar por campo sensível não é bloqueado — a ordem revela o valor.',
-  }, async () => {
-    const r = await as('viewer').post('/api/v1/datasets/teste-comite-aberto/query',
-      { select: ['cliente'], orderBy: [{ field: 'cpf', dir: 'asc' }] })
-    assert.ok(r.status >= 400, `ordenação: ${r.status}`)
+  it('T-SEG-01 ordenar pelo sensível também é recusado (oráculo de ordenação)', async () => {
+    // O furo era com o campo NO select (ou select vazio, que traz todos): o
+    // valor saía mascarado, mas a ordem vinha da coluna crua.
+    const v = as('viewer')
+    for (const body of [
+      { select: ['cliente'], orderBy: [{ field: 'cpf', dir: 'asc' }] },
+      { select: ['cpf', 'cliente'], orderBy: [{ field: 'cpf', dir: 'asc' }] },
+      { orderBy: [{ field: 'cpf', dir: 'desc' }], limit: 1 },
+    ]) {
+      const r = await v.post('/api/v1/datasets/teste-comite-aberto/query', body)
+      assert.ok(r.status >= 400, `ordenação ${JSON.stringify(body)}: ${r.status}`)
+    }
+    const admin = await as('admin').post('/api/v1/datasets/teste-comite-aberto/query',
+      { select: ['cpf'], orderBy: [{ field: 'cpf', dir: 'asc' }] })
+    assert.equal(admin.status, 200, 'admin continua ordenando pelo sensível')
   })
 
   it('T-SEG-01 admin vê o sensível em claro (regra atual do documento)', async () => {
