@@ -28,7 +28,17 @@ export interface Consumer {
   quotaPerDay: number | null
 }
 
-export interface Denied { status: number; error: string; retryAfterSec?: number }
+export interface Denied {
+  status: number
+  error: string
+  retryAfterSec?: number
+  /**
+   * Quem foi recusado, quando a recusa vem DEPOIS de reconhecer o token
+   * (limite por minuto, cota diária). Sem isso a linha do 429 na telemetria
+   * saía sem dono, e ninguém sabia qual integração estourou a cota (MON-07).
+   */
+  consumer?: { id: string; name: string }
+}
 
 // Token do consumidor: SÓ pelo cabeçalho X-Api-Token (SEG-06, decisão da R3 do
 // comitê). Na URL ele ficava gravado no log de acesso do proxy, no histórico
@@ -136,10 +146,11 @@ export async function consumeQuota(consumer: Consumer): Promise<Denied | null> {
 export async function admit(token: string): Promise<Consumer | Denied> {
   const consumer = await authenticateConsumer(token)
   if ('status' in consumer) return consumer
+  const quem = { id: consumer.id, name: consumer.name }
   const limited = checkRateLimit(consumer)
-  if (limited) return limited
+  if (limited) return { ...limited, consumer: quem }
   const overQuota = await consumeQuota(consumer)
-  if (overQuota) return overQuota
+  if (overQuota) return { ...overQuota, consumer: quem }
   return consumer
 }
 

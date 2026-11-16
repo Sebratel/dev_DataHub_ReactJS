@@ -171,7 +171,10 @@ function publicGate(req: Request, res: Response, next: NextFunction): void {
   res.setHeader('X-Request-Id', requestId)
 
   res.on('finish', () => {
-    const locals = res.locals as { consumer?: Consumer; dataSlug?: string; dataId?: string; rows?: number; erro?: string }
+    const locals = res.locals as {
+      consumer?: Consumer; negado?: { id: string; name: string }
+      dataSlug?: string; dataId?: string; rows?: number; erro?: string
+    }
     // Uso do conjunto por token (D-DSP-2: "sem requisição em 90 dias"). Só as
     // leituras que deram certo; quem fica na conta é a credencial, não a pessoa.
     if (res.statusCode < 400 && locals.dataId && locals.consumer) {
@@ -187,8 +190,8 @@ function publicGate(req: Request, res: Response, next: NextFunction): void {
       endpoint: (req.originalUrl || '').split('?')[0],
       status: res.statusCode,
       durationMs: Date.now() - started,
-      credentialId: locals.consumer?.id ?? null,
-      consumerName: locals.consumer?.name ?? null,
+      credentialId: locals.consumer?.id ?? locals.negado?.id ?? null,
+      consumerName: locals.consumer?.name ?? locals.negado?.name ?? null,
       datasetSlug: locals.dataSlug ?? null,
       rows: locals.rows ?? null,
       bytes: Number(res.getHeader('content-length')) || 0,
@@ -206,7 +209,12 @@ function publicGate(req: Request, res: Response, next: NextFunction): void {
   if (naUrl) { res.locals.erro = 'token na URL'; return sendDenied(res, naUrl) }
 
   void admit(readToken(req)).then((result) => {
-    if (isDenied(result)) return sendDenied(res, result)
+    if (isDenied(result)) {
+      // Recusa com dono (cota, limite por minuto): a telemetria leva o token (MON-07).
+      res.locals.negado = result.consumer
+      res.locals.erro = result.error
+      return sendDenied(res, result)
+    }
     res.locals.consumer = result
     next()
   }).catch((e: Error) => {

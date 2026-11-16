@@ -426,9 +426,7 @@ describe('T-MON-02..05 monitoramento', () => {
     assert.ok(usado, 'last_used_at não foi atualizado')
   })
 
-  it('T-MON-05 a recusa por cota (429) fica ligada ao token', {
-    todo: 'MON-07: a linha do 429 na telemetria sai sem o token que a causou.',
-  }, async () => {
+  it('T-MON-05 a recusa por cota (429) fica ligada ao token (MON-07)', async () => {
     const t = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE 429', datasetSlugs: ['teste-comite-aberto'] })
     await as('admin').put(`/api/v1/gateway/credentials/${t.body.id}/policy`, { quotaPerDay: 1 })
     await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows?limit=1', t.body.token)
