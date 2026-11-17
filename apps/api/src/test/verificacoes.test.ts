@@ -27,6 +27,14 @@ const esperaEstado = async (datasetId: string, check: string, status: 'ok' | 'fa
   }, 10_000)) ?? await estado(datasetId, check)
 const alertas = async (re: RegExp) =>
   (await db.query(`select title from alert_events order by created_at`)).rows.map((r) => String(r.title)).filter((t) => re.test(t))
+// O gancho grava o ESTADO e só depois o alerta (setCheck → notify). Quem
+// espera o estado e conta os alertas na hora pode chegar no meio dos dois: no
+// MariaDB do CI isso acontecia de vez em quando e o QLD-08 falhava com 0 ≠ 1.
+const esperaAlertas = async (re: RegExp, n: number) =>
+  (await waitFor(async () => {
+    const a = await alertas(re)
+    return a.length >= n ? a : null
+  }, 10_000)) ?? await alertas(re)
 
 before(async () => { conn = await connectTestSource() })
 after(shutdown)
@@ -43,7 +51,7 @@ describe('QLD-08 volume do snapshot', () => {
     const caiu = await esperaEstado(ds.id, 'volume', 'fail')
     assert.equal(caiu?.status, 'fail', JSON.stringify(caiu))
     assert.match(caiu!.detail, /1\.000 linhas; a anterior, 1\.500/)
-    assert.equal((await alertas(/^Volume caiu: Produtos$/)).length, 1)
+    assert.equal((await esperaAlertas(/^Volume caiu: Produtos$/, 1)).length, 1)
 
     // A régua é carga contra a anterior: de 1.000 para 1.000 não é queda, e o
     // estado volta ao normal (com um aviso só, logo abaixo).
@@ -53,7 +61,7 @@ describe('QLD-08 volume do snapshot', () => {
     await syncAndWait(ds.id)
     assert.equal((await esperaEstado(ds.id, 'volume', 'ok'))?.status, 'ok')
     assert.equal((await alertas(/^Volume caiu: Produtos$/)).length, 1, 'o mesmo aviso saiu duas vezes')
-    assert.equal((await alertas(/^Volume normal de novo: Produtos$/)).length, 1)
+    assert.equal((await esperaAlertas(/^Volume normal de novo: Produtos$/, 1)).length, 1)
   })
 })
 
