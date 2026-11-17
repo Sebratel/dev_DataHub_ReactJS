@@ -238,6 +238,9 @@ export default function AiPage() {
             </div>
           ))}
         </div>
+        <p className="mt-2 px-2 text-[11px] leading-snug text-zinc-400">
+          Conversas são apagadas 30 dias após a última mensagem.
+        </p>
       </aside>
 
       {/* Chat */}

@@ -23,6 +23,10 @@ const diaFmt = new Intl.DateTimeFormat('en-CA', { timeZone: FUSO, year: 'numeric
 export function diaLocal(dias = 0): string {
   return diaFmt.format(new Date(Date.now() + dias * 86_400_000))
 }
+/** AAAA-MM-DD no fuso daqui de um instante qualquer. */
+export function diaLocalDe(instante: Date): string {
+  return diaFmt.format(instante)
+}
 
 export interface UsageEvent {
   /** Slug do tenant. */

@@ -22,6 +22,8 @@ import { runDueHealthChecks } from '../../connectors/healthChecks.js'
 import { runDailyPick } from '../quality/reconcile.js'
 import { runStaleChecks } from '../quality/checks.js'
 import { purgeExpiredTrash } from '../catalog/trash.js'
+import { purgeExpiredConversations } from '../ai/retention.js'
+import { checkDiskAlert } from '../alerts/disk.js'
 import { isWithinSchedule } from '@datahub/shared'
 
 function msUntilNextMinute(): number {
@@ -101,6 +103,9 @@ async function tick(): Promise<void> {
     // então rodar a cada hora só garante que o prazo vence no dia certo.
     void purgeExpiredTrash().catch((e) =>
       console.warn(`[lixeira] prazo de 30 dias falhou: ${(e as Error).message}`))
+    // Conversas da IA paradas há 30 dias saem; os totais ficam (D-MON-4).
+    void purgeExpiredConversations(now).catch((e) =>
+      console.warn(`[ia] prazo de 30 dias das conversas falhou: ${(e as Error).message}`))
   }
   await tickSchedules(now)
   // Prazo de cada conjunto pela cadência (D-QLD-2). Só lê o catálogo; 15 min
@@ -108,6 +113,9 @@ async function tick(): Promise<void> {
   if (now.getMinutes() % 15 === 0) {
     void runStaleChecks(now).catch((e) =>
       console.warn(`[qualidade] verificação de prazo falhou: ${(e as Error).message}`))
+    // Disco do lake acima do limite vai para o Chat (MON-03, D-MON-3).
+    void checkDiskAlert().catch((e) =>
+      console.warn(`[alertas] verificação do disco falhou: ${(e as Error).message}`))
   }
 }
 

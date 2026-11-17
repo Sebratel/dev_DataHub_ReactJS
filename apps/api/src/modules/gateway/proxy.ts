@@ -103,6 +103,7 @@ gatewayProxyRouter.use('/:slug', async (req: Request, res: Response) => {
     recordCall({
       checkType: 'gateway', requestId, method, endpoint, status: consumer.status,
       durationMs: Date.now() - started, upstreamSlug: slug, error: consumer.error, ip,
+      credentialId: consumer.consumer?.id ?? null, consumerName: consumer.consumer?.name ?? null,
     })
     return sendDenied(res, consumer)
   }

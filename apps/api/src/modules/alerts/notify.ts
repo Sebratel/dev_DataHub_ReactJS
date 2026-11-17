@@ -8,8 +8,7 @@
 //
 // O canal é UM webhook por tenant que recebe {"text": "..."} — o formato do
 // Google Chat, que o Slack e um fluxo do n8n também aceitam. É a opção B da
-// D-MON-3 (a decisão formal do canal é da R6); escolhida por ser a que a casa
-// já usa no vigia de infraestrutura.
+// D-MON-3, confirmada na R6 (13/11): Google Chat, cadastrado só pelo master.
 //
 // Duas regras:
 //   • nunca derruba quem chamou. Alerta é efeito colateral: uma falha no

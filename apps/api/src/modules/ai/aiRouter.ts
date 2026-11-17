@@ -11,6 +11,7 @@ import type { AiMessage } from './provider.js'
 import { activeProvider } from './providerStore.js'
 import { AI_TOOLS, executeTool } from './tools.js'
 import { runAgent } from './agent.js'
+import { foldAndDeleteConversation } from './retention.js'
 
 export const aiRouter = Router()
 
@@ -80,11 +81,14 @@ aiRouter.get('/conversations/:id', ...authed, async (req, res) => {
 })
 
 aiRouter.delete('/conversations/:id', ...authed, async (req, res) => {
-  await db.query(
-    `delete from conversations
-      where tenant_id = (select id from tenants where slug = $1) and user_email = $2 and id = $3`,
+  const conv = (await db.query(
+    `select c.id from conversations c join tenants t on t.id = c.tenant_id
+     where t.slug = $1 and c.user_email = $2 and c.id = $3`,
     [req.user!.tenant, req.user!.email, req.params.id],
-  )
+  )).rows[0]
+  // Apagar pela tela também guarda os totais (D-MON-4): o uso do mês não
+  // pode encolher porque a pessoa limpou a lista.
+  if (conv) await foldAndDeleteConversation(String(conv.id))
   res.json({ ok: true })
 })
 

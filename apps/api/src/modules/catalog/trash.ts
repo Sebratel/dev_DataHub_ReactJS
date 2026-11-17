@@ -8,9 +8,10 @@
 //   POST   /api/v1/trash/:id/restore   → devolve ao catálogo
 //   DELETE /api/v1/trash/:id           → exclui de vez (só admin)
 //
-// Quem exclui: admin, qualquer conjunto; o DONO, os calculados que criou e
-// que não são oficiais. Excluir de vez é só de admin (D-DSP-2). O prazo de 30
-// dias roda pelo agendador (purgeExpiredTrash).
+// Quem exclui: fonte e calculado oficial, só o admin master (D-DSP-3, R5);
+// calculado não oficial, qualquer admin ou o DONO. Excluir de vez é só de
+// admin (D-DSP-2), e de master quando é fonte ou oficial. O prazo de 30 dias
+// roda pelo agendador (purgeExpiredTrash).
 // ─────────────────────────────────────────────────────────────────────────
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
@@ -107,6 +108,13 @@ export async function trashDataset(req: Request, datasetId: string): Promise<Tra
   )).rows[0]
   if (!ds) throw new TrashError(404, 'Conjunto de dados não encontrado.')
 
+  // D-DSP-3 (R5): fonte e oficial, só o master. Não basta ser admin porque
+  // qualquer admin concede admin a quem quiser (ver masterAdmins.ts).
+  if ((ds.kind !== 'derived' || ds.official) && !user.master) {
+    throw new TrashError(403, ds.official
+      ? 'Conjunto oficial: só um admin master exclui.'
+      : 'Conjunto de fonte: só um admin master exclui. O dono exclui os calculados que criou.')
+  }
   const admin = user.roles.includes('admin')
   if (!admin) {
     if (ds.kind !== 'derived' || ds.owner_email !== user.email) {
@@ -342,6 +350,11 @@ export async function purgeTrashItem(req: Request, itemId: string): Promise<void
   if (!item) throw new TrashError(404, 'Item não encontrado na lixeira.')
   if (item.restored_at) throw new TrashError(409, 'Este item foi restaurado; exclua o conjunto de novo, se for o caso.')
   if (item.purged_at) return
+  // Quem não podia mandar para a lixeira também não antecipa o fim dela.
+  const def = (item.snapshot as Snapshot).dataset
+  if ((def.kind !== 'derived' || def.official) && !req.user!.master) {
+    throw new TrashError(403, 'Fonte ou oficial: só um admin master exclui de vez.')
+  }
   await purgeItem(String(item.id))
   await db.query(`update trash_items set purged_at = now(), purged_by = $2 where id = $1`, [item.id, req.user!.email])
   await audit(req, 'datasets.purge', { type: 'dataset', id: String(item.slug) }, { trashId: String(item.id) })
@@ -388,7 +401,8 @@ trashRouter.get('/', requireAuth(), requireDb, async (req, res) => {
   const admin = req.user!.roles.includes('admin')
   const rows = (await db.query(
     `select i.id, i.kind, i.slug, i.name, i.owner_email, i.deleted_by, i.deleted_at, i.lake_path,
-            i.snapshot->'dataset'->>'kind' as dataset_kind
+            i.snapshot->'dataset'->>'kind' as dataset_kind,
+            i.snapshot->'dataset'->>'official' as dataset_official
        from trash_items i join tenants t on t.id = i.tenant_id
       where t.slug = $1 and i.restored_at is null and i.purged_at is null
         and ($2 or i.deleted_by = $3 or i.owner_email = $3)
@@ -401,6 +415,8 @@ trashRouter.get('/', requireAuth(), requireDb, async (req, res) => {
       id: String(r.id),
       kind: String(r.kind),
       datasetKind: r.dataset_kind === 'derived' ? 'derived' : 'source',
+      // ->> devolve o booleano do JSON como texto nos dois bancos.
+      official: String(r.dataset_official) === 'true' || String(r.dataset_official) === '1',
       slug: String(r.slug),
       name: String(r.name),
       ownerEmail: (r.owner_email as string | null) ?? null,

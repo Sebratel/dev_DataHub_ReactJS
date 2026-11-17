@@ -5,6 +5,7 @@
 // um banco de teste — é a API real, rota por rota, sem os trabalhos de fundo.
 // ─────────────────────────────────────────────────────────────────────────
 import express from 'express'
+import { encaminharErrosAsync, respostaDeErro } from './core/asyncRoutes.js'
 import { isDbAvailable } from './db/pool.js'
 import { requireAuth } from './modules/auth/middleware.js'
 import { connectionsRouter } from './modules/catalog/connectionsRouter.js'
@@ -36,6 +37,7 @@ import { qualityRouter } from './modules/quality/qualityRouter.js'
 import { platformRouter } from './modules/admin/platformRouter.js'
 
 export function createApp(): express.Express {
+  encaminharErrosAsync() // DSP-18: rota async que falha responde, em vez de pendurar
   const app = express()
 
   // ORDEM IMPORTA: o proxy do gateway precisa do corpo CRU para repassar ao
@@ -107,5 +109,6 @@ export function createApp(): express.Express {
   app.use('/api/public/v1', publicRouter)
 
   app.use((_req, res) => res.status(404).json({ error: 'Rota não encontrada.' }))
+  app.use(respostaDeErro)
   return app
 }

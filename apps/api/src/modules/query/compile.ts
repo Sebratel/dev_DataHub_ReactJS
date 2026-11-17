@@ -206,7 +206,13 @@ export function compileQuery(
       : grainExpr(resolve(g.field, 'agrupamento'), g.grain)
   ))
   const orderBy = (def.orderBy ?? []).map((o) => {
-    // Ordena por alias do select OU por campo do catálogo.
+    // Ordena por alias do select OU por campo do catálogo. Campo sensível não
+    // ordena para não-admin nem quando está no select: o DuckDB ordena pela
+    // coluna CRUA, não pela máscara, e com limit/offset a ordem reconstrói o
+    // valor escondido (oráculo de ordenação, T-SEG-01).
+    if (byKey.get(o.field)?.sensitive && !opts.admin) {
+      throw new Error(`O campo "${o.field}" é sensível e não pode ser usado em ordenação.`)
+    }
     if (!aliases.has(o.field)) resolve(o.field, 'ordenação')
     return `${qid(o.field)} ${o.dir === 'desc' ? 'desc' : 'asc'}`
   })

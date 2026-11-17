@@ -225,17 +225,18 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
     assert.ok(del.body.trashId, 'foi excluído sem passar pela lixeira')
   })
 
-  // `skip`, e não `todo`: o defeito É uma rejeição não tratada, e o executor de
-  // testes derruba o arquivo inteiro quando ela acontece. Vira `it` normal no
-  // dia em que as rotas assíncronas tratarem o erro (DSP-18).
-  it('T-DSP-10 endereço inválido de painel responde em segundos', {
-    skip: 'DSP-18 (confirmado à mão): id inválido gera rejeição não tratada e a requisição fica pendurada até o timeout do nginx.',
-  }, async () => {
-    const r = await fetch(`${baseUrl}/api/v1/dashboards/teste-invalido`, {
-      headers: { Authorization: `Bearer ${as('viewer').token}` }, signal: AbortSignal.timeout(5_000),
-    }).catch((e: Error) => e)
-    assert.ok(!(r instanceof Error), 'sem resposta em 5 s')
-    assert.ok((r as Response).status >= 400)
+  // DSP-18: a rejeição de rota async passou a virar resposta (core/asyncRoutes.ts).
+  it('T-DSP-10 endereço inválido de painel responde em segundos', async () => {
+    for (const p of ['/api/v1/dashboards/teste-invalido', '/api/v1/ai/conversations/teste-invalido']) {
+      const r = await fetch(`${baseUrl}${p}`, {
+        headers: { Authorization: `Bearer ${as('viewer').token}` }, signal: AbortSignal.timeout(5_000),
+      }).catch((e: Error) => e)
+      assert.ok(!(r instanceof Error), `${p}: sem resposta em 5 s`)
+      const res = r as Response
+      assert.ok(res.status >= 400 && res.status < 500, `${p}: ${res.status}`)
+      const corpo = await res.json() as { error?: unknown }
+      assert.equal(typeof corpo.error, 'string', 'a resposta de erro é JSON com a mensagem')
+    }
   })
 
   it('T-DSP-08 excluir conjunto com dependentes lista os dependentes e bloqueia', async () => {
@@ -338,6 +339,21 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
     assert.equal((await as('admin').patch(`/api/v1/datasets/${c.body.id}`, { official: true })).status, 200)
     assert.equal((await as('editor').del(`/api/v1/datasets/${c.body.id}`)).status, 403, 'dono excluiu um oficial')
   })
+
+  it('D-DSP-3 fonte e oficial: só o master manda para a lixeira e exclui de vez', async () => {
+    const fonte = await seedDataset({
+      slug: 'teste-comite-fonte-lixeira', fields: [{ key: 'id', type: 'number' }], rowsSql: 'select 1 as id',
+    })
+    assert.equal((await as('admin').del(`/api/v1/datasets/${fonte}`)).status, 403, 'admin sem master excluiu uma fonte')
+    const c = await as('editor').post('/api/v1/datasets/derived', { name: 'TESTE-COMITE oficial 2', sql: 'select id from teste_comite_aberto' })
+    assert.equal((await as('admin').patch(`/api/v1/datasets/${c.body.id}`, { official: true })).status, 200)
+    assert.equal((await as('admin').del(`/api/v1/datasets/${c.body.id}`)).status, 403, 'admin sem master excluiu um oficial')
+
+    const ok = await as('master').del(`/api/v1/datasets/${fonte}`)
+    assert.equal(ok.status, 200, JSON.stringify(ok.body))
+    assert.equal((await as('admin').del(`/api/v1/trash/${ok.body.trashId}`)).status, 403, 'admin sem master excluiu de vez uma fonte')
+    assert.equal((await as('master').del(`/api/v1/trash/${ok.body.trashId}`)).status, 200)
+  })
 })
 
 // ── Monitoramento ──────────────────────────────────────────────────────────
@@ -410,9 +426,7 @@ describe('T-MON-02..05 monitoramento', () => {
     assert.ok(usado, 'last_used_at não foi atualizado')
   })
 
-  it('T-MON-05 a recusa por cota (429) fica ligada ao token', {
-    todo: 'MON-07: a linha do 429 na telemetria sai sem o token que a causou.',
-  }, async () => {
+  it('T-MON-05 a recusa por cota (429) fica ligada ao token (MON-07)', async () => {
     const t = await as('admin').post('/api/v1/credentials', { name: 'TESTE-COMITE 429', datasetSlugs: ['teste-comite-aberto'] })
     await as('admin').put(`/api/v1/gateway/credentials/${t.body.id}/policy`, { quotaPerDay: 1 })
     await anon.get('/api/public/v1/datasets/teste-comite-aberto/rows?limit=1', t.body.token)

@@ -13,6 +13,7 @@ import { listParquet, datasetDir } from '../../core/lake.js'
 import { consolidar } from './consolidate.js'
 import { criarDiretorio, enviarArquivo, DatabricksError } from './client.js'
 import { montarManifesto } from './manifest.js'
+import { notifyDataset } from '../alerts/notify.js'
 import type { RecencyKey } from '../sync/recency.js'
 
 // `dt` e `HHmm` organizam as pastas em hora de São Paulo — é como alguém
@@ -127,18 +128,34 @@ export function decidirPartes(
 
 // Duas falhas seguidas no mesmo conjunto deixam de ser azar e viram defeito: ou
 // a credencial venceu, ou a permissão mudou, ou o volume sumiu. Nenhum desses
-// se conserta sozinho, então alguém precisa saber.
-async function alertarSeReincidente(slug: string): Promise<void> {
-  const { rows } = await db.query(
-    `select status from databricks_sync_runs where dataset_slug = $1
-      order by started_at desc limit 2`,
-    [slug],
-  )
-  if (rows.length === 2 && rows.every((r) => r.status === 'FAILED')) {
-    console.error(
-      `[databricks][ALERTA] ${slug}: 2 envios seguidos falharam. ` +
-      'Confira credencial, permissão no volume e se o workspace está no ar.',
-    )
+// se conserta sozinho, então alguém precisa saber — no Chat desde a R6
+// (D-MON-3), e só na TROCA: ao virar a 2ª falha seguida, e ao voltar depois
+// disso. Os 13 ciclos diários de um conjunto quebrado não viram 13 avisos.
+// SKIPPED fica de fora da conta: "nada mudou" não diz se o envio funciona.
+export async function avisarTrocaDatabricks(ds: { id: string; slug: string }, erro: string | null): Promise<void> {
+  const ultimos = (await db.query(
+    `select status from databricks_sync_runs where dataset_slug = $1 and status in ('SUCCESS', 'FAILED')
+      order by started_at desc limit 3`,
+    [ds.slug],
+  )).rows.map((r) => String(r.status))
+  const [agora, p1, p2] = ultimos
+  if (agora === 'FAILED' && p1 === 'FAILED' && p2 !== 'FAILED') {
+    console.error(`[databricks][ALERTA] ${ds.slug}: 2 envios seguidos falharam.`)
+    await notifyDataset(ds.id, {
+      key: `databricks:failed:${ds.id}`, kind: 'databricks-failed',
+      title: `Envio ao Databricks falhando: ${ds.slug}`,
+      lines: [
+        '2 envios seguidos falharam.',
+        erro ? `Último erro: ${erro.slice(0, 300)}` : '',
+        'Confira credencial, permissão no volume e se o workspace está no ar.',
+      ],
+    })
+  } else if (agora === 'SUCCESS' && p1 === 'FAILED' && p2 === 'FAILED') {
+    await notifyDataset(ds.id, {
+      key: `databricks:ok:${ds.id}:${Date.now()}`, kind: 'databricks-ok',
+      title: `Envio ao Databricks voltou: ${ds.slug}`,
+      lines: ['O último envio funcionou.'],
+    })
   }
 }
 
@@ -310,6 +327,9 @@ export async function publicarDataset(
       `[databricks] ${ds.slug}: ${cons.rowCount} linha(s) de ${cons.sourceParts} parte(s) ` +
       `enviadas para ${camada}/${ds.slug}/dt=${dt}.`,
     )
+    // O envio já foi: um erro aqui não pode virar FAILED no catch abaixo.
+    await avisarTrocaDatabricks(ds, null).catch((e) =>
+      console.warn(`[databricks] aviso de volta não registrado: ${(e as Error).message}`))
     return {
       status: 'SUCCESS', runId, rowCount: cons.rowCount, sourceParts: cons.sourceParts,
       filePath: arquivos[0]?.volume, attempts: tentativas, warning: cons.warning,
@@ -322,7 +342,7 @@ export async function publicarDataset(
         runId, datasetId: ds.id, slug: ds.slug, status: 'FAILED', mode: ds.databricks_mode,
         attempts: 0, erro: erro.slice(0, 500), inicio,
       })
-      await alertarSeReincidente(ds.slug)
+      await avisarTrocaDatabricks(ds, erro)
     } catch (e2) {
       console.error(`[databricks] falhei até ao registrar a falha: ${(e2 as Error).message}`)
     }
