@@ -302,7 +302,16 @@ Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos d
   - envio ao Databricks com 2 falhas seguidas;
   - endpoint da verificação de saúde com 2 falhas seguidas (≈ 10 min na
     cadência padrão de 5 min);
-  - disco do lake acima de `SYNC_DISK_WARN_PERCENT` (conferido a cada 15 min).
+  - disco do lake acima de `SYNC_DISK_WARN_PERCENT` (conferido a cada 15 min);
+  - fonte fora do ar (conexão recusada, host fora, banco reiniciando): um
+    aviso por FONTE, "fora do ar" e "de volta".
+- **Pausa por falhas seguidas:** 3 falhas seguidas pausam o conjunto, e só uma
+  ação manual (Sincronizar agora) retoma. **Fonte inalcançável não conta**
+  (incidente de 17/11, quando o Voalle recusou conexão por alguns minutos e os
+  conjuntos pararam de vez): a conexão entra em espera crescente (2, 4, 8, 15 e
+  30 min), o agendador não a tenta antes disso e o primeiro sucesso encerra a
+  espera. Pausas antigas por fonte fora voltam sozinhas no boot e a cada 15 min.
+  Ver `modules/sync/sourceOutage.ts`.
 - **Divergiu, e agora?** Abra a linha: o dia que não bate aponta a causa. Linha
   a menos num dia com muitos registros de mesmo carimbo = empate na fronteira do
   lote (QLD-01); linha a mais = registro apagado na fonte (QLD-06); "nunca
