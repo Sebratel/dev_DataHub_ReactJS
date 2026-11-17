@@ -24,6 +24,7 @@ import { runStaleChecks } from '../quality/checks.js'
 import { purgeExpiredTrash } from '../catalog/trash.js'
 import { purgeExpiredConversations } from '../ai/retention.js'
 import { checkDiskAlert } from '../alerts/disk.js'
+import { resumeSourceOutagePauses, sourceWaitUntil } from './sourceOutage.js'
 import { isWithinSchedule } from '@datahub/shared'
 
 function msUntilNextMinute(): number {
@@ -65,7 +66,7 @@ async function tickHourlyAndDaily(hour: number): Promise<void> {
 // de o tick geral ter deixado de ser por hora.
 async function tickSchedules(now: Date): Promise<void> {
   const rows = (await db.query(
-    `select d.id, d.slug, d.last_sync_at,
+    `select d.id, d.slug, d.last_sync_at, d.connection_id, d.kind,
             s.interval_minutes, s.start_time, s.end_time, s.weekdays
        from datasets d join sync_schedules s on s.id = d.schedule_id
       where d.sync_cadence = 'schedule' and d.sync_mode in ('snapshot', 'incremental')
@@ -78,6 +79,9 @@ async function tickSchedules(now: Date): Promise<void> {
     const last = r.last_sync_at ? new Date(r.last_sync_at as string).getTime() : 0
     const dueMs = Number(r.interval_minutes) * 60_000
     if (now.getTime() - last < dueMs) continue
+    // Fonte fora do ar: depois de uma falha o conjunto segue "vencido" a cada
+    // minuto; sem esta espera, ele martelaria a fonte e ocuparia a fila global.
+    if (r.kind !== 'derived' && r.connection_id && sourceWaitUntil(String(r.connection_id), now.getTime())) continue
     console.log(`[scheduler] agendamento: "${String(r.slug)}" vencido (>= ${r.interval_minutes} min dentro da janela).`)
     void enqueueSync(String(r.id)) // não bloqueia o tick deste minuto pelos demais
   }
@@ -116,6 +120,9 @@ async function tick(): Promise<void> {
     // Disco do lake acima do limite vai para o Chat (MON-03, D-MON-3).
     void checkDiskAlert().catch((e) =>
       console.warn(`[alertas] verificação do disco falhou: ${(e as Error).message}`))
+    // Pausados só porque a fonte não respondia voltam sozinhos (sourceOutage.ts).
+    void resumeSourceOutagePauses().catch((e) =>
+      console.warn(`[sync] retomada de pausas por fonte fora falhou: ${(e as Error).message}`))
   }
 }
 

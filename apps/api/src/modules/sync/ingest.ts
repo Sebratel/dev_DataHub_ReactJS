@@ -23,6 +23,7 @@ import { materializeDerived, referencedSlugs } from '../transform/derive.js'
 import { recencyExpression, type RecencyKey } from './recency.js'
 import { publicarDataset } from '../databricks/publish.js'
 import { notifyDataset } from '../alerts/notify.js'
+import { errorText, onSourceFailure, onSourceSuccess } from './sourceOutage.js'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -149,8 +150,14 @@ export async function closeOrphanRuns(): Promise<number> {
 // produção.
 const FALHAS_ATE_PAUSAR = 3
 
-async function registraFalha(datasetId: string, slug: string, erro: string): Promise<void> {
+async function registraFalha(
+  datasetId: string, slug: string, erro: string, connectionId: string | null,
+): Promise<void> {
   try {
+    // Fonte inalcançável (conexão recusada, host fora, banco reiniciando) não
+    // conta para a pausa: entra em espera por conexão — ver sourceOutage.ts e o
+    // incidente de 17/11.
+    if (await onSourceFailure({ id: datasetId, slug, connectionId }, erro)) return
     const r = (await db.query(
       `update datasets set sync_failures = sync_failures + 1, updated_at = now()
         where id = $1 returning sync_failures`,
@@ -871,6 +878,10 @@ async function runSync(datasetId: string): Promise<string> {
       [run.id, total, dirBytes(dir), compacted, compactMs, listParquet(dir).length],
     )
     console.log(`[sync] ${ds.slug}: ${mode}, ${total} linha(s) novas, total no lake ${count}.`)
+    // A fonte respondeu: se ela estava em espera por queda, a espera acaba e o
+    // "de volta" sai uma vez. Sem await: aviso não segura a fila.
+    void onSourceSuccess({ id: datasetId, connectionId: (ds.connection_id as string | null) ?? null })
+      .catch((e) => console.warn(`[sync] aviso de fonte de volta falhou: ${(e as Error).message}`))
     // Publicação no Databricks: DEPOIS de a sincronização estar fechada no
     // banco, e sem poder desfazê-la. `publicarDataset` não lança — se lançasse,
     // uma indisponibilidade do Databricks viraria "a sincronização falhou", com
@@ -886,10 +897,14 @@ async function runSync(datasetId: string): Promise<string> {
   } catch (e) {
     const cancelled = e instanceof SyncCancelled
     // Cancelamento não conta como falha: foi alguém pedindo para parar.
-    if (!cancelled) await registraFalha(datasetId, String(ds.slug), (e as Error).message)
+    const erro = errorText(e)
+    if (!cancelled) {
+      await registraFalha(datasetId, String(ds.slug), erro,
+        ds.kind === 'derived' ? null : (ds.connection_id as string | null) ?? null)
+    }
     await db.query(
       `update sync_runs set status = $2, rows = $3, error = $4, finished_at = now() where id = $1`,
-      [run.id, cancelled ? 'cancelled' : 'error', total, cancelled ? null : (e as Error).message],
+      [run.id, cancelled ? 'cancelled' : 'error', total, cancelled ? null : erro],
     )
     if (cancelled) {
       // Temporário descartado no finally; Parquet antigo permanece intacto.

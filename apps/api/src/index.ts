@@ -14,6 +14,7 @@ import { startScheduler, startHealthChecks } from './modules/sync/scheduler.js'
 import { reindexEmbeddings } from './modules/ai/embeddings.js'
 import { cleanStaging, faxinaLake } from './core/lake.js'
 import { closeOrphanRuns } from './modules/sync/ingest.js'
+import { resumeSourceOutagePauses } from './modules/sync/sourceOutage.js'
 import { closeOrphanReconciles } from './modules/quality/reconcile.js'
 import { reloadConnections, avisoDeConexoes } from './connectors/store.js'
 import { reloadMasterAdmins } from './modules/auth/masterAdmins.js'
@@ -116,6 +117,11 @@ async function iniciar(): Promise<void> {
       .catch((e) => console.warn(`[sync] falha ao fechar execuções órfãs: ${(e as Error).message}`))
     // Conferências que esperavam a fila do processo que morreu: ninguém mais as
     // roda, e a pendente bloquearia o próximo "Conciliar agora" do conjunto.
+    // Pausados só porque a fonte não respondia (regra antiga): voltam já no
+    // boot, sem esperar a rodada de 15 min do agendador. Ver sourceOutage.ts.
+    await resumeSourceOutagePauses()
+      .then((n) => { if (n) console.log(`[sync] ${n} conjunto(s) pausado(s) por fonte fora do ar retomado(s) no boot.`) })
+      .catch((e) => console.warn(`[sync] falha ao retomar pausas por fonte fora: ${(e as Error).message}`))
     await closeOrphanReconciles()
       .then((n) => { if (n) console.log(`[qualidade] ${n} conciliação(ões) interrompida(s) fechada(s) no boot.`) })
       .catch((e) => console.warn(`[qualidade] falha ao fechar conciliações órfãs: ${(e as Error).message}`))
