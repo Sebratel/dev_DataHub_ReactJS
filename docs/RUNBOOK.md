@@ -352,6 +352,41 @@ Conjunto manual, pausado ou ao vivo não tem prazo cobrado.
 
 ---
 
+## Pacotes de conjuntos (catálogo como código, desde 19/11/2026)
+
+Os pacotes ficam em **Conjuntos › Pacotes**: o admin vê, o master instala. Cada pacote está em
+`apps/api/src/modules/catalog/packs/` e traz duas coisas:
+- os calculados (prata e ouro), cada um com o próprio SQL;
+- as tabelas de origem de que eles precisam.
+
+**Instalar** (pode repetir sem medo: o que já existe não é mexido):
+- **Fonte.** O pacote procura um conjunto que já copie aquela tabela, pelo schema e pela tabela, não pelo nome.
+  - Se achar, reaproveita.
+  - Se não achar, publica um `bronze_voalle_<tabela>` só com as colunas que o pacote usa (sem nome nem documento de pessoa), aplica a regra de carga do pacote e põe a carga na fila.
+  - Se o conjunto já existe mas falta coluna, o pacote **não mexe nele**. O relatório avisa quais colunas faltam, e os calculados que dependem dele ficam de fora.
+- **Calculado.** É criado com o nome do pacote, em **cascata**, e recalcula quando a fonte termina de carregar.
+  - Nasce **privado**: libere o acesso por conjunto, para as áreas.
+  - Até a primeira carga da fonte terminar, ele mostra "Aguardando a primeira carga de …". Não é erro do SQL.
+- **Conexão.** O Voalle é lido pela conexão que já copia mais tabelas do schema `erp`. Se não houver nenhuma, usa a fonte embutida `elleven`.
+
+**Onda 1:** 29 conjuntos, 2 prata e 27 ouro, sobre 10 tabelas do Voalle.
+- Assuntos: base, receita, cancelamento e financeiro.
+- O SQL foi validado contra o Voalle real em 19/11/2026:
+  - base de 88.430 contratos;
+  - cancelamento de 1,7 a 1,9% ao mês;
+  - faturamento de ~R$ 9,8 mi por mês;
+  - recebimento de ~R$ 9,3 mi por mês.
+
+**Regras que valem para os próximos pacotes** (descobertas no banco):
+- **Fatura.** Todo mês há dois títulos com o mesmo valor: a fatura `FAT…` (`bill_title_id` vazio) e os componentes que apontam para ela. As baixas também vêm em dobro. Conte só a fatura.
+- **Tarifa de baixa.** A natureza `DF - TARIFA BAIXA DE TÍTULO` não é cobrança de cliente; fica fora.
+- **Plano anual.** Gera as parcelas até 12 meses à frente, e isso explica o "a vencer" alto.
+- **Instalação.** `approval_date` com stage 3. `created` é a venda, e `1000-01-01` é o "nulo" do Voalle.
+- **Taxa de cancelamento.** Cancelados no mês ÷ base no fim do mês anterior. Ficam fora o lote (`FNC.CAN.020`), o duplicado (`OTR.CAN.006`), a telefonia (tipo 19) e quem nunca foi instalado.
+- **Saldo antigo em aberto.** É quase todo de contrato já cancelado.
+
+---
+
 ## 10. Recuperação rápida (ordem sugerida num incidente)
 
 0. **Operar › Saúde da plataforma** — "Precisa de atenção agora" lista, do

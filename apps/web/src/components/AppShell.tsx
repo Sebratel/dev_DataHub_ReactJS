@@ -76,7 +76,7 @@ const CRUMB: Record<string, string> = {
   'ai-providers': 'Provedores de IA', schedules: 'Agendamentos',
   autotune: 'Padronizar atualização', 'sync-rules': 'Regras de atualização',
   quality: 'Qualidade dos dados', health: 'Saúde da plataforma',
-  lixeira: 'Lixeira', 'padronizar-nomes': 'Padronizar nomes',
+  lixeira: 'Lixeira', 'padronizar-nomes': 'Padronizar nomes', pacotes: 'Pacotes de conjuntos',
 }
 
 function NavItem({ to, label, icon: Icon, end }: NavEntry) {

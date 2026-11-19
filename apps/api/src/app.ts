@@ -11,6 +11,7 @@ import { requireAuth } from './modules/auth/middleware.js'
 import { connectionsRouter } from './modules/catalog/connectionsRouter.js'
 import { datasetsRouter } from './modules/catalog/datasetsRouter.js'
 import { namingRouter } from './modules/catalog/namingRouter.js'
+import { packsRouter } from './modules/catalog/packsRouter.js'
 import { trashRouter } from './modules/catalog/trash.js'
 import { resolveDatasetSlugAlias } from './core/slugAliases.js'
 import { syncRouter } from './modules/sync/syncRouter.js'
@@ -98,6 +99,7 @@ export function createApp(): express.Express {
   app.use('/api/v1/datasets', databricksRouter) // /:id/databricks — antes do genérico
   app.use('/api/v1/datasets', datasetsRouter)
   app.use('/api/v1/trash', trashRouter) // lixeira de conjuntos (30 dias)
+  app.use('/api/v1/packs', packsRouter) // pacotes de conjuntos calculados (catálogo como código)
   app.use('/api/v1/databricks', databricksAdminRouter)
 
   // Biblioteca de métricas e dashboards.

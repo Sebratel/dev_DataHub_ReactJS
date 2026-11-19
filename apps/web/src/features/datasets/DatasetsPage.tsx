@@ -8,7 +8,7 @@
 // é também o que torna a ordenação por cabeçalho possível.
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock, CalendarClock, Server, Zap, Loader2, ArrowDownUp, Trash2, Tags } from 'lucide-react'
+import { Boxes, GitMerge, Database, Plus, Layers, BadgeCheck, Clock, CalendarClock, Server, Zap, Loader2, ArrowDownUp, Trash2, Tags, Package } from 'lucide-react'
 import type { DatasetSummary, DerivedCadenceItem } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
@@ -269,6 +269,14 @@ export default function DatasetsPage() {
             className="flex h-[30px] items-center gap-1.5 rounded-lg border border-zinc-200 px-3 text-[12px] font-medium text-zinc-600 transition-colors hover:border-zinc-300 dark:border-zinc-700 dark:text-zinc-300"
           >
             <Tags size={13} strokeWidth={1.8} /> Padronizar nomes
+          </Link>
+        )}
+        {isAdmin && (
+          <Link
+            to="/pacotes"
+            className="flex h-[30px] items-center gap-1.5 rounded-lg border border-zinc-200 px-3 text-[12px] font-medium text-zinc-600 transition-colors hover:border-zinc-300 dark:border-zinc-700 dark:text-zinc-300"
+          >
+            <Package size={13} strokeWidth={1.8} /> Pacotes
           </Link>
         )}
         {canEdit && (

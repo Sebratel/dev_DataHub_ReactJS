@@ -579,6 +579,21 @@ export async function materializeDerived(ds: {
     // Exclui o próprio slug: um derivado não referencia a si mesmo (leria a
     // versão anterior). Cadeias derivado→derivado usam os demais materializados.
     const refs = await lakeRefs(ds.tenantSlug, { excludeSlug: ds.slug })
+    // Insumo que existe no catálogo mas ainda não terminou a PRIMEIRA carga
+    // (pacote recém-instalado, fonte nova): dizer isso, em vez do "não existe
+    // no lake" que manda a pessoa procurar erro no SQL. A cascata recalcula
+    // sozinha quando a carga terminar.
+    const comDados = new Set(refs.map((r) => r.slug))
+    const doCatalogo = (await db.query(
+      `select d.slug from datasets d join tenants t on t.id = d.tenant_id
+        where t.slug = $1 and d.kind in ('source', 'derived') and d.id <> $2`,
+      [ds.tenantSlug, ds.id],
+    )).rows.map((r) => String(r.slug))
+    const semCarga = referencedSlugs(ds.transformSql, doCatalogo).filter((s) => !comDados.has(s))
+    if (semCarga.length) {
+      throw new Error(`Aguardando a primeira carga de ${semCarga.join(', ')}. ` +
+        'Este calculado recalcula sozinho quando ela terminar.')
+    }
     const wrapped = await compileLakeSql(ds.transformSql, refs)
 
     // Escreve com sufixo .writing e só renomeia no fim: um COPY interrompido
