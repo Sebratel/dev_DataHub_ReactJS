@@ -93,6 +93,19 @@ from api_metricas
 group by endpoint
 order by chamadas desc`
 
+// O resumo nasce como "api-resumo" e pode ser renomeado para o padrão de nomes
+// (catalog/naming.ts): o nome antigo fica como apelido e continua achando-o —
+// sem isto, o boot seguinte provisionaria um segundo resumo.
+async function resumoDoTenant(tenantId: string): Promise<{ id: string } | undefined> {
+  return (await db.query(
+    `select d.id from datasets d
+      where d.tenant_id = $1
+        and (d.slug = $2 or d.id in (select a.dataset_id from dataset_slug_aliases a
+                                      where a.tenant_id = $1 and a.old_slug = $2))`,
+    [tenantId, 'api-resumo'],
+  )).rows[0] as { id: string } | undefined
+}
+
 export async function ensureApiSummaryDerived(): Promise<void> {
   if (!isDbAvailable()) return
   try {
@@ -102,8 +115,7 @@ export async function ensureApiSummaryDerived(): Promise<void> {
         `select 1 from datasets where tenant_id = $1 and connection_id = 'datahub-meta' and object_name = 'api_call_metrics'`, [t.id],
       )).rows[0]
       if (!base) continue
-      const taken = (await db.query('select 1 from datasets where tenant_id = $1 and slug = $2', [t.id, 'api-resumo'])).rows[0]
-      if (taken) continue
+      if (await resumoDoTenant(String(t.id))) continue
       const criado = (await db.query(
         `insert into datasets (tenant_id, kind, transform_sql, connection_id, schema_name, object_name,
                                slug, name, description, sync_mode, sync_cadence, owner_email)
@@ -144,7 +156,7 @@ export async function ensureApiMetricsDashboard(): Promise<void> {
         [t.id],
       )).rows[0]
 
-      const der = (await db.query('select id from datasets where tenant_id = $1 and slug = $2', [t.id, 'api-resumo'])).rows[0]
+      const der = await resumoDoTenant(String(t.id))
       type W = { datasetId: string; title: string; type: string; dimension: string | null; metric: unknown; filters: unknown[]; size: string }
       const b = String(ds.id)
       const widgets: W[] = [

@@ -56,7 +56,7 @@ databricksAdminRouter.get('/status', ...adminOnly, async (_req, res) => {
     datasets: rows.map((r) => ({
       slug: r.slug,
       mode: r.databricks_mode,
-      layer: camadaDe(String(r.kind), r.databricks_layer as string | null),
+      layer: camadaDe(String(r.kind), r.databricks_layer as string | null, String(r.slug)),
       table: slugDeTabela(String(r.slug)),
       lastRun: r.status
         ? {

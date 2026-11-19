@@ -21,6 +21,7 @@ import { usageSummary } from '../../core/usage.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
 import { trashDataset, datasetDependents, sendTrashError } from './trash.js'
 import { camadaDe, slugDeTabela } from '../databricks/publish.js'
+import { novoNome, areaDaFonte } from './naming.js'
 
 export const datasetsRouter = Router()
 
@@ -51,13 +52,6 @@ function mapType(dataType: string): FieldType {
   if (/time/.test(dt)) return 'text'
   if (/json/.test(dt)) return 'json'
   return 'text'
-}
-
-function slugify(name: string): string {
-  return name
-    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-    .slice(0, 60) || 'dataset'
 }
 
 // "Cliente ID" a partir de client_id — label inicial legível para a coluna.
@@ -117,7 +111,7 @@ function toSummary(row: Record<string, unknown>, admin: boolean): DatasetSummary
         mode: String(row.databricks_mode ?? 'SNAPSHOT') as 'SNAPSHOT' | 'INCREMENTAL',
         layer: (row.databricks_layer as 'bronze' | 'prata' | 'ouro' | null) ?? null,
         effectiveLayer: camadaDe(
-          String(row.kind), (row.databricks_layer as string | null) ?? null,
+          String(row.kind), (row.databricks_layer as string | null) ?? null, String(row.slug),
         ) as 'bronze' | 'prata' | 'ouro',
         table: slugDeTabela(String(row.slug)),
       },
@@ -217,13 +211,10 @@ datasetsRouter.post('/', requireAuth({ role: 'admin' }), async (req, res) => {
     await client.query('begin')
     const tenant = (await client.query('select id from tenants where slug = $1', [req.user!.tenant])).rows[0]
 
-    // Slug único no tenant: acrescenta -2, -3… se já existir.
-    const base = slugify(displayName)
-    const taken = new Set(
-      (await client.query('select slug from datasets where tenant_id = $1', [tenant.id])).rows.map((r) => r.slug),
-    )
-    let slug = base
-    for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
+    // Nome no padrão (naming.ts): bronze_<fonte>_<nome>, único no tenant.
+    const slug = await novoNome(client, String(tenant.id), {
+      camada: 'bronze', area: areaDaFonte(String(connectionId), String(schema)), nome: displayName,
+    })
 
     const ds = (await client.query(
       `insert into datasets (tenant_id, connection_id, schema_name, object_name, slug, name, description, owner_email)
@@ -287,10 +278,9 @@ datasetsRouter.post('/http', requireAuth({ role: 'admin' }), async (req, res) =>
   try {
     await client.query('begin')
     const tenant = (await client.query('select id from tenants where slug = $1', [req.user!.tenant])).rows[0]
-    const base = slugify(displayName)
-    const taken = new Set((await client.query('select slug from datasets where tenant_id = $1', [tenant.id])).rows.map((r) => r.slug))
-    let slug = base
-    for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
+    const slug = await novoNome(client, String(tenant.id), {
+      camada: 'bronze', area: areaDaFonte(String(connectionId)), nome: displayName,
+    })
 
     const ds = (await client.query(
       `insert into datasets (tenant_id, connection_id, schema_name, object_name, slug, name, description,

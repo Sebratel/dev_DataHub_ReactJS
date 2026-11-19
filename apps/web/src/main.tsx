@@ -22,6 +22,7 @@ import DatasetsPage from '@/features/datasets/DatasetsPage'
 import DatasetDetailPage from '@/features/datasets/DatasetDetailPage'
 import DerivedDatasetPage from '@/features/datasets/DerivedDatasetPage'
 import TrashPage from '@/features/datasets/TrashPage'
+import NamingPage from '@/features/datasets/NamingPage'
 import ExplorerPage from '@/features/explorer/ExplorerPage'
 import MetricsPage from '@/features/metrics/MetricsPage'
 import DashboardsPage from '@/features/dashboards/DashboardsPage'
@@ -42,6 +43,7 @@ const router = createBrowserRouter([
       { path: 'datasets/:slug/explore', element: <ExplorerPage /> },
       // Fora de /datasets/: lá, "lixeira" seria lido como o slug de um conjunto.
       { path: 'lixeira', element: <TrashPage /> },
+      { path: 'padronizar-nomes', element: <NamingPage /> },
       { path: 'dashboards', element: <DashboardsPage /> },
       { path: 'dashboards/:id', element: <DashboardPage /> },
       { path: 'metrics', element: <MetricsPage /> },

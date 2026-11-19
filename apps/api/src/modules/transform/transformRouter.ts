@@ -18,6 +18,7 @@ import {
 } from './derive.js'
 import { canQuery, type AccessUser } from '../../core/access.js'
 import { recordSqlVersion, listSqlVersions, OFICIAL_CONGELADO } from './versions.js'
+import { novoNome } from '../catalog/naming.js'
 
 export const transformRouter = Router()
 
@@ -33,11 +34,6 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
   next()
 }
 const editorOnly = [requireAuth({ role: 'editor' }), requireDb]
-
-function slugify(name: string): string {
-  return name.normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'derivado'
-}
 
 // Valida o SQL de ponta a ponta: guard + denylist + permissão + execução real
 // (LIMIT 50). Devolve o erro amigável do DuckDB quando o SQL não compila.
@@ -135,9 +131,9 @@ transformRouter.post('/derived', ...editorOnly, async (req, res) => {
   const taken = new Set(
     (await db.query('select slug from datasets where tenant_id = $1', [tenant.id])).rows.map((r) => r.slug),
   )
-  const base = slugify(String(name))
-  let slug = base
-  for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
+  // Nome no padrão (catalog/naming.ts): calculado nasce prata, a não ser que o
+  // nome dado já comece por uma camada ("ouro …").
+  const slug = await novoNome(db, String(tenant.id), { camada: 'prata', nome: String(name) })
 
   // Cadência padrão: CASCATA, não diária. Um derivado não lê fonte nenhuma —
   // ele recalcula um SQL sobre o lake —, então relógio próprio nele só duplica

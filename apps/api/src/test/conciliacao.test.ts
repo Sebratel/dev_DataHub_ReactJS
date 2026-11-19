@@ -15,6 +15,9 @@ import type { AddressInfo } from 'node:net'
 import { as, db, shutdown, connectTestSource, fonteDb, publishSource, syncAndWait, waitFor } from './harness.js'
 
 let conn = ''
+// O nome do conjunto nasce no padrão (bronze_<fonte>_cadastro), não é o da tabela.
+const cadastroSlug = async () =>
+  String((await db.query(`select slug from datasets where object_name = 'cadastro'`)).rows[0].slug)
 const tenantId = async () => String((await db.query(`select id from tenants where slug = 'sebratel'`)).rows[0].id)
 
 /** "Conciliar agora" pela rota real e espera a conferência terminar. */
@@ -155,7 +158,7 @@ describe('Quem pode o quê', () => {
 
   it('conjunto calculado é recusado com o motivo', async () => {
     const r = await as('admin').post('/api/v1/datasets/derived', {
-      name: 'TESTE-COMITE calc conciliação', sql: 'select id from cadastro',
+      name: 'TESTE-COMITE calc conciliação', sql: `select id from ${await cadastroSlug()}`,
     })
     assert.equal(r.status, 201, JSON.stringify(r.body))
     const c = await as('admin').post(`/api/v1/quality/datasets/${r.body.id}/reconcile`)
@@ -166,7 +169,8 @@ describe('Quem pode o quê', () => {
   it('a visão geral lista as fontes com a última conferência e as faixas em vigor', async () => {
     const r = await as('admin').get('/api/v1/quality/overview')
     assert.equal(r.status, 200)
-    const cad = r.body.datasets.find((d: any) => d.slug === 'cadastro')
+    const slug = await cadastroSlug()
+    const cad = r.body.datasets.find((d: any) => d.slug === slug)
     assert.equal(cad.lastRun.status, 'match')
     assert.equal(cad.band, 'small')
     assert.equal(cad.ineligible, null)
@@ -235,7 +239,7 @@ describe('P-QLD-2: a divergência chega ao canal, uma vez', () => {
     const ds = await publishSource(conn, 'quebra', { syncMode: 'snapshot' })
     await fonteDb.query('drop table fonte.quebra')
     for (let i = 0; i < 3; i++) await syncAndWait(ds.id).catch(() => { /* falha esperada */ })
-    const chegou = await waitFor(async () => recebidos.some((m) => /Carga pausada: quebra/.test(m.text)), 5_000)
+    const chegou = await waitFor(async () => recebidos.some((m) => /Carga pausada: \S*quebra/.test(m.text)), 5_000)
     assert.ok(chegou, 'a pausa automática não avisou ninguém')
   })
 })

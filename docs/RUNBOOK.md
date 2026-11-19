@@ -333,6 +333,25 @@ Conjunto manual, pausado ou ao vivo não tem prazo cobrado.
 
 ---
 
+## Padrão de nomes dos conjuntos (desde 19/11/2026)
+
+`<camada>_<área>_<assunto>[_<período>]`, em minúsculas, com `_` entre as palavras.
+
+- Camadas: `bronze` (cópia da fonte), `prata` (tratado), `ouro` (pronto para a área).
+- Exemplos: `bronze_voalle_contratos`, `prata_cancelamentos_mensal`, `ouro_financeiro_titulos_abertos_diario`.
+- Usamos sublinhado porque traço não vale como nome no SQL: só funciona entre aspas.
+- Conjunto novo já nasce no padrão. Fonte vira `bronze_<fonte>_<nome>`; calculado e materializado de notebook viram `prata_<nome>`, a não ser que o nome dado já comece por uma camada.
+- Os conjuntos antigos são renomeados em **Conjuntos › Padronizar nomes**, só por admin. Conjunto oficial, só o master renomeia. A tela sugere o nome e renomeia um a um ou todos de uma vez.
+- O nome antigo vira **apelido** (`dataset_slug_aliases`, migration 046). Quem já usa o nome antigo continua funcionando: link, rota da API pública, SQL de calculado, notebook e modelo.
+- Na renomeação, o escopo dos tokens, a API do construtor, o modelo e o filtro de aba de painel passam a usar o nome novo. A pasta do lake muda junto.
+- Nenhum conjunto novo pode usar um nome que virou apelido.
+- O conjunto não pode estar carregando nem na fila na hora de renomear.
+- No Databricks, a camada vira o schema e sai do nome da tabela: `bronze.voalle_contratos`.
+- O próximo envio de um conjunto renomeado é COMPLETO, para uma tabela com o nome novo. A tabela antiga fica lá e deve ser apagada à mão.
+- Os arquivos antigos no bucket GCS também ficam, com o caminho antigo.
+
+---
+
 ## 10. Recuperação rápida (ordem sugerida num incidente)
 
 0. **Operar › Saúde da plataforma** — "Precisa de atenção agora" lista, do

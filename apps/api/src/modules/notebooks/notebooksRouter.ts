@@ -23,6 +23,7 @@ import { enqueueSync } from '../sync/ingest.js'
 import { canExport, publishBlocked, PUBLICAR_SO_ADMIN, type AccessUser } from '../../core/access.js'
 import { recordUsage } from '../../core/usage.js'
 import { recordSqlVersion } from '../transform/versions.js'
+import { novoNome } from '../catalog/naming.js'
 
 export const notebooksRouter = Router()
 
@@ -480,12 +481,7 @@ notebooksRouter.post('/materialize', requireAuth({ role: 'editor' }), requireDb,
     )
 
     const tenant = (await db.query('select id from tenants where slug = $1', [req.user!.tenant])).rows[0]
-    const taken = new Set(
-      (await db.query('select slug from datasets where tenant_id = $1', [tenant.id])).rows.map((r) => r.slug),
-    )
-    const base = slugify(name)
-    let slug = base
-    for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
+    const slug = await novoNome(db, String(tenant.id), { camada: 'prata', nome: name }) // padrão: catalog/naming.ts
 
     const ds = (await db.query(
       `insert into datasets (tenant_id, kind, transform_sql, connection_id, schema_name, object_name,

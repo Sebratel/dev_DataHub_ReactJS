@@ -23,6 +23,7 @@ import { LAKE_ROOT, listParquet } from '../../core/lake.js'
 import { referencedSlugs } from '../transform/derive.js'
 import { syncQueueState, enqueueSync, cancelPending } from '../sync/ingest.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
+import { nomeLivre, nomesOcupados } from './naming.js'
 
 export const TRASH_DAYS = 30
 
@@ -254,13 +255,10 @@ export async function restoreTrashItem(req: Request, itemId: string): Promise<{ 
   const d: Record<string, unknown> = { ...snap.dataset }
 
   // O slug pode ter sido reaproveitado por um conjunto novo enquanto este
-  // esperava na lixeira. Volta com sufixo, como a publicação faz.
-  const ocupados = new Set((await db.query(
-    'select slug from datasets where tenant_id = $1', [item.tenant_id],
-  )).rows.map((r) => String(r.slug)))
+  // esperava na lixeira (ou ter virado apelido de um renomeado). Volta com
+  // sufixo, como a publicação faz (naming.ts).
   const original = String(d.slug)
-  let slug = original
-  for (let i = 2; ocupados.has(slug); i++) slug = `${original}-${i}`
+  const slug = nomeLivre(original, await nomesOcupados(db, String(item.tenant_id)))
   d.slug = slug
   if (d.kind === 'derived') d.object_name = slug // calculado usa o slug como "objeto"
 

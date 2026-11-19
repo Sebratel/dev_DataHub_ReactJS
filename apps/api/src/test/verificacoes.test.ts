@@ -13,7 +13,11 @@ import assert from 'node:assert/strict'
 import { as, db, shutdown, connectTestSource, fonteDb, publishSource, syncAndWait, waitFor } from './harness.js'
 
 let conn = ''
-const estado = async (datasetId: string, check: string) =>
+let resumoSlug = ''
+// O nome do conjunto nasce no padrão (bronze_<fonte>_<tabela>), não é o da tabela.
+const slugDa = async (tabela: string) => String((await db.query(
+  `select slug from datasets where object_name = $1 and kind = 'source'`, [tabela])).rows[0].slug)
+const estado =async (datasetId: string, check: string) =>
   (await db.query(`select status, detail, since from dataset_checks where dataset_id = $1 and check_name = $2`,
     [datasetId, check])).rows[0] as { status: string; detail: string; since: Date } | undefined
 // As verificações pós-carga rodam no gancho da fila, DEPOIS de a carga ser
@@ -138,28 +142,30 @@ describe('MON-09 / QLD-10 prazo pela cadência', () => {
 
   it('calculado em cascata que não acompanha o insumo fica atrasado', async () => {
     const { runStaleChecks } = await import('../modules/quality/checks.js')
+    const notas = await slugDa('notas')
     const r = await as('admin').post('/api/v1/datasets/derived', {
-      name: 'TESTE-COMITE resumo notas', sql: 'select count(*) as n from notas', syncCadence: 'cascade',
+      name: 'TESTE-COMITE resumo notas', sql: `select count(*) as n from ${notas}`, syncCadence: 'cascade',
     })
     assert.equal(r.status, 201, JSON.stringify(r.body))
+    resumoSlug = String(r.body.slug)
     await waitFor(async () => (await db.query(
       `select last_sync_at from datasets where id = $1 and last_sync_at is not null`, [r.body.id])).rowCount, 15_000)
     // O insumo andou 2 h depois da última materialização do calculado.
     await db.query(`update datasets set last_sync_at = now() - interval '3 hours' where id = $1`, [r.body.id])
-    await db.query(`update datasets set last_sync_at = now() - interval '1 hour' where slug = 'notas'`)
+    await db.query(`update datasets set last_sync_at = now() - interval '1 hour' where slug = $1`, [notas])
     await runStaleChecks(new Date())
     const e = await estado(String(r.body.id), 'stale')
     assert.equal(e?.status, 'fail', JSON.stringify(e))
-    assert.match(e!.detail, /insumo notas atualizou 2 h/)
+    assert.match(e!.detail, new RegExp(`insumo ${notas} atualizou 2 h`))
   })
 
   it('a visão geral lista o que está falhando agora, com o desde quando', async () => {
     const r = await as('admin').get('/api/v1/quality/overview')
     assert.equal(r.status, 200)
     const tipos = r.body.failingChecks.map((c: any) => `${c.check}:${c.slug}`)
-    assert.ok(tipos.includes('identity:cupons'), JSON.stringify(tipos))
-    assert.ok(tipos.some((t: string) => t.startsWith('stale:teste-comite-resumo-notas')), JSON.stringify(tipos))
-    assert.ok(!tipos.includes('stale:chamados-h'), 'o que voltou ao normal não aparece')
+    assert.ok(tipos.includes(`identity:${await slugDa('cupons')}`), JSON.stringify(tipos))
+    assert.ok(tipos.some((t: string) => t.startsWith(`stale:${resumoSlug}`)), JSON.stringify(tipos))
+    assert.ok(!tipos.includes(`stale:${await slugDa('chamados_h')}`), 'o que voltou ao normal não aparece')
     assert.ok(r.body.failingChecks.every((c: any) => c.status === 'fail' && c.since))
   })
 })

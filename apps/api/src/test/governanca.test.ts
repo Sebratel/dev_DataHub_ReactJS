@@ -298,7 +298,7 @@ describe('T-DSP-01..10 governança do conteúdo', () => {
 
     const back = await ed.post(`/api/v1/trash/${del.body.trashId}/restore`)
     assert.equal(back.status, 200, JSON.stringify(back.body))
-    assert.equal(back.body.slug, `${a.body.slug}-2`)
+    assert.equal(back.body.slug, `${a.body.slug}_2`) // sufixo no estilo do padrão de nomes
     assert.equal(back.body.renamed, true)
     assert.equal((await ed.post(`/api/v1/datasets/${back.body.slug}/query`, {})).body.rows.length, 3)
   })

@@ -18,6 +18,7 @@ import { MASK } from '../query/compile.js'
 import { assertReadOnly, stripNoise } from '../../core/guard.js'
 import { accessibleDatasetIds, type AccessUser } from '../../core/access.js'
 import { publicarDataset } from '../databricks/publish.js'
+import { aliasesForTenant, aliasesOfSlug, slugAliasVersion } from '../../core/slugAliases.js'
 import type { FieldType, DerivedCadenceItem } from '@datahub/shared'
 
 // Além do guard read-only: bloqueia funções do DuckDB que alcançam o sistema
@@ -40,6 +41,8 @@ export interface LakeRef {
   id?: string
   slug: string
   glob: string
+  /** Nome antigo de um conjunto renomeado (ver core/slugAliases.ts). */
+  alias?: boolean
 }
 
 export interface LakeRefOptions {
@@ -78,6 +81,13 @@ export async function lakeRefs(tenantSlug: string, opts: LakeRefOptions = {}): P
     const dir = datasetDir(tenantSlug, slug)
     if (listParquet(dir).length) refs.push({ id: String(r.id), slug, glob: parquetGlob(dir) })
   }
+  // Nome antigo de conjunto renomeado: mais uma referência ao MESMO Parquet,
+  // para o SQL salvo antes da renomeação continuar rodando.
+  const porId = new Map(refs.map((r) => [r.id, r]))
+  for (const a of aliasesForTenant(tenantSlug)) {
+    const atual = porId.get(a.datasetId)
+    if (atual) refs.push({ id: atual.id, slug: a.oldSlug, glob: atual.glob, alias: true })
+  }
   return refs
 }
 
@@ -114,14 +124,21 @@ export async function assertReferencesAllowed(
 // vez POR DERIVADO com o catálogo inteiro como candidato — sem cache, auditar
 // 60 calculados contra 250 conjuntos compila 30 mil expressões à toa. O cache
 // é por slug, e o catálogo de um tenant é pequeno e estável.
+//
+// Os nomes ANTIGOS de um conjunto renomeado contam como ele mesmo: o SQL salvo
+// antes da renomeação continua sendo dependência do conjunto (core/slugAliases).
 const reCache = new Map<string, { alias: RegExp; quoted: RegExp }>()
+let reCacheVersao = -1
 function slugRegexes(slug: string) {
+  if (reCacheVersao !== slugAliasVersion()) { reCache.clear(); reCacheVersao = slugAliasVersion() }
   let r = reCache.get(slug)
   if (!r) {
     const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const nomes = [slug, ...aliasesOfSlug(slug)]
+    const apelidos = [...new Set(nomes.map((n) => esc(n.replace(/-/g, '_'))))]
     r = {
-      alias: new RegExp(`(?<![a-z0-9_])${esc(slug.replace(/-/g, '_'))}(?![a-z0-9_])`),
-      quoted: new RegExp(`"${esc(slug)}"`),
+      alias: new RegExp(`(?<![a-z0-9_])(?:${apelidos.join('|')})(?![a-z0-9_])`),
+      quoted: new RegExp(`"(?:${nomes.map(esc).join('|')})"`),
     }
     reCache.set(slug, r)
   }
@@ -335,7 +352,7 @@ export async function assertSafeLakeSql(userSql: string, refs: LakeRef[]): Promi
       if (!allowed.has(lower) && !ctes.has(lower)) {
         throw new Error(
           `O conjunto "${name}" não existe no lake ou você não tem acesso a ele. ` +
-          `Disponíveis para você: ${[...new Set(refs.map((r) => r.slug.replace(/-/g, '_')))].join(', ') || 'nenhum'}.`,
+          `Disponíveis para você: ${[...new Set(refs.filter((r) => !r.alias).map((r) => r.slug.replace(/-/g, '_')))].join(', ') || 'nenhum'}.`,
         )
       }
     } else if (n.type === 'TABLE_FUNCTION') {
@@ -369,10 +386,18 @@ function buildLakeSql(userSql: string, refs: LakeRef[]): string {
     throw new Error('Nenhum conjunto de dados com dados no lake — sincronize as fontes primeiro.')
   }
   const ctes: string[] = []
+  // Um nome só uma vez: "db-matrix" renomeado para db_matrix deixa o apelido
+  // com underscore do antigo igual ao nome novo, e CTE repetida é erro.
+  const usados = new Set<string>()
   for (const r of refs) {
+    if (usados.has(r.slug)) continue
+    usados.add(r.slug)
     ctes.push(`"${r.slug}" as (select * from read_parquet('${r.glob}'))`)
     const alias = r.slug.replace(/-/g, '_')
-    if (alias !== r.slug) ctes.push(`"${alias}" as (select * from "${r.slug}")`)
+    if (alias !== r.slug && !usados.has(alias)) {
+      usados.add(alias)
+      ctes.push(`"${alias}" as (select * from "${r.slug}")`)
+    }
   }
   const body = userSql.trim().replace(/;\s*$/, '')
   return `with ${ctes.join(',\n     ')}\nselect * from (\n${body}\n) as __derivado`
@@ -437,10 +462,16 @@ export async function compileNotebookSql(
   if (!usados.length) return { sql: `select * from (\n${body}\n) as __derivado`, datasets: [] }
 
   const ctes: string[] = []
+  const nomes = new Set<string>() // um nome só uma vez (ver buildLakeSql)
   for (const r of usados) {
+    if (nomes.has(r.slug)) continue
+    nomes.add(r.slug)
     ctes.push(`"${r.slug}" as (${await projecaoProtegida(r, opts.admin)})`)
     const alias = r.slug.replace(/-/g, '_')
-    if (alias !== r.slug) ctes.push(`"${alias}" as (select * from "${r.slug}")`)
+    if (alias !== r.slug && !nomes.has(alias)) {
+      nomes.add(alias)
+      ctes.push(`"${alias}" as (select * from "${r.slug}")`)
+    }
   }
   return {
     sql: `with ${ctes.join(',\n     ')}\nselect * from (\n${body}\n) as __derivado`,

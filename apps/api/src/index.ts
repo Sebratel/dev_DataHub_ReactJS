@@ -18,6 +18,7 @@ import { resumeSourceOutagePauses } from './modules/sync/sourceOutage.js'
 import { closeOrphanReconciles } from './modules/quality/reconcile.js'
 import { reloadConnections, avisoDeConexoes } from './connectors/store.js'
 import { reloadMasterAdmins } from './modules/auth/masterAdmins.js'
+import { loadSlugAliases } from './core/slugAliases.js'
 import { ensureApiMetricsDataset, ensureApiSummaryDerived, ensureApiMetricsDashboard, ensureApiRuntimeWidget } from './modules/catalog/apiMetricsDataset.js'
 
 // Rede de segurança: Express 4 não encaminha rejeições de handlers async ao
@@ -125,6 +126,11 @@ async function iniciar(): Promise<void> {
     await closeOrphanReconciles()
       .then((n) => { if (n) console.log(`[qualidade] ${n} conciliação(ões) interrompida(s) fechada(s) no boot.`) })
       .catch((e) => console.warn(`[qualidade] falha ao fechar conciliações órfãs: ${(e as Error).message}`))
+    // Nomes antigos de conjuntos renomeados: URL, SQL e dependências seguem
+    // funcionando com eles (padrão de nomes; ver core/slugAliases.ts).
+    await loadSlugAliases()
+      .then((n) => { if (n) console.log(`[nomes] ${n} apelido(s) de conjunto carregado(s).`) })
+      .catch((e) => console.warn(`[nomes] falha ao carregar apelidos: ${(e as Error).message}`))
     // Masters concedidos pela tela — a checagem é contra um Set em memória.
     await reloadMasterAdmins().catch((e) =>
       console.warn(`[auth] carga inicial de masters falhou: ${(e as Error).message}`))

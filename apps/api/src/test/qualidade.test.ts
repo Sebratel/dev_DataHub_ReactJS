@@ -16,6 +16,7 @@ import assert from 'node:assert/strict'
 import { as, shutdown, connectTestSource, fonteDb, publishSource, syncAndWait, lakeCount, lakeRows } from './harness.js'
 
 let conn = ''
+let contratosSlug = '' // o nome nasce no padrão (bronze_<fonte>_contratos), não é mais o da tabela
 const fonteCount = async (t: string) => Number((await fonteDb.query(`select count(*) n from fonte.${t}`)).rows[0].n)
 
 before(async () => {
@@ -30,6 +31,7 @@ describe('T-QLD-01 reconciliar contagem', () => {
       select g as id, 'cliente ' || g as cliente, (g * 10)::numeric(12,2) as valor
         from generate_series(1, 137) g`)
     const ds = await publishSource(conn, 'contratos', { syncMode: 'snapshot' })
+    contratosSlug = ds.slug
     await syncAndWait(ds.id)
     assert.equal(await lakeCount(ds.slug), await fonteCount('contratos'))
     // Soma ao centavo (T-QLD-03 em miniatura): o valor não muda no caminho.
@@ -39,7 +41,7 @@ describe('T-QLD-01 reconciliar contagem', () => {
   })
 
   it('T-QLD-01 a consulta da tela conta o mesmo que a fonte', async () => {
-    const r = await as('admin').post('/api/v1/datasets/contratos/query', { select: [{ agg: 'count', as: 'n' }] })
+    const r = await as('admin').post(`/api/v1/datasets/${contratosSlug}/query`, { select: [{ agg: 'count', as: 'n' }] })
     assert.equal(r.status, 200, JSON.stringify(r.body))
     assert.equal(Number(r.body.rows[0].n), 137)
   })

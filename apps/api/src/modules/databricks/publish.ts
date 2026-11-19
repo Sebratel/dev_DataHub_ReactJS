@@ -34,14 +34,21 @@ function dataHoraSaoPaulo(d: Date): { dt: string; hhmm: string } {
  * que veio da fonte do que foi calculado. Promover um calculado a 'ouro' é
  * julgamento de quem modela, e por isso é um campo que se preenche à mão.
  */
-export function camadaDe(kind: string, layer: string | null): string {
+export function camadaDe(kind: string, layer: string | null, slug?: string): string {
   if (layer) return layer
+  // Nome no padrão (naming.ts) já diz a camada: ouro_… vai para o schema ouro.
+  const m = slug ? /^(bronze|prata|ouro)_/.exec(slug) : null
+  if (m) return m[1]
   return kind === 'derived' ? 'prata' : 'bronze'
 }
 
-/** O slug vira nome de tabela Delta, onde hífen não é identificador válido. */
+/**
+ * O slug vira nome de tabela Delta, onde hífen não é identificador válido. A
+ * camada do nome no padrão sai: no Databricks ela já é o schema
+ * (bronze.voalle_contratos, não bronze.bronze_voalle_contratos).
+ */
 export function slugDeTabela(slug: string): string {
-  return slug.replace(/-/g, '_')
+  return slug.replace(/-/g, '_').replace(/^(bronze|prata|ouro)_(?=[a-z0-9])/, '')
 }
 
 interface LinhaDataset {
@@ -209,7 +216,7 @@ export async function publicarDataset(
   const runId = randomUUID()
   const inicio = new Date()
   const { dt, hhmm } = dataHoraSaoPaulo(inicio)
-  const camada = camadaDe(ds.kind, ds.databricks_layer)
+  const camada = camadaDe(ds.kind, ds.databricks_layer, ds.slug)
   const dedupeKeys = (ds.dedupe_keys ?? []).filter(Boolean)
   let tmpDir: string | null = null
 
