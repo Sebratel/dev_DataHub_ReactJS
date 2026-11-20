@@ -12,6 +12,7 @@ import { accessibleDatasetIds, canQuery } from '../../core/access.js'
 import { recordUsage } from '../../core/usage.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
+import { currentSlugFor } from '../../core/slugAliases.js'
 import { embedQuery, toVectorLiteral, embeddingsEnabled } from './embeddings.js'
 import type { AiToolDef } from './provider.js'
 
@@ -254,7 +255,9 @@ async function searchDatasets(user: SessionUser, query?: string, scope?: Set<str
   return { content: JSON.stringify(list) }
 }
 
-async function loadDataset(slug: string, user: SessionUser) {
+async function loadDataset(pedido: string, user: SessionUser) {
+  // Nome antigo de um renomeado (a conversa pode ser de antes) vale como o atual.
+  const slug = currentSlugFor(pedido) ?? pedido
   const ds = (await db.query(
     `select d.* , t.slug as tenant_slug from datasets d
       join tenants t on t.id = d.tenant_id

@@ -132,9 +132,14 @@ export default function DatasetDetailPage() {
 
   const load = useCallback(() => {
     api<{ dataset: DatasetDetail }>(`/api/v1/datasets/${slug}`)
-      .then((r) => setDataset(r.dataset))
+      .then((r) => {
+        // Link com o nome antigo de um conjunto renomeado: o servidor responde
+        // pelo nome novo, e a barra de endereço passa a mostrar o novo.
+        if (slug && r.dataset.slug !== slug) navigate(`/datasets/${r.dataset.slug}`, { replace: true })
+        setDataset(r.dataset)
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar.'))
-  }, [slug])
+  }, [slug, navigate])
   useEffect(() => { load() }, [load])
 
   // Uso só para quem gerencia (admin ou dono): o backend recusa os demais, e

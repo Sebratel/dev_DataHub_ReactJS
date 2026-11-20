@@ -10,7 +10,10 @@ import { isDbAvailable } from './db/pool.js'
 import { requireAuth } from './modules/auth/middleware.js'
 import { connectionsRouter } from './modules/catalog/connectionsRouter.js'
 import { datasetsRouter } from './modules/catalog/datasetsRouter.js'
+import { namingRouter } from './modules/catalog/namingRouter.js'
+import { packsRouter } from './modules/catalog/packsRouter.js'
 import { trashRouter } from './modules/catalog/trash.js'
+import { resolveDatasetSlugAlias } from './core/slugAliases.js'
 import { syncRouter } from './modules/sync/syncRouter.js'
 import { schedulesRouter } from './modules/sync/schedulesRouter.js'
 import { autotuneRouter } from './modules/sync/autotuneRouter.js'
@@ -60,6 +63,10 @@ export function createApp(): express.Express {
     next()
   })
 
+  // Nome antigo de conjunto renomeado → nome atual, antes de qualquer rota
+  // (padrão de nomes; ver core/slugAliases.ts).
+  app.use(resolveDatasetSlugAlias)
+
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, service: 'datahub-api', metadataDb: isDbAvailable() ? 'ok' : 'offline' })
   })
@@ -81,6 +88,7 @@ export function createApp(): express.Express {
 
   // Catálogo de conjuntos de dados. ORDEM IMPORTA: query e sync têm rotas mais
   // específicas (/:slug/query, /:id/sync) e vêm antes do router genérico.
+  app.use('/api/v1/datasets', namingRouter) // /naming e /:id/rename — antes de todos
   app.use('/api/v1/datasets', queryRouter)
   app.use('/api/v1/datasets', autotuneRouter) // /auto-incremental — antes do genérico
   app.use('/api/v1/datasets', syncRouter)
@@ -91,6 +99,7 @@ export function createApp(): express.Express {
   app.use('/api/v1/datasets', databricksRouter) // /:id/databricks — antes do genérico
   app.use('/api/v1/datasets', datasetsRouter)
   app.use('/api/v1/trash', trashRouter) // lixeira de conjuntos (30 dias)
+  app.use('/api/v1/packs', packsRouter) // pacotes de conjuntos calculados (catálogo como código)
   app.use('/api/v1/databricks', databricksAdminRouter)
 
   // Biblioteca de métricas e dashboards.

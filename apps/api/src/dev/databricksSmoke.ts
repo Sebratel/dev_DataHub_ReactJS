@@ -234,6 +234,9 @@ check('fonte sem camada definida é bronze', camadaDe('source', null) === 'bronz
 check('calculado sem camada definida é prata', camadaDe('derived', null) === 'prata')
 check('camada explícita vence', camadaDe('derived', 'ouro') === 'ouro')
 check('hífen vira underscore na tabela', slugDeTabela('db-matrix') === 'db_matrix')
+check('a camada do nome no padrão vira schema, não prefixo da tabela', slugDeTabela('bronze_voalle_contratos') === 'voalle_contratos')
+check('nome no padrão diz a camada quando ela não foi escolhida', camadaDe('derived', null, 'ouro_financeiro_titulos') === 'ouro')
+check('camada escolhida vence a do nome', camadaDe('derived', 'prata', 'ouro_financeiro_titulos') === 'prata')
 
 // ── 6. Erros: o que repete e o que não ───────────────────────────────────
 console.log('\n6. Classificação de erro e backoff')

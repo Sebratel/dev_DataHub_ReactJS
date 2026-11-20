@@ -15,6 +15,9 @@ import type { AddressInfo } from 'node:net'
 import { as, db, shutdown, connectTestSource, fonteDb, publishSource, syncAndWait, waitFor } from './harness.js'
 
 let conn = ''
+// O nome do conjunto nasce no padrão (bronze_<fonte>_cadastro), não é o da tabela.
+const cadastroSlug = async () =>
+  String((await db.query(`select slug from datasets where object_name = 'cadastro'`)).rows[0].slug)
 const tenantId = async () => String((await db.query(`select id from tenants where slug = 'sebratel'`)).rows[0].id)
 
 /** "Conciliar agora" pela rota real e espera a conferência terminar. */
@@ -84,6 +87,26 @@ describe('T-QLD-01/03 conciliação que bate', () => {
     assert.equal(run.sourceRows, 81)
     assert.ok(run.daysCompared >= 4, `${run.daysCompared} dia(s) comparados`)
     assert.deepEqual(run.diffDays, [])
+  })
+
+  it('pedido feito depois de a carga começar não é atendido por ela, espera a próxima', async () => {
+    // O teste acima falhava às vezes (80 × 81): o pedido chegava enquanto a
+    // carga anterior fechava, ela o atendia sem a linha nova e a carga do
+    // próprio pedido não achava mais nada. Aqui o pedido é "do futuro" de
+    // propósito — nenhuma carga desta execução começou depois dele.
+    await fonteDb.query(`create table fonte.pedido_tardio as select g as id from generate_series(1, 10) g`)
+    const ds = await publishSource(conn, 'pedido_tardio', { syncMode: 'snapshot' })
+    const depoisDeTudo = new Date(Date.now() + 2 * 86_400_000)
+    const tardio = String((await db.query(
+      `insert into reconcile_runs (dataset_id, trigger, band, requested_by, created_at)
+       values ($1, 'manual', 'small', 'teste', $2) returning id`, [ds.id, depoisDeTudo])).rows[0].id)
+    // A fila é serial: a segunda carga só termina depois que a primeira, com o
+    // pós-carga dela, terminou.
+    await syncAndWait(ds.id)
+    await syncAndWait(ds.id)
+    const r = (await db.query(`select status from reconcile_runs where id = $1`, [tardio])).rows[0]
+    assert.equal(r.status, 'queued', 'uma carga que começou antes do pedido o atendeu')
+    await db.query(`update reconcile_runs set status = 'error', error = 'fim do teste', finished_at = now() where id = $1`, [tardio])
   })
 })
 
@@ -155,7 +178,7 @@ describe('Quem pode o quê', () => {
 
   it('conjunto calculado é recusado com o motivo', async () => {
     const r = await as('admin').post('/api/v1/datasets/derived', {
-      name: 'TESTE-COMITE calc conciliação', sql: 'select id from cadastro',
+      name: 'TESTE-COMITE calc conciliação', sql: `select id from ${await cadastroSlug()}`,
     })
     assert.equal(r.status, 201, JSON.stringify(r.body))
     const c = await as('admin').post(`/api/v1/quality/datasets/${r.body.id}/reconcile`)
@@ -166,7 +189,8 @@ describe('Quem pode o quê', () => {
   it('a visão geral lista as fontes com a última conferência e as faixas em vigor', async () => {
     const r = await as('admin').get('/api/v1/quality/overview')
     assert.equal(r.status, 200)
-    const cad = r.body.datasets.find((d: any) => d.slug === 'cadastro')
+    const slug = await cadastroSlug()
+    const cad = r.body.datasets.find((d: any) => d.slug === slug)
     assert.equal(cad.lastRun.status, 'match')
     assert.equal(cad.band, 'small')
     assert.equal(cad.ineligible, null)
@@ -235,7 +259,7 @@ describe('P-QLD-2: a divergência chega ao canal, uma vez', () => {
     const ds = await publishSource(conn, 'quebra', { syncMode: 'snapshot' })
     await fonteDb.query('drop table fonte.quebra')
     for (let i = 0; i < 3; i++) await syncAndWait(ds.id).catch(() => { /* falha esperada */ })
-    const chegou = await waitFor(async () => recebidos.some((m) => /Carga pausada: quebra/.test(m.text)), 5_000)
+    const chegou = await waitFor(async () => recebidos.some((m) => /Carga pausada: \S*quebra/.test(m.text)), 5_000)
     assert.ok(chegou, 'a pausa automática não avisou ninguém')
   })
 })
