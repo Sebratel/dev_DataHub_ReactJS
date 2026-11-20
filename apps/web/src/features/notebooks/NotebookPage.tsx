@@ -634,7 +634,17 @@ export default function NotebookPage() {
                         {st.python.error}
                       </pre>
                     )}
-                    {!st.python.stdout && !st.python.repr && !st.python.error && (
+                    {/* Fundo branco também no tema escuro: o PNG do matplotlib
+                        é desenhado para fundo claro. */}
+                    {!!st.python.images?.length && (
+                      <div className="flex flex-col gap-2 border-t border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800">
+                        {st.python.images.map((b64, i) => (
+                          <img key={i} src={`data:image/png;base64,${b64}`} alt={`Gráfico ${i + 1} da célula`}
+                            className="h-auto max-w-full self-start" />
+                        ))}
+                      </div>
+                    )}
+                    {!st.python.stdout && !st.python.repr && !st.python.error && !st.python.images?.length && (
                       <p className="px-3 py-2 text-[11.5px] text-zinc-500">Executou sem saída.</p>
                     )}
                   </div>

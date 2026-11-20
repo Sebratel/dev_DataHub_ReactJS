@@ -11,6 +11,8 @@ export interface PythonResult {
   stdout: string
   repr: string | null
   error: string | null
+  /** Gráficos do matplotlib que a célula deixou abertos, em PNG base64. */
+  images?: string[]
 }
 
 export interface PythonInput {
@@ -63,9 +65,14 @@ export function usePython() {
         resolve(r)
       }
       function onMessage(e: MessageEvent) {
-        const m = e.data as { type: string; message?: string; stdout?: string; repr?: string | null; error?: string }
+        const m = e.data as {
+          type: string; message?: string; stdout?: string; repr?: string | null; error?: string; images?: string[]
+        }
         if (m.type === 'status') { setStatus(m.message ?? null); return }
-        if (m.type === 'done') { finish({ stdout: m.stdout ?? '', repr: m.repr ?? null, error: null }); return }
+        if (m.type === 'done') {
+          finish({ stdout: m.stdout ?? '', repr: m.repr ?? null, error: null, images: m.images ?? [] })
+          return
+        }
         if (m.type === 'error') { finish({ stdout: m.stdout ?? '', repr: null, error: m.error ?? 'Erro desconhecido.' }) }
       }
       worker.addEventListener('message', onMessage)

@@ -377,6 +377,30 @@ Os pacotes ficam em **Conjuntos › Pacotes**: o admin vê, o master instala. Ca
   - faturamento de ~R$ 9,8 mi por mês;
   - recebimento de ~R$ 9,3 mi por mês.
 
+**Carga incremental do Voalle = `modified` + `created`** (corrigido em 20/11/2026). O Voalle deixa `modified` vazio em muita linha. Com carga só por `modified`, ficariam de fora:
+
+| Tabela | Linhas perdidas | Proporção | Desde |
+|---|---|---|---|
+| Baixas de títulos | 5,0 mi de 8,5 mi | 58% | 2023 |
+| Eventos de contrato | 1,7 mi de 4,9 mi | 35% | 2023 |
+| Títulos a receber | 70 mil | — | 2023 |
+| Atendimentos | 147 mil | — | 2025 |
+| Romaneios de material | 158 mil de 173 mil | 91% | 2025 |
+
+Toda fonte de pacote com `modified` tem `created` como segunda chave. O motor faz uma passada por chave, e a linha com `modified` vazio entra pela de `created`. Os testes dos pacotes deixam `modified` vazio de propósito em linhas que eles conferem.
+
+**Se a onda 1 já foi instalada antes desta correção**, as três cópias abaixo estão incompletas. A tela de Pacotes mostra "faltam colunas: created".
+- `bronze_voalle_financial_receipt_titles`
+- `bronze_voalle_contract_events`
+- `bronze_voalle_financial_receivable_titles`
+
+Em cada uma:
+1. **Atualizar colunas**, incluindo `created`.
+2. Em **Regras de atualização**, pôr `created` como segunda chave.
+3. **Recarregar tudo**.
+
+Os calculados recalculam sozinhos, pela cascata.
+
 **Regras que valem para os próximos pacotes** (descobertas no banco):
 - **Fatura.** Todo mês há dois títulos com o mesmo valor: a fatura `FAT…` (`bill_title_id` vazio) e os componentes que apontam para ela. As baixas também vêm em dobro. Conte só a fatura.
 - **Tarifa de baixa.** A natureza `DF - TARIFA BAIXA DE TÍTULO` não é cobrança de cliente; fica fora.
@@ -384,6 +408,58 @@ Os pacotes ficam em **Conjuntos › Pacotes**: o admin vê, o master instala. Ca
 - **Instalação.** `approval_date` com stage 3. `created` é a venda, e `1000-01-01` é o "nulo" do Voalle.
 - **Taxa de cancelamento.** Cancelados no mês ÷ base no fim do mês anterior. Ficam fora o lote (`FNC.CAN.020`), o duplicado (`OTR.CAN.006`), a telefonia (tipo 19) e quem nunca foi instalado.
 - **Saldo antigo em aberto.** É quase todo de contrato já cancelado.
+
+### Onda 2 · Campo: instalação, manutenção e agenda (20/11/2026)
+
+**O que é:** 16 calculados, 2 prata e 14 ouro, sobre 13 tabelas do Voalle desde 2025. Contratos e pessoas são as mesmas cópias da onda 1, com as mesmas colunas, então as ondas podem ser instaladas em qualquer ordem.
+
+**De onde vêm as regras:** dos painéis de Instalação e de Manutenção, já conferidos com a operação.
+- **Instalado** = material alocado (`patrimony_packing_list_items.out_date`). Bate com a primeira conexão no AutoISP em 99,7% dos casos.
+- **Universo de manutenção** = equipe ou catálogo de manutenção.
+  - Saem as centrais (COR, CGR, Suporte, Corporativo, CAOC), os tipos administrativos e o cancelado.
+  - O tempo até concluir é `conclusion_date − created`.
+
+**Fontes com carga especial:**
+- **Protocolos** (`assignment_incidents`) não têm data de alteração: cópia completa diária, só com 7 colunas (1,9 mi de linhas).
+- **Agenda** (`service_desk_slots`): `modified` só existe depois da reserva, então tem duas chaves.
+- **Histórico do app de campo** (`fsm_attendance_history`): relê 2 dias para pegar o fim dos trechos em andamento.
+
+**Validação com dado real** (20/11/2026):
+- 3.713 reparos em outubro, o mesmo número do painel de Manutenção;
+- tempo mediano até concluir de ~15 h;
+- coeficiente de ~0,10% da base por dia útil, contra a meta de 0,12%;
+- recorrência de ~11%;
+- ocupação da agenda de 54% a 64%.
+
+**Diferença conhecida:** o painel de Manutenção também tira o colaborador que abre protocolo como cliente (regra pelo nome). Aqui não há nome de pessoa no lake. São ~5 protocolos por ano.
+
+### Notebooks prontos do pacote (desde 20/11/2026)
+
+O pacote também instala notebooks de análise (SQL + Python), definidos em `packs/onda1Notebooks.ts`.
+- Nascem **privados**, no nome de quem instalou. Libere em "Acessos", junto com os conjuntos que eles leem.
+- Um notebook só é criado se todos os conjuntos que as células SQL citam existirem.
+- O SQL agrega no motor e o Python modela no navegador (Pyodide). A célula SQL entrega no máximo **500 linhas** ao Python.
+
+**Onda 1:** 6 notebooks.
+- Cancelamento: tendência, sazonalidade e previsão. Três métodos são testados nos 6 últimos meses e fica o que erra menos.
+- Retenção por safra, vida média e receita esperada por contrato (Kaplan-Meier).
+- Risco de cancelamento por perfil (regressão logística sobre segmentos).
+- Curva de recebimento e perda esperada (chain-ladder).
+- Ponte da receita contratada e projeção da base.
+- Cidades e bairros com cancelamento fora do padrão (gráfico de funil).
+
+**Validação.** Em 20/11/2026 os 6 rodaram no Chromium com o Pyodide 0.26.4 sobre dado real do Voalle, materializado num DuckDB temporário e servido com a mesma conversão JSON da rota.
+- Resultados:
+  - vida média de 3,8 anos e receita esperada de ~R$ 5 mil por contrato novo;
+  - perda real de 5,6% do faturado nos meses completos;
+  - 18 bairros de Canoas e Novo Hamburgo acima do esperado.
+- O CI só confere que as células SQL passam pela rota (`pacotes.test.ts`). O Python não roda no CI.
+
+**Armadilhas para quem escrever notebooks:**
+- **Tipos.** Contagem (BIGINT) e decimal chegam ao Python como **texto**. A função `tabela()` do primeiro bloco converte. Colunas de data são reconhecidas pelo nome exato: `mes_vencimento` é data, `meses_de_casa` não.
+- **Versões.** O Pyodide 0.26 traz pandas 2.2, matplotlib 3.5 e statsmodels 0.14: nada de API nova.
+- **Código Python.** Escreva em `String.raw`: um `"\n"` num `print` viraria quebra de linha real e o Python recusaria.
+- **Valor do contrato.** `prata_voalle_contratos.valor_mensal` é o valor **atual**, sem histórico. Uma ponte de receita feita com ele não mostra reajuste.
 
 ---
 

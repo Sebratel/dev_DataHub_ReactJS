@@ -61,6 +61,25 @@ async function ensureRuntime(): Promise<PyodideApi> {
   return pyodide
 }
 
+// Figuras abertas pela célula → PNG em base64, e fecha todas (a próxima célula
+// começa sem gráfico herdado). Teto de 8 por célula: um laço que abre uma
+// figura por linha não pode mandar centenas de imagens para a aba.
+const FIGURAS = `
+def __figuras():
+    import sys, io, base64, json
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None:
+        return "[]"
+    saida = []
+    for n in plt.get_fignums()[:8]:
+        b = io.BytesIO()
+        plt.figure(n).savefig(b, format="png", dpi=110, bbox_inches="tight")
+        saida.append(base64.b64encode(b.getvalue()).decode())
+    plt.close("all")
+    return json.dumps(saida)
+__figuras()
+`
+
 interface RunMessage {
   type: 'run'
   code: string
@@ -84,6 +103,8 @@ self.onmessage = async (e: MessageEvent<RunMessage>) => {
       needed.forEach((p) => loadedPackages.add(p))
     }
 
+    // `batched` entrega cada LINHA sem o "\n" do fim; juntar com '' emendava
+    // todos os prints numa linha só (e quebrava as tabelas do pandas).
     py.setStdout({ batched: (s) => out.push(s) })
     py.setStderr({ batched: (s) => out.push(s) })
 
@@ -92,8 +113,17 @@ self.onmessage = async (e: MessageEvent<RunMessage>) => {
     py.globals.set('__rows', data?.rows ?? [])
     py.globals.set('__columns', data?.columns ?? [])
 
+    // Gráfico: o backend padrão do matplotlib no Pyodide desenha no DOM, e
+    // worker não tem DOM. Agg desenha em memória; no fim da célula as figuras
+    // abertas viram PNG (ver FIGURAS abaixo). plt.show() vira no-op silencioso.
     const prelude = `
 import json
+import os as _os, sys as _sys, warnings as _warnings
+_os.environ["MPLBACKEND"] = "AGG"
+if "matplotlib" in _sys.modules:
+    _sys.modules["matplotlib"].use("Agg")
+_warnings.filterwarnings("ignore", message=".*(non-interactive|non-GUI backend).*")
+_warnings.filterwarnings("ignore", message="(?s).*Pyarrow will become a required dependency")
 rows = __rows.to_py() if hasattr(__rows, "to_py") else list(__rows)
 columns = __columns.to_py() if hasattr(__columns, "to_py") else list(__columns)
 df = None
@@ -116,11 +146,20 @@ except Exception:
       }
     }
 
-    self.postMessage({ type: 'done', stdout: out.join(''), repr })
+    // Depois do repr, para não mexer no `_`. Erro aqui não derruba a célula:
+    // o texto já está pronto, só o gráfico some.
+    let images: string[] = []
+    try {
+      images = JSON.parse(await py.runPythonAsync(FIGURAS) as string) as string[]
+    } catch (err) {
+      out.push(`\n[gráfico não gerado: ${(err as Error).message}]`)
+    }
+
+    self.postMessage({ type: 'done', stdout: out.join('\n'), repr, images })
   } catch (err) {
     self.postMessage({
       type: 'error',
-      stdout: out.join(''),
+      stdout: out.join('\n'),
       error: (err as Error).message ?? String(err),
     })
   }

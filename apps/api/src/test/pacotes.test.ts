@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, db, shutdown, connectTestSource, fonteDb, waitFor, lakeRows } from './harness.js'
+import { as, db, shutdown, connectTestSource, fonteDb, waitFor, lakeRows, USERS } from './harness.js'
 import { ONDA_1 } from '../modules/catalog/packs/onda1.js'
 
 let conn = ''
@@ -73,10 +73,22 @@ before(async () => {
     (1, 100, '2026-09-08', '2026-09-08', 100, 10, false, now()),
     (2, 101, '2026-09-08', '2026-09-08', 100, 10, false, now()),
     (3, 102, '2026-10-20', '2026-10-20', 100, 7,  false, now())`)
+  // Como no Voalle: `modified` vazio em boa parte das linhas (58% das baixas desde
+  // 2023). Estas três só entram pela passada de `created`, e os testes abaixo
+  // contam com elas: o motivo "Inadimplência" do contrato 2, a fatura 103 em
+  // atraso e a baixa por boleto de outubro.
+  for (const t of ['contract_events', 'financial_receivable_titles', 'financial_receipt_titles']) {
+    await q(`alter table erp.${t} add column created timestamp`)
+    await q(`update erp.${t} set created = now()`)
+  }
+  await q(`update erp.contract_events set modified = null where id = 2`)
+  await q(`update erp.financial_receivable_titles set modified = null where id = 103`)
+  await q(`update erp.financial_receipt_titles set modified = null where id = 3`)
 })
 after(shutdown)
 
 const slugsDoPacote = ONDA_1.datasets.map((d) => d.slug)
+const slugsDosNotebooks = (ONDA_1.notebooks ?? []).map((n) => n.slug)
 const linhas = async (slug: string) => lakeRows(slug)
 
 describe('Pacotes de conjuntos: onda 1', () => {
@@ -95,6 +107,12 @@ describe('Pacotes de conjuntos: onda 1', () => {
     const rep = r.body.report
     assert.deepEqual(rep.sources.filter((s: { status: string }) => s.status !== 'criada'), [], JSON.stringify(rep.sources))
     assert.deepEqual(rep.datasets.filter((d: { status: string }) => d.status !== 'criado'), [], JSON.stringify(rep.datasets))
+    assert.deepEqual(rep.notebooks.filter((n: { status: string }) => n.status !== 'criado'), [], JSON.stringify(rep.notebooks))
+
+    // Notebooks nascem privados, no nome de quem instalou, como os conjuntos.
+    const nbs = (await db.query(`select slug, visibility, owner_email from notebooks where slug = any($1)`, [slugsDosNotebooks])).rows
+    assert.equal(nbs.length, slugsDosNotebooks.length)
+    assert.ok(nbs.every((n) => n.visibility === 'private' && n.owner_email === USERS.master), JSON.stringify(nbs))
 
     // A cópia bronze nasce no padrão de nomes e não traz coluna que o pacote não usa.
     const bronze = (await db.query(`select id, slug from datasets where object_name = 'people' and kind = 'source'`)).rows[0]
@@ -166,12 +184,31 @@ describe('Pacotes de conjuntos: onda 1', () => {
       ['2026-09 Pix 100', '2026-10 Boleto 100'], 'a baixa do componente entrou em dobro')
   })
 
+  it('as células SQL dos notebooks rodam pela rota de notebook e cabem no limite do Python', async () => {
+    // A rota passa o SQL pela guarda do lake (palavras proibidas, funções de
+    // tabela) e pela compilação com os conjuntos do catálogo. O Python não roda
+    // aqui (é Pyodide, no navegador): foi validado com dado real (RUNBOOK).
+    for (const nb of ONDA_1.notebooks ?? []) {
+      nb.cells.forEach((c, i) => assert.notEqual(c.source.trim(), '', `${nb.slug}: célula ${i + 1} vazia`))
+      for (const [i, c] of nb.cells.entries()) {
+        if (c.kind !== 'sql') continue
+        const r = await as('master').post('/api/v1/notebooks/run', { sql: c.source, limit: 500, notebook: nb.slug })
+        assert.equal(r.status, 200, `${nb.slug}, célula ${i + 1}: ${JSON.stringify(r.body)}`)
+        assert.equal(r.body.truncated, false, `${nb.slug}, célula ${i + 1}: passou de 500 linhas`)
+      }
+    }
+  })
+
   it('instalar de novo não duplica nada', async () => {
     const r = await as('master').post('/api/v1/packs/onda-1/install', { connectionId: conn })
     assert.equal(r.status, 200)
     assert.ok(r.body.report.sources.every((s: { status: string }) => s.status === 'reaproveitada'))
     assert.ok(r.body.report.datasets.every((d: { status: string }) => d.status === 'ja-existe'))
+    assert.ok(r.body.report.notebooks.every((n: { status: string }) => n.status === 'ja-existe'))
+    assert.equal((await db.query(`select count(*) as n from notebooks where slug = any($1)`, [slugsDosNotebooks])).rows[0].n * 1,
+      slugsDosNotebooks.length)
     const l = await as('admin').get('/api/v1/packs')
     assert.ok(l.body.packs[0].datasets.every((d: { instalado: boolean }) => d.instalado))
+    assert.ok(l.body.packs[0].notebooks.every((n: { instalado: boolean }) => n.instalado))
   })
 })

@@ -21,11 +21,16 @@
 //     apontam para ela. Somar os dois dobra a receita (e as baixas). Aqui só a
 //     fatura conta.
 //   • Fatura renegociada sai do atraso: o saldo dela foi para os títulos novos.
+//   • CARGA INCREMENTAL = `modified` + `created` (duas passadas). O Voalle deixa
+//     `modified` vazio em boa parte das linhas: medido em 20/11/2026, desde 2023
+//     ficariam de fora 5,0 mi de 8,5 mi baixas, 1,7 mi de 4,9 mi eventos e 70 mil
+//     títulos se a carga lesse só `modified`.
 //   • O motivo de cancelamento é o código do último evento de cancelamento
 //     (contract_event_types). Ele mede também o hábito de quem digita
 //     (mudança de endereço varia 32x entre atendentes): use com cuidado.
 // ─────────────────────────────────────────────────────────────────────────
 import type { Pack } from '../packs.js'
+import { NOTEBOOKS_ONDA_1 } from './onda1Notebooks.js'
 
 const DESDE = '2023-01-01'
 
@@ -86,8 +91,8 @@ export const ONDA_1: Pack = {
     {
       ref: 'voalle.contract_events', system: 'voalle', schema: 'erp', table: 'contract_events',
       name: 'Voalle · Eventos de contrato', description: 'Eventos de contrato desde 2023 (o cancelamento traz o motivo).',
-      columns: ['id', 'contract_id', 'contract_event_type_id', 'date', 'deleted', 'modified'],
-      sync: { syncMode: 'incremental', incrementalKey: 'modified', dedupeKeys: ['id'], syncSince: DESDE, syncCadence: 'daily' },
+      columns: ['id', 'contract_id', 'contract_event_type_id', 'date', 'deleted', 'created', 'modified'],
+      sync: { syncMode: 'incremental', incrementalKey: 'modified', incrementalKey2: 'created', dedupeKeys: ['id'], syncSince: DESDE, syncCadence: 'daily' },
     },
     {
       ref: 'voalle.contract_event_types', system: 'voalle', schema: 'erp', table: 'contract_event_types',
@@ -110,8 +115,8 @@ export const ONDA_1: Pack = {
       ref: 'voalle.financial_receivable_titles', system: 'voalle', schema: 'erp', table: 'financial_receivable_titles',
       name: 'Voalle · Títulos a receber', description: 'Títulos a receber alterados desde 2023 (faturas e componentes).',
       columns: ['id', 'contract_id', 'client_id', 'bill_title_id', 'financer_nature_id', 'title_amount', 'balance', 'issue_date',
-        'expiration_date', 'competence', 'renegotiated', 'deleted', 'modified'],
-      sync: { syncMode: 'incremental', incrementalKey: 'modified', dedupeKeys: ['id'], syncSince: DESDE, syncCadence: 'daily' },
+        'expiration_date', 'competence', 'renegotiated', 'deleted', 'created', 'modified'],
+      sync: { syncMode: 'incremental', incrementalKey: 'modified', incrementalKey2: 'created', dedupeKeys: ['id'], syncSince: DESDE, syncCadence: 'daily' },
     },
     {
       ref: 'voalle.financers_natures', system: 'voalle', schema: 'erp', table: 'financers_natures',
@@ -121,8 +126,8 @@ export const ONDA_1: Pack = {
     {
       ref: 'voalle.financial_receipt_titles', system: 'voalle', schema: 'erp', table: 'financial_receipt_titles',
       name: 'Voalle · Baixas de títulos', description: 'Recebimentos (baixas) alterados desde 2023.',
-      columns: ['id', 'financial_receivable_title_id', 'receipt_date', 'client_paid_date', 'amount', 'payment_form_id', 'deleted', 'modified'],
-      sync: { syncMode: 'incremental', incrementalKey: 'modified', dedupeKeys: ['id'], syncSince: DESDE, syncCadence: 'daily' },
+      columns: ['id', 'financial_receivable_title_id', 'receipt_date', 'client_paid_date', 'amount', 'payment_form_id', 'deleted', 'created', 'modified'],
+      sync: { syncMode: 'incremental', incrementalKey: 'modified', incrementalKey2: 'created', dedupeKeys: ['id'], syncSince: DESDE, syncCadence: 'daily' },
     },
     {
       ref: 'voalle.payment_forms', system: 'voalle', schema: 'erp', table: 'payment_forms',
@@ -716,4 +721,7 @@ group by 1
 order by 1`,
     },
   ],
+
+  // Análises prontas (SQL + Python) sobre os conjuntos acima — ver onda1Notebooks.ts.
+  notebooks: NOTEBOOKS_ONDA_1,
 }

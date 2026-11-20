@@ -25,6 +25,7 @@ import { novoNome, segueOPadrao } from './naming.js'
 import { currentSlugFor } from '../../core/slugAliases.js'
 import type { RenameUser } from './naming.js'
 import { ONDA_1 } from './packs/onda1.js'
+import { ONDA_2 } from './packs/onda2.js'
 
 export interface PackSource {
   /** Como o SQL cita: {{voalle.contracts}}. */
@@ -47,15 +48,39 @@ export interface PackDataset {
   sql: string
 }
 
+export interface PackNotebookCell {
+  kind: 'sql' | 'python' | 'markdown'
+  source: string
+}
+
+/** Notebook pronto: SQL agrega os conjuntos do pacote, Python modela (item 6). */
+export interface PackNotebook {
+  slug: string
+  name: string
+  description: string
+  domain: string
+  cells: PackNotebookCell[]
+}
+
 export interface Pack {
   id: string
   name: string
   description: string
   sources: PackSource[]
   datasets: PackDataset[]
+  notebooks?: PackNotebook[]
 }
 
-export const PACKS: Pack[] = [ONDA_1]
+// Notebook segue o mesmo snake_case dos conjuntos, sem a camada: analise_<área>_<assunto>.
+const NOME_NOTEBOOK = /^[a-z0-9]+(_[a-z0-9]+)+$/
+
+/** Os conjuntos do pacote que as células SQL de um notebook citam. */
+export function conjuntosDoNotebook(nb: PackNotebook, slugs: string[]): string[] {
+  const sql = nb.cells.filter((c) => c.kind === 'sql').map((c) => c.source).join('\n')
+  return slugs.filter((s) => new RegExp(`\\b${s}\\b`).test(sql))
+}
+
+export const PACKS: Pack[] = [ONDA_1, ONDA_2]
 
 export class PackError extends Error {
   constructor(readonly status: number, message: string) { super(message) }
@@ -138,6 +163,11 @@ export interface PackStatus {
   id: string; name: string; description: string
   sources: { ref: string; name: string; slug: string | null; faltam: string[] }[]
   datasets: { slug: string; name: string; domain: string; description: string; instalado: boolean; rowCount: number | null; lastSyncAt: string | null }[]
+  notebooks: { slug: string; name: string; domain: string; description: string; instalado: boolean; usa: string[] }[]
+}
+
+async function notebookExiste(tenantId: string, slug: string): Promise<boolean> {
+  return ((await db.query('select 1 from notebooks where tenant_id = $1 and slug = $2', [tenantId, slug])).rowCount ?? 0) > 0
 }
 
 export async function packStatus(tenantSlug: string, pack: Pack): Promise<PackStatus> {
@@ -159,7 +189,15 @@ export async function packStatus(tenantSlug: string, pack: Pack): Promise<PackSt
       lastSyncAt: row?.last_sync_at ? new Date(row.last_sync_at as string).toISOString() : null,
     })
   }
-  return { id: pack.id, name: pack.name, description: pack.description, sources, datasets }
+  const slugsDoPacote = pack.datasets.map((d) => d.slug)
+  const notebooks = []
+  for (const nb of pack.notebooks ?? []) {
+    notebooks.push({
+      slug: nb.slug, name: nb.name, domain: nb.domain, description: nb.description,
+      instalado: await notebookExiste(tenantId, nb.slug), usa: conjuntosDoNotebook(nb, slugsDoPacote),
+    })
+  }
+  return { id: pack.id, name: pack.name, description: pack.description, sources, datasets, notebooks }
 }
 
 // ── Instalar ──────────────────────────────────────────────────────────────
@@ -167,6 +205,7 @@ export interface InstallReport {
   connectionId: string
   sources: { ref: string; slug: string | null; status: 'reaproveitada' | 'criada' | 'incompleta' | 'erro'; detail?: string }[]
   datasets: { slug: string; status: 'criado' | 'ja-existe' | 'pulado' | 'erro'; detail?: string }[]
+  notebooks: { slug: string; status: 'criado' | 'ja-existe' | 'pulado' | 'erro'; detail?: string }[]
 }
 
 export async function installPack(
@@ -176,7 +215,7 @@ export async function installPack(
   if (!user.master) throw new PackError(403, 'Instalar pacote publica fontes: só um admin master instala.')
   const tenantId = await tenantIdDe(user.tenant)
   const connectionId = await conexaoDoSistema(tenantId, pack.sources[0]?.schema ?? 'erp', opts.connectionId)
-  const report: InstallReport = { connectionId, sources: [], datasets: [] }
+  const report: InstallReport = { connectionId, sources: [], datasets: [], notebooks: [] }
   const resolvidas = new Map<string, string>()
   // Fontes novas só entram na fila no FIM, depois que os calculados existem.
   // A cascata procura os dependentes no instante em que a carga termina: uma
@@ -282,6 +321,37 @@ export async function installPack(
       if (fontes.length && fontes.every((f) => reaproveitadas.includes(resolvidas.get(f)!))) void enqueueSync(String(r.id))
     }
   }
+  // Notebooks prontos: nascem privados, no nome de quem instalou, como os
+  // conjuntos — quem libera para as áreas é o admin, em "Acessos". Só entra o
+  // notebook cujos conjuntos existem; os dados chegam com a carga.
+  const slugsDoPacote = pack.datasets.map((d) => d.slug)
+  for (const nb of pack.notebooks ?? []) {
+    try {
+      if (!NOME_NOTEBOOK.test(nb.slug)) throw new Error('nome fora do padrão (erro do pacote)')
+      if (await notebookExiste(tenantId, nb.slug)) {
+        report.notebooks.push({ slug: nb.slug, status: 'ja-existe' })
+        continue
+      }
+      const faltam: string[] = []
+      for (const s of conjuntosDoNotebook(nb, slugsDoPacote)) {
+        if (!(await slugExistente(tenantId, s))) faltam.push(s)
+      }
+      if (faltam.length) {
+        report.notebooks.push({ slug: nb.slug, status: 'pulado', detail: `falta o conjunto ${faltam.join(', ')}` })
+        continue
+      }
+      const cells = nb.cells.map((c, i) => ({ id: `c${i + 1}`, kind: c.kind, source: c.source }))
+      await db.query(
+        `insert into notebooks (tenant_id, slug, name, description, cells, visibility, owner_email)
+         values ($1, $2, $3, $4, $5, 'private', $6)`,
+        [tenantId, nb.slug, nb.name, nb.description, JSON.stringify(cells), user.email],
+      )
+      report.notebooks.push({ slug: nb.slug, status: 'criado' })
+    } catch (e) {
+      report.notebooks.push({ slug: nb.slug, status: 'erro', detail: (e as Error).message })
+    }
+  }
+
   // Primeira carga das fontes novas, em segundo plano e pela fila de sempre.
   // Os calculados já estão gravados, então a cascata de cada uma os encontra.
   for (const id of paraCarregar) void enqueueSync(id)
