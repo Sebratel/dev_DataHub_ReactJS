@@ -109,6 +109,20 @@ describe('Pacotes de conjuntos: onda 1', () => {
         `select slug, last_sync_at from datasets where kind = 'derived' and slug = any($1)`, [slugsDoPacote])).rows
       return r2.length === slugsDoPacote.length && r2.every((x) => x.last_sync_at) ? r2 : null
     }, 120_000)
+
+    // A cascata procura os dependentes quando a carga termina. Fonte que começa
+    // a carregar antes de o último calculado ser gravado pode terminar sem achá-lo,
+    // e ele nunca roda. Só aparecia com a máquina carregada (CI de 20/11); esta
+    // ordem é o que impede, e falha sempre contra a versão que enfileirava antes.
+    const ordem = (await db.query(
+      `select (select min(s.started_at) from sync_runs s join datasets f on f.id = s.dataset_id
+                where f.kind = 'source' and f.schema_name = 'erp') as primeira_carga,
+              (select max(d.created_at) from datasets d
+                where d.kind = 'derived' and d.slug = any($1)) as ultimo_calculado`, [slugsDoPacote])).rows[0]
+    assert.ok(ordem.primeira_carga && ordem.ultimo_calculado, JSON.stringify(ordem))
+    assert.ok(new Date(ordem.primeira_carga).getTime() >= new Date(ordem.ultimo_calculado).getTime(),
+      `uma fonte começou a carregar (${new Date(ordem.primeira_carga).toISOString()}) antes de o último calculado existir (${new Date(ordem.ultimo_calculado).toISOString()})`)
+
     const faltam = prontos ? [] : (await db.query(
       `select d.slug, (select error from sync_runs s where s.dataset_id = d.id order by started_at desc limit 1) as erro
          from datasets d where d.kind = 'derived' and d.slug = any($1) and d.last_sync_at is null`, [slugsDoPacote])).rows

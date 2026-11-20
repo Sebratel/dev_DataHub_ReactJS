@@ -178,6 +178,12 @@ export async function installPack(
   const connectionId = await conexaoDoSistema(tenantId, pack.sources[0]?.schema ?? 'erp', opts.connectionId)
   const report: InstallReport = { connectionId, sources: [], datasets: [] }
   const resolvidas = new Map<string, string>()
+  // Fontes novas só entram na fila no FIM, depois que os calculados existem.
+  // A cascata procura os dependentes no instante em que a carga termina: uma
+  // fonte pequena enfileirada aqui terminava antes de os calculados serem
+  // gravados, a cascata não achava ninguém e o calculado nunca rodava (no CI
+  // de 20/11, o prata_voalle_contratos e os 20 ouro que dependem dele).
+  const paraCarregar: string[] = []
 
   for (const s of pack.sources) {
     try {
@@ -221,7 +227,7 @@ export async function installPack(
         )
       }
       await applySyncConfig(String(ds.id), s.sync)
-      void enqueueSync(String(ds.id)) // primeira carga em segundo plano, pela fila de sempre
+      paraCarregar.push(String(ds.id))
       resolvidas.set(s.ref, slug)
       report.sources.push({ ref: s.ref, slug, status: 'criada' })
     } catch (e) {
@@ -276,6 +282,9 @@ export async function installPack(
       if (fontes.length && fontes.every((f) => reaproveitadas.includes(resolvidas.get(f)!))) void enqueueSync(String(r.id))
     }
   }
+  // Primeira carga das fontes novas, em segundo plano e pela fila de sempre.
+  // Os calculados já estão gravados, então a cascata de cada uma os encontra.
+  for (const id of paraCarregar) void enqueueSync(id)
   return report
 }
 

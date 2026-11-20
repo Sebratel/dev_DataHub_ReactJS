@@ -88,10 +88,12 @@ jobs:
           DATAHUB_TEST_DB_PASSWORD: ci-somente-teste
         # Falha vira ANOTACAO do GitHub: o motivo fica legivel pela API publica do
         # run, sem baixar o log inteiro (que exige permissao de admin no repo).
+        # As linhas de "migration aplicada"/"banco pronto" saem: uma por arquivo de
+        # teste, enchiam as 80 linhas e cortavam a mensagem da falha (PR #20).
         run: |
           set -o pipefail
           if ! npm run test:it 2>&1 | tee it.log; then
-            resumo=$(grep -E "^✖ |^ +✖|AssertionError|Error:|PAROU|\[db\]|\[mariadb\]|rejei" it.log | grep -v " # " | head -80 | cut -c1-300 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); print }')
+            resumo=$(grep -E "^✖ |^ +✖|AssertionError|Error:|PAROU|\[db\]|\[mariadb\]|rejei" it.log | grep -v " # " | grep -vE "^\[db\] (migration aplicada|banco datahub pronto)" | head -80 | cut -c1-300 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); print }')
             echo "::error title=Falhas da suite (Postgres)::${resumo}"
             exit 1
           fi
@@ -152,7 +154,7 @@ jobs:
         run: |
           set -o pipefail
           if ! npm run test:it 2>&1 | tee it.log; then
-            resumo=$(grep -E "^✖ |^ +✖|AssertionError|Error:|PAROU|\[db\]|\[mariadb\]|rejei" it.log | grep -v " # " | head -80 | cut -c1-300 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); print }')
+            resumo=$(grep -E "^✖ |^ +✖|AssertionError|Error:|PAROU|\[db\]|\[mariadb\]|rejei" it.log | grep -v " # " | grep -vE "^\[db\] (migration aplicada|banco datahub pronto)" | head -80 | cut -c1-300 | awk 'BEGIN { ORS = "%0A" } { gsub(/%/, "%25"); print }')
             echo "::error title=Falhas da suite (MariaDB)::${resumo}"
             exit 1
           fi
