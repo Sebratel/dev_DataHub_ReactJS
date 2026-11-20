@@ -4,7 +4,7 @@
 // fica como está. Fora do menu, como a Lixeira: o caminho é "Pacotes" em Conjuntos.
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Package, Loader2, Check, Database, GitMerge, CircleDashed, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Package, Loader2, Check, Database, GitMerge, CircleDashed, AlertTriangle, NotebookText } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { useConfirm } from '@/components/Dialogs'
@@ -21,12 +21,14 @@ interface PackStatus {
     slug: string; name: string; domain: string; description: string
     instalado: boolean; rowCount: number | null; lastSyncAt: string | null
   }[]
+  notebooks: { slug: string; name: string; domain: string; description: string; instalado: boolean; usa: string[] }[]
 }
 
 interface InstallReport {
   connectionId: string
   sources: { ref: string; slug: string | null; status: string; detail?: string }[]
   datasets: { slug: string; status: string; detail?: string }[]
+  notebooks: { slug: string; status: string; detail?: string }[]
 }
 
 const DOMINIO: Record<string, string> = { financeiro: 'Financeiro', cancelamento: 'Cancelamento', base: 'Base e receita' }
@@ -48,11 +50,13 @@ export default function PacksPage() {
 
   async function instalar(p: PackStatus) {
     const novas = p.sources.filter((s) => !s.slug).length
+    const nbs = p.notebooks.filter((n) => !n.instalado).length
     const ok = await confirm({
       title: `Instalar "${p.name}"?`,
       message: `${p.datasets.filter((d) => !d.instalado).length} conjunto(s) calculado(s) novos, em cascata. ` +
+        (nbs ? `${nbs} notebook(s) de análise pronto(s). ` : '') +
         (novas ? `${novas} tabela(s) do Voalle ainda não copiada(s) entram na fila de carga, só com as colunas usadas. ` : '') +
-        'Os conjuntos nascem privados: libere o acesso para as áreas em cada um.',
+        'Conjuntos e notebooks nascem privados: libere o acesso para as áreas em cada um.',
       confirmLabel: 'Instalar',
     })
     if (!ok) return
@@ -71,7 +75,8 @@ export default function PacksPage() {
 
   const problemas = report
     ? [...report.sources.filter((s) => s.status === 'erro' || s.status === 'incompleta').map((s) => `${s.ref}: ${s.detail}`),
-       ...report.datasets.filter((d) => d.status === 'erro' || d.status === 'pulado').map((d) => `${d.slug}: ${d.detail}`)]
+       ...report.datasets.filter((d) => d.status === 'erro' || d.status === 'pulado').map((d) => `${d.slug}: ${d.detail}`),
+       ...report.notebooks.filter((n) => n.status === 'erro' || n.status === 'pulado').map((n) => `${n.slug}: ${n.detail}`)]
     : []
 
   return (
@@ -92,6 +97,7 @@ export default function PacksPage() {
         <div className="mb-3 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] dark:border-zinc-800 dark:bg-zinc-900">
           <b>Instalado</b> pela conexão {report.connectionId}:{' '}
           {report.datasets.filter((d) => d.status === 'criado').length} calculado(s) criado(s),{' '}
+          {report.notebooks.filter((n) => n.status === 'criado').length} notebook(s),{' '}
           {report.sources.filter((s) => s.status === 'criada').length} cópia(s) nova(s) na fila de carga.
           {problemas.length > 0 && (
             <ul className="mt-1 list-disc pl-5 text-crit dark:text-crit-dark">
@@ -102,7 +108,7 @@ export default function PacksPage() {
       )}
 
       {packs === null && !error ? <TableSkeleton /> : packs?.map((p) => {
-        const faltam = p.datasets.filter((d) => !d.instalado).length
+        const faltam = p.datasets.filter((d) => !d.instalado).length + p.notebooks.filter((n) => !n.instalado).length
         return (
           <Card key={p.id} className="mb-3">
             <div className="flex items-start justify-between gap-3 border-b border-zinc-100 px-3 py-2.5 dark:border-zinc-800">
@@ -164,6 +170,42 @@ export default function PacksPage() {
                 ))}
               </tbody>
             </DataGrid>
+            {p.notebooks.length > 0 && (
+              <DataGrid fixed>
+                <thead>
+                  <tr>
+                    <Th>Notebook de análise (SQL + Python)</Th>
+                    <Th className="w-[130px]">Área</Th>
+                    <Th className="w-[110px]" right>Conjuntos</Th>
+                    <Th className="w-[110px]" right>Situação</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {p.notebooks.map((n) => (
+                    <Tr key={n.slug}>
+                      <Td>
+                        <span title={n.description}>
+                          {n.instalado ? (
+                            <Link to={`/notebooks/${n.slug}`} className="hover:text-accent">
+                              <EntityCell name={n.name} slug={n.slug}><NotebookText size={13} className="shrink-0 text-zinc-400" /></EntityCell>
+                            </Link>
+                          ) : (
+                            <EntityCell name={n.name} slug={n.slug}><NotebookText size={13} className="shrink-0 text-zinc-300" /></EntityCell>
+                          )}
+                        </span>
+                      </Td>
+                      <Td muted>{DOMINIO[n.domain] ?? n.domain}</Td>
+                      <Td right muted><span title={n.usa.join(', ')}>{n.usa.length}</span></Td>
+                      <Td right>
+                        {n.instalado
+                          ? <span className="inline-flex items-center gap-1 text-[11.5px] text-ok dark:text-ok-dark"><Check size={12} /> instalado</span>
+                          : <span className="text-[11.5px] text-zinc-400">não instalado</span>}
+                      </Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </DataGrid>
+            )}
           </Card>
         )
       })}

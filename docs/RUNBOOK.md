@@ -385,6 +385,34 @@ Os pacotes ficam em **Conjuntos › Pacotes**: o admin vê, o master instala. Ca
 - **Taxa de cancelamento.** Cancelados no mês ÷ base no fim do mês anterior. Ficam fora o lote (`FNC.CAN.020`), o duplicado (`OTR.CAN.006`), a telefonia (tipo 19) e quem nunca foi instalado.
 - **Saldo antigo em aberto.** É quase todo de contrato já cancelado.
 
+### Notebooks prontos do pacote (desde 20/11/2026)
+
+O pacote também instala notebooks de análise (SQL + Python), definidos em `packs/onda1Notebooks.ts`.
+- Nascem **privados**, no nome de quem instalou. Libere em "Acessos", junto com os conjuntos que eles leem.
+- Um notebook só é criado se todos os conjuntos que as células SQL citam existirem.
+- O SQL agrega no motor e o Python modela no navegador (Pyodide). A célula SQL entrega no máximo **500 linhas** ao Python.
+
+**Onda 1:** 6 notebooks.
+- Cancelamento: tendência, sazonalidade e previsão. Três métodos são testados nos 6 últimos meses e fica o que erra menos.
+- Retenção por safra, vida média e receita esperada por contrato (Kaplan-Meier).
+- Risco de cancelamento por perfil (regressão logística sobre segmentos).
+- Curva de recebimento e perda esperada (chain-ladder).
+- Ponte da receita contratada e projeção da base.
+- Cidades e bairros com cancelamento fora do padrão (gráfico de funil).
+
+**Validação.** Em 20/11/2026 os 6 rodaram no Chromium com o Pyodide 0.26.4 sobre dado real do Voalle, materializado num DuckDB temporário e servido com a mesma conversão JSON da rota.
+- Resultados:
+  - vida média de 3,8 anos e receita esperada de ~R$ 5 mil por contrato novo;
+  - perda real de 5,6% do faturado nos meses completos;
+  - 18 bairros de Canoas e Novo Hamburgo acima do esperado.
+- O CI só confere que as células SQL passam pela rota (`pacotes.test.ts`). O Python não roda no CI.
+
+**Armadilhas para quem escrever notebooks:**
+- **Tipos.** Contagem (BIGINT) e decimal chegam ao Python como **texto**. A função `tabela()` do primeiro bloco converte. Colunas de data são reconhecidas pelo nome exato: `mes_vencimento` é data, `meses_de_casa` não.
+- **Versões.** O Pyodide 0.26 traz pandas 2.2, matplotlib 3.5 e statsmodels 0.14: nada de API nova.
+- **Código Python.** Escreva em `String.raw`: um `"\n"` num `print` viraria quebra de linha real e o Python recusaria.
+- **Valor do contrato.** `prata_voalle_contratos.valor_mensal` é o valor **atual**, sem histórico. Uma ponte de receita feita com ele não mostra reajuste.
+
 ---
 
 ## 10. Recuperação rápida (ordem sugerida num incidente)

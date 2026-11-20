@@ -26,6 +26,7 @@
 //     (mudança de endereço varia 32x entre atendentes): use com cuidado.
 // ─────────────────────────────────────────────────────────────────────────
 import type { Pack } from '../packs.js'
+import { NOTEBOOKS_ONDA_1 } from './onda1Notebooks.js'
 
 const DESDE = '2023-01-01'
 
@@ -716,4 +717,7 @@ group by 1
 order by 1`,
     },
   ],
+
+  // Análises prontas (SQL + Python) sobre os conjuntos acima — ver onda1Notebooks.ts.
+  notebooks: NOTEBOOKS_ONDA_1,
 }
