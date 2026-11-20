@@ -73,6 +73,17 @@ before(async () => {
     (1, 100, '2026-09-08', '2026-09-08', 100, 10, false, now()),
     (2, 101, '2026-09-08', '2026-09-08', 100, 10, false, now()),
     (3, 102, '2026-10-20', '2026-10-20', 100, 7,  false, now())`)
+  // Como no Voalle: `modified` vazio em boa parte das linhas (58% das baixas desde
+  // 2023). Estas três só entram pela passada de `created`, e os testes abaixo
+  // contam com elas: o motivo "Inadimplência" do contrato 2, a fatura 103 em
+  // atraso e a baixa por boleto de outubro.
+  for (const t of ['contract_events', 'financial_receivable_titles', 'financial_receipt_titles']) {
+    await q(`alter table erp.${t} add column created timestamp`)
+    await q(`update erp.${t} set created = now()`)
+  }
+  await q(`update erp.contract_events set modified = null where id = 2`)
+  await q(`update erp.financial_receivable_titles set modified = null where id = 103`)
+  await q(`update erp.financial_receipt_titles set modified = null where id = 3`)
 })
 after(shutdown)
 

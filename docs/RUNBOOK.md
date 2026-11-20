@@ -377,6 +377,30 @@ Os pacotes ficam em **Conjuntos › Pacotes**: o admin vê, o master instala. Ca
   - faturamento de ~R$ 9,8 mi por mês;
   - recebimento de ~R$ 9,3 mi por mês.
 
+**Carga incremental do Voalle = `modified` + `created`** (corrigido em 20/11/2026). O Voalle deixa `modified` vazio em muita linha. Com carga só por `modified`, ficariam de fora:
+
+| Tabela | Linhas perdidas | Proporção | Desde |
+|---|---|---|---|
+| Baixas de títulos | 5,0 mi de 8,5 mi | 58% | 2023 |
+| Eventos de contrato | 1,7 mi de 4,9 mi | 35% | 2023 |
+| Títulos a receber | 70 mil | — | 2023 |
+| Atendimentos | 147 mil | — | 2025 |
+| Romaneios de material | 158 mil de 173 mil | 91% | 2025 |
+
+Toda fonte de pacote com `modified` tem `created` como segunda chave. O motor faz uma passada por chave, e a linha com `modified` vazio entra pela de `created`. Os testes dos pacotes deixam `modified` vazio de propósito em linhas que eles conferem.
+
+**Se a onda 1 já foi instalada antes desta correção**, as três cópias abaixo estão incompletas. A tela de Pacotes mostra "faltam colunas: created".
+- `bronze_voalle_financial_receipt_titles`
+- `bronze_voalle_contract_events`
+- `bronze_voalle_financial_receivable_titles`
+
+Em cada uma:
+1. **Atualizar colunas**, incluindo `created`.
+2. Em **Regras de atualização**, pôr `created` como segunda chave.
+3. **Recarregar tudo**.
+
+Os calculados recalculam sozinhos, pela cascata.
+
 **Regras que valem para os próximos pacotes** (descobertas no banco):
 - **Fatura.** Todo mês há dois títulos com o mesmo valor: a fatura `FAT…` (`bill_title_id` vazio) e os componentes que apontam para ela. As baixas também vêm em dobro. Conte só a fatura.
 - **Tarifa de baixa.** A natureza `DF - TARIFA BAIXA DE TÍTULO` não é cobrança de cliente; fica fora.
