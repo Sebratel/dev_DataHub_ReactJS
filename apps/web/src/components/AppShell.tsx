@@ -15,13 +15,14 @@ import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, ShieldCheck, ScrollText,
   Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Brain, NotebookText, Sparkle,
-  Wand2, ListChecks, ClipboardCheck,
+  Wand2, ListChecks, ClipboardCheck, ExternalLink,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuthStore } from '@/store/authStore'
 import AlertsBell from '@/components/AlertsBell'
 import { useThemeStore } from '@/store/themeStore'
+import { DASHIA_URL } from '@/features/paineis/dashia'
 
 interface NavEntry {
   to: string
@@ -38,7 +39,8 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
     items: [
       { to: '/', label: 'Início', icon: Home, end: true },
       { to: '/datasets', label: 'Conjuntos', icon: Boxes },
-      { to: '/dashboards', label: 'Painéis', icon: LayoutDashboard },
+      // O dashia embutido. Os painéis do próprio Hub (/dashboards) saíram do menu.
+      { to: '/paineis', label: 'Painéis', icon: LayoutDashboard },
       { to: '/metrics', label: 'Métricas', icon: Ruler },
     ],
   },
@@ -68,7 +70,7 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
 
 // Rótulos amigáveis por segmento de rota (para o breadcrumb dinâmico).
 const CRUMB: Record<string, string> = {
-  datasets: 'Conjuntos', dashboards: 'Painéis', metrics: 'Métricas', ai: 'Assistente IA',
+  datasets: 'Conjuntos', dashboards: 'Painéis', paineis: 'Painéis', metrics: 'Métricas', ai: 'Assistente IA',
   admin: 'Administração', connections: 'Conexões',
   access: 'Usuários e Acessos',
   audit: 'Auditoria', derived: 'Calculado', new: 'Novo', explore: 'Explorador',
@@ -186,6 +188,9 @@ function UserMenu() {
 export default function AppShell() {
   const { user } = useAuthStore()
   const { theme, toggle } = useThemeStore()
+  // Página que ocupa a área inteira (o dashia embutido): sem margem e sem a
+  // rolagem do Data Hub — quem rola é o conteúdo do quadro.
+  const inteira = useLocation().pathname === '/paineis'
 
   if (!user) return <Navigate to="/login" replace />
   const isAdmin = user.roles.includes('admin')
@@ -248,6 +253,18 @@ export default function AppShell() {
         <header className="flex h-[46px] shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-3.5 dark:border-zinc-800 dark:bg-zinc-900">
           <Breadcrumb />
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {inteira && (
+              <a
+                href={DASHIA_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Abrir os painéis em nova aba"
+                aria-label="Abrir os painéis em nova aba"
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              >
+                <ExternalLink size={15} strokeWidth={1.5} />
+              </a>
+            )}
             {isAdmin && <AlertsBell />}
             <button
               onClick={toggle}
@@ -261,8 +278,8 @@ export default function AppShell() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden px-3.5 py-3.5">
-          <div className="animate-fade-in">
+        <main className={clsx('flex-1 overflow-x-hidden', inteira ? 'overflow-y-hidden' : 'overflow-y-auto px-3.5 py-3.5')}>
+          <div className={clsx('animate-fade-in', inteira && 'h-full')}>
             <Outlet />
           </div>
         </main>
