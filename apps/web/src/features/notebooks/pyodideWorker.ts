@@ -103,6 +103,8 @@ self.onmessage = async (e: MessageEvent<RunMessage>) => {
       needed.forEach((p) => loadedPackages.add(p))
     }
 
+    // `batched` entrega cada LINHA sem o "\n" do fim; juntar com '' emendava
+    // todos os prints numa linha só (e quebrava as tabelas do pandas).
     py.setStdout({ batched: (s) => out.push(s) })
     py.setStderr({ batched: (s) => out.push(s) })
 
@@ -153,11 +155,11 @@ except Exception:
       out.push(`\n[gráfico não gerado: ${(err as Error).message}]`)
     }
 
-    self.postMessage({ type: 'done', stdout: out.join(''), repr, images })
+    self.postMessage({ type: 'done', stdout: out.join('\n'), repr, images })
   } catch (err) {
     self.postMessage({
       type: 'error',
-      stdout: out.join(''),
+      stdout: out.join('\n'),
       error: (err as Error).message ?? String(err),
     })
   }
