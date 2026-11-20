@@ -28,6 +28,7 @@ import ExplorerPage from '@/features/explorer/ExplorerPage'
 import MetricsPage from '@/features/metrics/MetricsPage'
 import DashboardsPage from '@/features/dashboards/DashboardsPage'
 import DashboardPage from '@/features/dashboards/DashboardPage'
+import DashiaPage from '@/features/paineis/DashiaPage'
 import AiPage from '@/features/ai/AiPage'
 import '@/styles/index.css'
 
@@ -46,6 +47,9 @@ const router = createBrowserRouter([
       { path: 'lixeira', element: <TrashPage /> },
       { path: 'padronizar-nomes', element: <NamingPage /> },
       { path: 'pacotes', element: <PacksPage /> },
+      // Menu "Painéis" = dashia embutido. Os painéis do próprio Hub seguem em
+      // /dashboards, fora do menu, para quem tem o link.
+      { path: 'paineis', element: <DashiaPage /> },
       { path: 'dashboards', element: <DashboardsPage /> },
       { path: 'dashboards/:id', element: <DashboardPage /> },
       { path: 'metrics', element: <MetricsPage /> },
