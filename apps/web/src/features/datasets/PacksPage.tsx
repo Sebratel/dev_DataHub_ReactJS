@@ -31,7 +31,7 @@ interface InstallReport {
   notebooks: { slug: string; status: string; detail?: string }[]
 }
 
-const DOMINIO: Record<string, string> = { financeiro: 'Financeiro', cancelamento: 'Cancelamento', base: 'Base e receita' }
+const DOMINIO: Record<string, string> = { financeiro: 'Financeiro', cancelamento: 'Cancelamento', base: 'Base e receita', campo: 'Campo' }
 
 export default function PacksPage() {
   const confirm = useConfirm()

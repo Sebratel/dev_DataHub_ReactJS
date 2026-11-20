@@ -25,6 +25,7 @@ import { novoNome, segueOPadrao } from './naming.js'
 import { currentSlugFor } from '../../core/slugAliases.js'
 import type { RenameUser } from './naming.js'
 import { ONDA_1 } from './packs/onda1.js'
+import { ONDA_2 } from './packs/onda2.js'
 
 export interface PackSource {
   /** Como o SQL cita: {{voalle.contracts}}. */
@@ -79,7 +80,7 @@ export function conjuntosDoNotebook(nb: PackNotebook, slugs: string[]): string[]
   return slugs.filter((s) => new RegExp(`\\b${s}\\b`).test(sql))
 }
 
-export const PACKS: Pack[] = [ONDA_1]
+export const PACKS: Pack[] = [ONDA_1, ONDA_2]
 
 export class PackError extends Error {
   constructor(readonly status: number, message: string) { super(message) }

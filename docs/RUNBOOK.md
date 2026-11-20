@@ -409,6 +409,30 @@ Os calculados recalculam sozinhos, pela cascata.
 - **Taxa de cancelamento.** Cancelados no mês ÷ base no fim do mês anterior. Ficam fora o lote (`FNC.CAN.020`), o duplicado (`OTR.CAN.006`), a telefonia (tipo 19) e quem nunca foi instalado.
 - **Saldo antigo em aberto.** É quase todo de contrato já cancelado.
 
+### Onda 2 · Campo: instalação, manutenção e agenda (20/11/2026)
+
+**O que é:** 16 calculados, 2 prata e 14 ouro, sobre 13 tabelas do Voalle desde 2025. Contratos e pessoas são as mesmas cópias da onda 1, com as mesmas colunas, então as ondas podem ser instaladas em qualquer ordem.
+
+**De onde vêm as regras:** dos painéis de Instalação e de Manutenção, já conferidos com a operação.
+- **Instalado** = material alocado (`patrimony_packing_list_items.out_date`). Bate com a primeira conexão no AutoISP em 99,7% dos casos.
+- **Universo de manutenção** = equipe ou catálogo de manutenção.
+  - Saem as centrais (COR, CGR, Suporte, Corporativo, CAOC), os tipos administrativos e o cancelado.
+  - O tempo até concluir é `conclusion_date − created`.
+
+**Fontes com carga especial:**
+- **Protocolos** (`assignment_incidents`) não têm data de alteração: cópia completa diária, só com 7 colunas (1,9 mi de linhas).
+- **Agenda** (`service_desk_slots`): `modified` só existe depois da reserva, então tem duas chaves.
+- **Histórico do app de campo** (`fsm_attendance_history`): relê 2 dias para pegar o fim dos trechos em andamento.
+
+**Validação com dado real** (20/11/2026):
+- 3.713 reparos em outubro, o mesmo número do painel de Manutenção;
+- tempo mediano até concluir de ~15 h;
+- coeficiente de ~0,10% da base por dia útil, contra a meta de 0,12%;
+- recorrência de ~11%;
+- ocupação da agenda de 54% a 64%.
+
+**Diferença conhecida:** o painel de Manutenção também tira o colaborador que abre protocolo como cliente (regra pelo nome). Aqui não há nome de pessoa no lake. São ~5 protocolos por ano.
+
 ### Notebooks prontos do pacote (desde 20/11/2026)
 
 O pacote também instala notebooks de análise (SQL + Python), definidos em `packs/onda1Notebooks.ts`.
