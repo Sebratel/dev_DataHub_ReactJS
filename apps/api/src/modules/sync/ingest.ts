@@ -304,7 +304,14 @@ async function chamaAfterSync(datasetId: string, outcome: SyncOutcome): Promise<
 
 // `visited` evita ciclo infinito quando A cascateia para B e B (por engano)
 // cascateia de volta para A — cada slug só dispara cascata uma vez por corrida.
-export function enqueueSync(datasetId: string, visited: Set<string> = new Set()): Promise<string> {
+//
+// `depoisDaAtual`: para quem precisa de uma carga que COMECE depois do pedido
+// (a conciliação). Se o conjunto está rodando agora, entra mais uma atrás —
+// a que roda leu a fonte antes do pedido. Já esperando na fila, não duplica:
+// essa ainda vai começar depois.
+export function enqueueSync(
+  datasetId: string, visited: Set<string> = new Set(), opts: { depoisDaAtual?: boolean } = {},
+): Promise<string> {
   // JÁ na fila ou rodando: não entra de novo. Sem esta trava a fila se
   // multiplica sozinha, por dois caminhos independentes:
   //
@@ -317,7 +324,7 @@ export function enqueueSync(datasetId: string, visited: Set<string> = new Set())
   //
   // O efeito não era só visual: cada cópia relê a tabela inteira de novo,
   // ocupando horas de fila para chegar ao mesmo resultado.
-  if (aguardando.includes(datasetId) || runningDatasetId === datasetId) {
+  if (aguardando.includes(datasetId) || (runningDatasetId === datasetId && !opts.depoisDaAtual)) {
     return Promise.resolve('já estava na fila')
   }
   aguardando.push(datasetId)

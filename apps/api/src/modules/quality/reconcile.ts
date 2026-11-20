@@ -109,7 +109,8 @@ export async function requestReconcile(
     }
     throw e
   }
-  void enqueueSync(datasetId)
+  // A carga que vem antes da conferência tem de COMEÇAR depois deste pedido.
+  void enqueueSync(datasetId, new Set(), { depoisDaAtual: true })
   return { id, already: false }
 }
 
@@ -121,8 +122,15 @@ async function afterSync(datasetId: string, outcome: SyncOutcome): Promise<void>
     await postLoadChecks(datasetId).catch((e) =>
       console.warn(`[qualidade] verificações pós-carga de ${datasetId}: ${(e as Error).message}`))
   }
+  // Carga que deu certo só atende pedido feito ANTES de ela começar. Um pedido
+  // que chega enquanto esta carga fecha (verificações acima) não foi coberto
+  // por ela: a conferência sairia sem o que entrou na fonte depois, e a carga
+  // seguinte, a do próprio pedido, não acharia mais nada pendente. As duas
+  // horas vêm do relógio do banco. Falha encerra todos, como antes.
   const pendentes = (await db.query(
-    `select id from reconcile_runs where dataset_id = $1 and status = 'queued' order by created_at`, [datasetId],
+    `select id from reconcile_runs where dataset_id = $1 and status = 'queued'
+        and ($2 = false or created_at <= (select max(s.started_at) from sync_runs s where s.dataset_id = $1))
+      order by created_at`, [datasetId, outcome.ok],
   )).rows
   for (const p of pendentes) {
     if (outcome.ok) await runReconcile(String(p.id))
