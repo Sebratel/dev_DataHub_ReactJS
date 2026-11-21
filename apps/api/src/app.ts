@@ -8,6 +8,7 @@ import express from 'express'
 import { encaminharErrosAsync, respostaDeErro } from './core/asyncRoutes.js'
 import { isDbAvailable } from './db/pool.js'
 import { requireAuth } from './modules/auth/middleware.js'
+import { authHubRouter } from './modules/auth/hubRouter.js'
 import { connectionsRouter } from './modules/catalog/connectionsRouter.js'
 import { datasetsRouter } from './modules/catalog/datasetsRouter.js'
 import { namingRouter } from './modules/catalog/namingRouter.js'
@@ -76,6 +77,8 @@ export function createApp(): express.Express {
   app.get('/api/v1/auth/me', requireAuth(), (req, res) => {
     res.json({ user: req.user })
   })
+  // Entrada pelo Hub Apps (públicas: /config e a troca do token por sessão).
+  app.use('/api/v1/auth', authHubRouter)
 
   // Admin: fontes de dados e controle de acesso (usuários, times, concessões).
   app.use('/api/v1/connections', connectionsRouter)

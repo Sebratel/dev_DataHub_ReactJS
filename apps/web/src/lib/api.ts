@@ -63,7 +63,11 @@ async function request(path: string, init: RequestInit): Promise<Response> {
       message = (body as { error?: string }).error || message
     } catch { /* corpo não-JSON */ }
     // 401 que sobreviveu à renovação: aí sim a credencial não serve mais.
-    if (res.status === 401 && token) useAuthStore.getState().logout()
+    // Sem token nenhum o 401 também encerra: o usuário salvo é de uma sessão
+    // que não existe mais (a do Hub fica só na aba em que foi aberta).
+    // 403 HUB_ONLY: login direto recusado — volta ao login, que explica.
+    const hubOnly = res.status === 403 && (body as { code?: string } | undefined)?.code === 'HUB_ONLY'
+    if (res.status === 401 || hubOnly) useAuthStore.getState().logout()
     throw new ApiError(res.status, message, body)
   }
   return res

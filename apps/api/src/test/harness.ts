@@ -81,6 +81,11 @@ const TEST_ENV: Record<string, string> = {
   ADMIN_EMAILS: `${USERS.master},${USERS.admin}`,
   MASTER_ADMIN_EMAILS: USERS.master,
   CONNECTIONS_SECRET: 'segredo-so-de-teste-nao-usar-em-producao',
+  // Entrada pelo Hub Apps (hub.test.ts). HUB_ONLY começa desligado; o teste
+  // liga e desliga (é lido a cada uso).
+  HUB_SSO_SECRET: 'segredo-do-hub-so-de-teste',
+  HUB_APP_ID: 'app-datahub-teste',
+  HUB_ONLY: 'false',
   LAKE_ROOT: lakeRoot,
   SYNC_STAGING_DIR: join(lakeRoot, '.staging'),
   // Carga em lotes PEQUENOS e sem pausa: os testes de qualidade (QLD-01)

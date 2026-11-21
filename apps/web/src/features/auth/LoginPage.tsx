@@ -1,15 +1,21 @@
 // Tela de login no padrão visual do churn_mvp (Operação Sebratel):
 // hero em tela cheia + decoração âmbar + card creme com botão âmbar.
 // O fluxo de autenticação é o do Data Hub (Firebase + /auth/me).
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion, AnimatePresence } from 'framer-motion'
-import { AlertCircle, Info, Loader2, Lock, Shield } from 'lucide-react'
+import { AlertCircle, ExternalLink, Info, Loader2, Lock, Shield } from 'lucide-react'
 import type { SessionUser } from '@datahub/shared'
-import { login as loginProvider } from '@/store/authProvider'
+import { login as loginProvider, logoutProvider } from '@/store/authProvider'
 import { describeAuthError, type AuthErrorInfo } from '@/store/firebaseAuth'
+import { getHubLoginError, isFramed } from '@/store/hubSession'
 import { useAuthStore } from '@/store/authStore'
-import { api } from '@/lib/api'
+import { api, ApiError } from '@/lib/api'
+
+// Como entrar, segundo o servidor (rota pública). Sem resposta, a tela segue
+// como sempre foi: só o botão do Google.
+interface AuthConfig { hubOnly: boolean; hubLogin: boolean; hubUrl: string }
+const HUB_URL_PADRAO = 'https://hub-apps.sebratel.net.br'
 
 const HERO = '/login-hero.png'
 const LOGO = '/logo-circular-sebratel.png'
@@ -62,6 +68,25 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<AuthErrorInfo | null>(null)
   const [showDetail, setShowDetail] = useState(false)
+  const [cfg, setCfg] = useState<AuthConfig | null>(null)
+  const [recusadoPeloHub, setRecusadoPeloHub] = useState(false)
+  // Entrada pelo Hub que falhou (token vencido, já usado…): motivo vem do servidor.
+  const [hubErro] = useState(() => getHubLoginError())
+  const [framed] = useState(() => isFramed())
+
+  useEffect(() => {
+    let vivo = true
+    fetch('/api/v1/auth/config')
+      .then((r) => (r.ok ? (r.json() as Promise<AuthConfig>) : null))
+      .then((c) => { if (vivo && c) setCfg(c) })
+      .catch(() => { /* sem config: tela padrão */ })
+    return () => { vivo = false }
+  }, [])
+
+  const hubUrl = cfg?.hubUrl || HUB_URL_PADRAO
+  const soPeloHub = !!cfg?.hubOnly || recusadoPeloHub
+  // Dentro do Hub, cair aqui quer dizer que a sessão do Hub acabou.
+  const mostrarHub = soPeloHub || !!hubErro || (framed && !!cfg?.hubLogin)
 
   async function handleGoogle() {
     setBusy(true)
@@ -73,8 +98,16 @@ export default function LoginPage() {
       setUser(user)
       navigate('/', { replace: true })
     } catch (e) {
-      // A causa vira frase acionável; o texto cru fica atrás de "detalhes".
-      setError(describeAuthError(e))
+      const hubOnly = e instanceof ApiError && (e.body as { code?: string } | undefined)?.code === 'HUB_ONLY'
+      if (hubOnly) {
+        // Sai do Firebase: senão a próxima tentativa reaproveitaria a mesma sessão recusada.
+        await logoutProvider()
+        setRecusadoPeloHub(true)
+        setError({ message: (e as Error).message, detail: '' })
+      } else {
+        // A causa vira frase acionável; o texto cru fica atrás de "detalhes".
+        setError(describeAuthError(e))
+      }
       setShowDetail(false)
       setBusy(false)
     }
@@ -153,7 +186,33 @@ export default function LoginPage() {
                   </p>
                 </header>
 
+                {/* Acesso pelo Hub Apps: modo "só pelo Hub", entrada que falhou
+                    ou sessão do Hub encerrada dentro do quadro. */}
+                {mostrarHub && (
+                  <div className="rounded-2xl border border-amber-300/80 bg-[#FFFBEB] p-3 shadow-sm">
+                    <p className="text-sm font-semibold text-on-surface">Acesse pelo Hub Apps</p>
+                    <p className="mt-1 text-xs leading-relaxed text-neutral-700">
+                      {framed
+                        ? 'Sua sessão terminou. Use o botão Recarregar do Hub ou abra o Data Hub de novo.'
+                        : 'O Data Hub abre dentro do Hub Apps. Entre no Hub e clique no Data Hub.'}
+                    </p>
+                    {hubErro && (
+                      <p className="mt-1.5 break-words text-xs text-rose-800" role="alert">{hubErro}</p>
+                    )}
+                    <a
+                      href={hubUrl}
+                      target="_top"
+                      rel="noopener"
+                      className="mt-2.5 inline-flex min-h-[36px] w-full items-center justify-center gap-2 rounded-xl bg-[#FFB800] px-4 text-sm font-semibold text-on-surface shadow-sm transition hover:bg-[#e6a800] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                    >
+                      <ExternalLink className="h-4 w-4" aria-hidden />
+                      Ir para o Hub Apps
+                    </a>
+                  </div>
+                )}
+
                 {/* Domínio liberado nesta fase */}
+                {!mostrarHub && (
                 <div className="rounded-2xl border border-amber-300/80 bg-[#FFFBEB] p-3 shadow-sm">
                   <div className="flex gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-400/50 bg-amber-100/80 text-primary">
@@ -174,6 +233,7 @@ export default function LoginPage() {
                     </div>
                   </div>
                 </div>
+                )}
 
                 <AnimatePresence initial={false}>
                   {error && (
@@ -229,7 +289,13 @@ export default function LoginPage() {
                   whileHover={reduced || busy ? undefined : { scale: 1.02, y: -1 }}
                   whileTap={reduced || busy ? undefined : { scale: 0.98 }}
                   transition={{ type: 'spring', stiffness: 420, damping: 28 }}
-                  className="group relative flex min-h-[44px] w-full items-center justify-center gap-3 overflow-hidden rounded-xl bg-[#FFB800] px-4 py-3.5 text-sm font-semibold text-on-surface shadow-md transition-shadow hover:bg-[#e6a800] hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  className={
+                    'group relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-xl px-4 text-sm font-semibold text-on-surface transition-shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60 ' +
+                    (mostrarHub
+                      // Com o Hub em destaque, o Google vira a porta do master: discreto.
+                      ? 'min-h-[36px] border border-neutral-300 bg-white py-2 hover:bg-neutral-50'
+                      : 'min-h-[44px] bg-[#FFB800] py-3.5 shadow-md hover:bg-[#e6a800] hover:shadow-lg')
+                  }
                 >
                   {busy ? (
                     <Loader2 className="relative z-10 h-5 w-5 animate-spin text-on-surface" aria-hidden />
@@ -238,7 +304,9 @@ export default function LoginPage() {
                       <GoogleMark className="h-5 w-5" />
                     </span>
                   )}
-                  <span className="relative z-10">{busy ? 'A autenticar…' : 'Entrar com Google'}</span>
+                  <span className="relative z-10">
+                    {busy ? 'A autenticar…' : soPeloHub ? 'Entrar com Google (administrador master)' : 'Entrar com Google'}
+                  </span>
                 </motion.button>
 
                 <div className="flex items-center gap-3">

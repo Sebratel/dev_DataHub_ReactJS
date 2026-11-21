@@ -478,6 +478,58 @@ O menu **Sugestões** mostra as sugestões do Data Hub gravadas em `DB_Hub_Apps`
 
 ---
 
+## Data Hub dentro do Hub Apps (desde 21/11/2026)
+
+O clique no card do Data Hub, no Hub Apps, abre o Data Hub na própria área do Hub (iframe), sem aba nova. O login acontece sozinho.
+
+**Como a entrada funciona**
+1. O Hub confere se a pessoa tem acesso ao app e emite um token de 5 minutos, assinado com o `SSO_JWT_SECRET` dele.
+2. O quadro abre `https://data-hub…/?sso_token=…`. A tela tira o token da URL antes de qualquer outra coisa.
+3. A API (`POST /api/v1/auth/hub`) confere o token antes de aceitar:
+   - assinatura HS256;
+   - validade;
+   - `appId` igual a `HUB_APP_ID`;
+   - domínio do e-mail;
+   - uso único: o mesmo token não entra duas vezes.
+4. Se tudo bate, a API devolve uma sessão de 8 horas do Data Hub.
+   - O papel (viewer, editor, admin) vem do banco do Data Hub, igual ao login pelo Google.
+   - A sessão fica no `sessionStorage` do quadro. Uma aba aberta direto no Data Hub não herda essa sessão.
+
+**Para ligar**
+
+Na stack do Data Hub, preencha:
+- `HUB_SSO_SECRET`: o **mesmo** valor do `SSO_JWT_SECRET` da stack do Hub Apps.
+- `HUB_APP_ID`: o id do Data Hub no cadastro de apps do Hub. É o mesmo de `PLATFORM_SUGGESTIONS_APP_ID`.
+
+No Hub Apps, vá em Administração › Apps › Data Hub e marque:
+- **SSO — passar token**;
+- **Abrir dentro do Hub**. Essa opção depende da migration 20 do hub-api, que é aplicada sozinha quando ele sobe.
+
+**Bloquear o acesso por fora do Hub (`HUB_ONLY=true`)**
+- Quem não é master e tenta entrar direto pelo Google recebe `403 HUB_ONLY`. A tela de login mostra "Acesse pelo Hub Apps".
+- O **master** continua entrando direto. Esse é o caminho de recuperação se o Hub cair.
+- A API pública (`/api/public/v1`, com token de API) e o `/api/health` não mudam.
+- Se `HUB_SSO_SECRET` ou `HUB_APP_ID` estiver vazio, `HUB_ONLY` é ignorado e o log de subida avisa. Sem esses dois valores ninguém entraria pelo Hub, então ligar o bloqueio trancaria todo mundo.
+- Ordem segura: primeiro ligue a entrada pelo Hub e confira que ela funciona. Depois mude `HUB_ONLY` para `true`.
+
+**Quem pode exibir o Data Hub num quadro**
+
+A lista fica no `docker/nginx.conf`, no cabeçalho `Content-Security-Policy: frame-ancestors`. Hoje ela libera o próprio Data Hub, `hub-apps.sebratel.net.br` e `hub-apps-staging.sebratel.net.br`.
+
+O dashia, que aparece em Painéis, precisa da **mesma** lista no nginx dele. O `frame-ancestors` vale para todos os quadros acima, não só para o imediato.
+
+**Sintomas e causas**
+
+| Sintoma | Causa |
+|---|---|
+| Área em branco no Hub | Falta o domínio do Hub no `frame-ancestors`. |
+| "O acesso pelo Hub Apps não está configurado" | Falta `HUB_SSO_SECRET` ou `HUB_APP_ID`. |
+| "Token do Hub inválido" | O segredo não é igual ao `SSO_JWT_SECRET` do Hub. |
+| "emitido para outro aplicativo" | `HUB_APP_ID` errado. |
+| "Este link de acesso já foi usado" | O token foi reaproveitado. Recarregar no Hub resolve, porque emite um token novo. |
+
+---
+
 ## 10. Recuperação rápida (ordem sugerida num incidente)
 
 0. **Operar › Saúde da plataforma** — "Precisa de atenção agora" lista, do

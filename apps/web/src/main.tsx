@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Navigate, type RouteObject } from 'react-router-dom'
 import AppShell from '@/components/AppShell'
 import { DialogProvider } from '@/components/Dialogs'
 import LoginPage from '@/features/auth/LoginPage'
@@ -31,9 +31,10 @@ import DashboardPage from '@/features/dashboards/DashboardPage'
 import DashiaPage from '@/features/paineis/DashiaPage'
 import SuggestionsPage from '@/features/suggestions/SuggestionsPage'
 import AiPage from '@/features/ai/AiPage'
+import { enterFromHub } from '@/store/authProvider'
 import '@/styles/index.css'
 
-const router = createBrowserRouter([
+const routes: RouteObject[] = [
   { path: '/login', element: <LoginPage /> },
   {
     path: '/',
@@ -82,12 +83,18 @@ const router = createBrowserRouter([
       { path: 'admin/autotune', element: <AutotunePage /> },
     ],
   },
-])
+]
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <DialogProvider>
-      <RouterProvider router={router} />
-    </DialogProvider>
-  </React.StrictMode>,
-)
+// Aberto pelo Hub Apps (?sso_token): entra ANTES de montar, para o AppShell já
+// encontrar o usuário. Sem o parâmetro, não espera nada. O roteador nasce
+// DEPOIS, para já ler a URL sem o token.
+void enterFromHub().finally(() => {
+  const router = createBrowserRouter(routes)
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <DialogProvider>
+        <RouterProvider router={router} />
+      </DialogProvider>
+    </React.StrictMode>,
+  )
+})
