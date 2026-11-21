@@ -29,6 +29,7 @@ import MetricsPage from '@/features/metrics/MetricsPage'
 import DashboardsPage from '@/features/dashboards/DashboardsPage'
 import DashboardPage from '@/features/dashboards/DashboardPage'
 import DashiaPage from '@/features/paineis/DashiaPage'
+import SuggestionsPage from '@/features/suggestions/SuggestionsPage'
 import AiPage from '@/features/ai/AiPage'
 import '@/styles/index.css'
 
@@ -53,6 +54,8 @@ const router = createBrowserRouter([
       { path: 'dashboards', element: <DashboardsPage /> },
       { path: 'dashboards/:id', element: <DashboardPage /> },
       { path: 'metrics', element: <MetricsPage /> },
+      // Sugestões de melhoria: o mesmo banco do Hub Apps (item 2 de 19/11).
+      { path: 'sugestoes', element: <SuggestionsPage /> },
       { path: 'ai', element: <AiPage /> },
       { path: 'gateway-apis', element: <GatewayApisPage /> },
       // Integrações, APIs e Gateway viraram abas do Gateway de APIs; os

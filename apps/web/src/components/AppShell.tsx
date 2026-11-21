@@ -15,7 +15,7 @@ import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, ShieldCheck, ScrollText,
   Moon, Sun, LogOut, Activity, Webhook, ChevronDown, Search, Database, Brain, NotebookText, Sparkle,
-  Wand2, ListChecks, ClipboardCheck, ExternalLink,
+  Wand2, ListChecks, ClipboardCheck, ExternalLink, Lightbulb,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
@@ -42,6 +42,7 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
       // O dashia embutido. Os painéis do próprio Hub (/dashboards) saíram do menu.
       { to: '/paineis', label: 'Painéis', icon: LayoutDashboard },
       // Métricas saiu do menu (item 5 de 19/11): mora na seção "Métricas" de cada conjunto.
+      { to: '/sugestoes', label: 'Sugestões', icon: Lightbulb },
     ],
   },
   {
@@ -79,6 +80,7 @@ const CRUMB: Record<string, string> = {
   autotune: 'Padronizar atualização', 'sync-rules': 'Regras de atualização',
   quality: 'Qualidade dos dados', health: 'Saúde da plataforma',
   lixeira: 'Lixeira', 'padronizar-nomes': 'Padronizar nomes', pacotes: 'Pacotes de conjuntos',
+  sugestoes: 'Sugestões',
 }
 
 function NavItem({ to, label, icon: Icon, end }: NavEntry) {

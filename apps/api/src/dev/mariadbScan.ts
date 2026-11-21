@@ -11,8 +11,9 @@ import { fileURLToPath } from 'node:url'
 import { translate } from '../db/mariadb/translate.js'
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-// fontes externas (pools.ts, writeProducts) e o DuckDB não passam pelo tradutor
-const SKIP = [/connectors[\\/]pools\.ts$/, /connectors[\\/]writeProducts\.ts$/, /connectors[\\/]introspect\.ts$/, /[\\/]dev[\\/]/, /[\\/]test[\\/]/, /scripts[\\/]rag\.ts$/, /db[\\/]mariadb[\\/]/]
+// fontes externas (pools.ts, writeProducts) e o DuckDB não passam pelo tradutor;
+// suggestions/store.ts fala direto com o MariaDB do Hub Apps (mysql2, `?` é parâmetro)
+const SKIP = [/connectors[\\/]pools\.ts$/, /connectors[\\/]writeProducts\.ts$/, /connectors[\\/]introspect\.ts$/, /[\\/]dev[\\/]/, /[\\/]test[\\/]/, /scripts[\\/]rag\.ts$/, /db[\\/]mariadb[\\/]/, /suggestions[\\/]store\.ts$/]
 const CALLERS = new Set(['db', 'client', 'c', 'tx', 'conn'])
 
 function files(dir: string): string[] {

@@ -461,6 +461,21 @@ O pacote também instala notebooks de análise (SQL + Python), definidos em `pac
 - **Código Python.** Escreva em `String.raw`: um `"\n"` num `print` viraria quebra de linha real e o Python recusaria.
 - **Valor do contrato.** `prata_voalle_contratos.valor_mensal` é o valor **atual**, sem histórico. Uma ponte de receita feita com ele não mostra reajuste.
 
+## Sugestões de melhoria (mesmo banco do Hub Apps, desde 21/11/2026)
+
+O menu **Sugestões** mostra as sugestões do Data Hub gravadas em `DB_Hub_Apps` (MariaDB 10.0.11.171), nas mesmas três tabelas do Hub Apps e do Splitters. Cada sistema filtra pela coluna `app_id`.
+
+**Para ligar**, na stack do Portainer:
+- `HUB_APPS_MYSQL_HOST`, `HUB_APPS_MYSQL_USER` e `HUB_APPS_MYSQL_PASSWORD`. O `HUB_APPS_MYSQL_DATABASE` já vem com `DB_Hub_Apps`.
+- `PLATFORM_SUGGESTIONS_APP_ID` com o id do Data Hub no cadastro de apps do Hub Apps (tabela `apps`). Em 21/11/2026 o Data Hub ainda **não** estava cadastrado: o cadastro é feito na administração do Hub Apps, e ele gera o id.
+- `PLATFORM_SUGGESTIONS_READ_ONLY`:
+  - `true` (padrão, como o Splitters em produção): a tela só mostra e manda sugerir, votar e comentar pelo Hub Apps. O usuário do banco precisa só de `SELECT`.
+  - `false`: grava direto. O usuário precisa de `SELECT, INSERT, UPDATE, DELETE` nas três tabelas `platform_suggestion*`. Mudar status é só para admin.
+
+**Sem configuração**, a tela avisa o que falta; não é erro.
+
+**Diferença do Splitters:** o voto é identificado pelo e-mail. Cada sistema tem seu próprio projeto Firebase, então o uid muda de um sistema para outro, e o e-mail não.
+
 ---
 
 ## 10. Recuperação rápida (ordem sugerida num incidente)
