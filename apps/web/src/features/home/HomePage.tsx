@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Database, GitMerge, LayoutDashboard, Ruler, Sparkles, ArrowRight, BadgeCheck,
+  Database, GitMerge, LayoutDashboard, Sparkles, ArrowRight, BadgeCheck,
   Plug, ShieldCheck, Compass, Clock, Boxes, Layers, Table2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -367,16 +367,6 @@ export default function HomePage() {
               <Card>
                 <CardHead title="Atalhos" />
                 <div className="flex flex-col">
-                  <Link to="/metrics"
-                    className="flex items-start gap-2.5 border-b border-zinc-200 px-3 py-2.5 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/40">
-                    <Ruler size={15} strokeWidth={1.5} className="mt-px shrink-0 text-zinc-400" />
-                    <span className="min-w-0">
-                      <span className="block text-[12px] font-medium">Biblioteca de métricas</span>
-                      <span className="block text-[10.5px] leading-snug text-zinc-500">
-                        Definidas uma vez, usadas em painéis, APIs e no assistente.
-                      </span>
-                    </span>
-                  </Link>
                   <Link to="/ai"
                     className="flex items-start gap-2.5 px-3 py-2.5 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
                     <Sparkles size={15} strokeWidth={1.5} className="mt-px shrink-0 text-accent" />

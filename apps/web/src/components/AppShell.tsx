@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, ShieldCheck, ScrollText,
-  Moon, Sun, LogOut, Ruler, Activity, Webhook, ChevronDown, Search, Database, Brain, NotebookText, Sparkle,
+  Moon, Sun, LogOut, Activity, Webhook, ChevronDown, Search, Database, Brain, NotebookText, Sparkle,
   Wand2, ListChecks, ClipboardCheck, ExternalLink,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -41,7 +41,7 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
       { to: '/datasets', label: 'Conjuntos', icon: Boxes },
       // O dashia embutido. Os painéis do próprio Hub (/dashboards) saíram do menu.
       { to: '/paineis', label: 'Painéis', icon: LayoutDashboard },
-      { to: '/metrics', label: 'Métricas', icon: Ruler },
+      // Métricas saiu do menu (item 5 de 19/11): mora na seção "Métricas" de cada conjunto.
     ],
   },
   {
