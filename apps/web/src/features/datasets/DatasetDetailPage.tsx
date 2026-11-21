@@ -21,6 +21,7 @@ import SqlVersions from './SqlVersions'
 import DataTable from './DataTable'
 import AccessDialog from './AccessDialog'
 import EditDatasetDialog from './EditDatasetDialog'
+import DatasetMetrics from '@/features/metrics/DatasetMetrics'
 
 const TYPE_LABEL: Record<string, string> = {
   text: 'Texto', number: 'Número', date: 'Data', bool: 'Sim/Não', json: 'Estruturado',
@@ -67,7 +68,7 @@ const DEP_LABEL: Record<Dependent['type'], string> = {
 
 function depLink(d: Dependent): string | null {
   if (d.type === 'dashboard') return `/dashboards/${d.id}`
-  if (d.type === 'metric') return '/metrics'
+  if (d.type === 'metric') return '#metricas' // a seção "Métricas" desta mesma página
   if (d.type === 'api') return '/gateway-apis#apis'
   if (d.type === 'token') return '/gateway-apis#tokens'
   return null
@@ -468,6 +469,9 @@ export default function DatasetDetailPage() {
       {/* Publicação no Databricks — vale para fonte e calculado, por isso fica
           fora do SyncPanel (que é só de fonte). */}
       {isAdmin && <DatabricksPanel dataset={dataset} onChanged={load} />}
+
+      {/* Métricas do conjunto — o módulo saiu do menu e mora aqui (item 5 de 19/11) */}
+      <DatasetMetrics dataset={{ id: dataset.id, slug: dataset.slug, name: dataset.name }} />
 
       {/* Dados do lake — qualquer usuário, quando já sincronizado */}
       {dataset.lastSyncAt && <DataTable dataset={dataset} />}

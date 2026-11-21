@@ -170,6 +170,19 @@ services:
       # Lake (GCS) e integrações.
       BUCKET_GCP_NAME: ${BUCKET_GCP_NAME:-}
       PATH_CREDENTIALS: ${PATH_CREDENTIALS:-}
+      # Sugestoes de melhoria: o MESMO banco do Hub Apps (DB_Hub_Apps), como no
+      # Splitters. APP_ID = id do Data Hub no cadastro de apps do Hub Apps.
+      # READ_ONLY=true (padrao): so mostra; sugerir/votar/comentar e no Hub Apps.
+      # Com false grava direto -- o usuario do banco precisa de permissao nas
+      # tabelas platform_suggestions, platform_suggestion_votes e _comments.
+      HUB_APPS_MYSQL_HOST: ${HUB_APPS_MYSQL_HOST:-}
+      HUB_APPS_MYSQL_PORT: ${HUB_APPS_MYSQL_PORT:-3306}
+      HUB_APPS_MYSQL_DATABASE: ${HUB_APPS_MYSQL_DATABASE:-DB_Hub_Apps}
+      HUB_APPS_MYSQL_USER: ${HUB_APPS_MYSQL_USER:-}
+      HUB_APPS_MYSQL_PASSWORD: ${HUB_APPS_MYSQL_PASSWORD:-}
+      HUB_APPS_URL: ${HUB_APPS_URL:-https://hub-apps.sebratel.net.br}
+      PLATFORM_SUGGESTIONS_APP_ID: ${PLATFORM_SUGGESTIONS_APP_ID:-}
+      PLATFORM_SUGGESTIONS_READ_ONLY: ${PLATFORM_SUGGESTIONS_READ_ONLY:-true}
       # Publicacao no Databricks (piloto Native/Matrix). O hub consolida o
       # Parquet do lake e ENVIA; o Databricks nunca alcanca os bancos daqui.
       # Desligada por padrao: sem isto ligado, nenhum envio sai.

@@ -38,6 +38,7 @@ import { monitorRouter } from './modules/admin/monitorRouter.js'
 import { diskRouter } from './modules/admin/diskRouter.js'
 import { qualityRouter } from './modules/quality/qualityRouter.js'
 import { platformRouter } from './modules/admin/platformRouter.js'
+import { suggestionsRouter } from './modules/suggestions/suggestionsRouter.js'
 
 export function createApp(): express.Express {
   encaminharErrosAsync() // DSP-18: rota async que falha responde, em vez de pendurar
@@ -100,6 +101,8 @@ export function createApp(): express.Express {
   app.use('/api/v1/datasets', datasetsRouter)
   app.use('/api/v1/trash', trashRouter) // lixeira de conjuntos (30 dias)
   app.use('/api/v1/packs', packsRouter) // pacotes de conjuntos calculados (catálogo como código)
+  // Sugestões de melhoria: o mesmo banco do Hub Apps (DB_Hub_Apps), filtrado pelo app do Data Hub.
+  app.use('/api/v1/suggestions', suggestionsRouter)
   app.use('/api/v1/databricks', databricksAdminRouter)
 
   // Biblioteca de métricas e dashboards.
