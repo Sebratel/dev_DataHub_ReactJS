@@ -20,12 +20,20 @@ import { config } from '../../core/config.js'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { verifyFirebaseIdToken } from './firebaseToken.js'
 import { isMaster, anyMasterConfigured } from './masterAdmins.js'
+import { verifyHubSession, hubOnlyActive } from './hubSso.js'
 
 const tokenCache = new Map<string, { user: SessionUser; exp: number }>()
 const TOKEN_TTL_MS = 5 * 60 * 1000
 
+// Login direto (Google) recusado porque o Data Hub está no modo "só pelo Hub".
+// É um erro à parte para a resposta dizer COMO entrar, e não "sessão inválida".
+class HubOnlyError extends Error {}
+
+export const HUB_ONLY_MESSAGE =
+  'O Data Hub é acessado pelo Hub Apps. Abra o Hub e clique no Data Hub.'
+
 // Cria/atualiza o usuário no tenant padrão e devolve seus papéis.
-async function provisionUser(p: { email: string; name: string; picture?: string }): Promise<SessionUser> {
+export async function provisionUser(p: { email: string; name: string; picture?: string }): Promise<SessionUser> {
   // Master vem do AMBIENTE (raiz de confiança) ou de uma concessão feita por
   // outro master na tela — nunca do papel 'admin', que qualquer admin concede
   // a si mesmo. Ver masterAdmins.ts.
@@ -77,21 +85,36 @@ async function getUserFromToken(token: string): Promise<SessionUser | null> {
   if (cached && cached.exp > Date.now()) return cached.user
 
   if (!looksLikeJwt(token)) return null
+
+  // Sessão aberta pelo Hub Apps (HS256, chave derivada do segredo do Hub).
+  const hub = verifyHubSession(token)
+  if (hub) {
+    const user = await provisionUser({ email: hub.email, name: hub.name })
+    cacheToken(token, user)
+    return user
+  }
+
   const claims = await verifyFirebaseIdToken(token)
   if (!claims || !claims.emailVerified) return null
   const { email, name, picture } = claims
 
   if (!email.endsWith('@' + config.allowedDomain)) return null
+  // Só pelo Hub: login direto fica para o master (caminho de recuperação).
+  if (hubOnlyActive() && !isMaster(email)) throw new HubOnlyError()
 
   const user = await provisionUser({ email, name: name || email, picture })
-  // O cache é por TOKEN, e o do Firebase dura 1h: guardar por 5 min mantém a
-  // propagação de mudança de papel igual à do caminho antigo.
+  cacheToken(token, user)
+  return user
+}
+
+// O cache é por TOKEN, e o do Firebase dura 1h: guardar por 5 min mantém a
+// propagação de mudança de papel igual à do caminho antigo.
+function cacheToken(token: string, user: SessionUser): void {
   tokenCache.set(token, { user, exp: Date.now() + TOKEN_TTL_MS })
   if (tokenCache.size > 1000) {
     const now = Date.now()
     for (const [k, v] of tokenCache) if (v.exp <= now) tokenCache.delete(k)
   }
-  return user
 }
 
 // Uma mensagem só para as rotas que exigem master. Ela diz QUEM pode e COMO
@@ -136,7 +159,10 @@ export function requireAuth({ role }: { role?: 'master' | 'admin' | 'editor' } =
       return res.status(401).json({ error: 'Token de autenticação ausente.' })
     }
     let user: SessionUser | null = null
-    try { user = await getUserFromToken(m[1]) } catch { user = null }
+    try { user = await getUserFromToken(m[1]) } catch (e) {
+      if (e instanceof HubOnlyError) return res.status(403).json({ error: HUB_ONLY_MESSAGE, code: 'HUB_ONLY' })
+      user = null
+    }
     if (!user) return res.status(401).json({ error: 'Sessão inválida ou expirada. Entre novamente.' })
     if (role === 'master' && !user.master) {
       return res.status(403).json({ error: MASTER_ONLY_MESSAGE })

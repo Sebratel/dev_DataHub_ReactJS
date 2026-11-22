@@ -58,6 +58,24 @@ export const config = {
     firebaseProjectId: (process.env.FIREBASE_PROJECT_ID || '').trim(),
   },
 
+  // Entrada pelo Hub Apps (Data Hub embutido no Hub). O Hub emite um token de
+  // 5 min assinado com SSO_JWT_SECRET; aqui ele é conferido e trocado por uma
+  // sessão do Data Hub. Ver modules/auth/hubSso.ts.
+  hub: {
+    // MESMO valor do SSO_JWT_SECRET da stack do Hub Apps.
+    ssoSecret: (process.env.HUB_SSO_SECRET || '').trim(),
+    // id do app "Data Hub" no cadastro do Hub: o segredo é um só para todos os
+    // apps do Hub, então sem conferir o appId um token emitido para OUTRO app
+    // entraria aqui.
+    appId: (process.env.HUB_APP_ID || '').trim(),
+    url: (process.env.HUB_APPS_URL || 'https://hub-apps.sebratel.net.br').trim(),
+    // Só pelo Hub: recusa login direto (Google) de quem não é master. Lido a
+    // cada uso para o teste poder ligar e desligar sem reiniciar o processo.
+    get only(): boolean {
+      return ['1', 'true', 'sim'].includes((process.env.HUB_ONLY || '').trim().toLowerCase())
+    },
+  },
+
   // Banco de METADADOS do hub (catálogo, usuários, dashboards…).
   // DATAHUB_DB_DRIVER escolhe ONDE ele está: 'postgres' (padrão, o de sempre)
   // ou 'mariadb' (D-DSP-4). Os dois conjuntos de variáveis convivem na stack —

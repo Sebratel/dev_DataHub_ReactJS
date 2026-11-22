@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { SessionUser } from '@datahub/shared'
+import { clearHubSession } from './hubSession'
 
 interface AuthState {
   user: SessionUser | null
@@ -18,7 +19,9 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       setUser: (user) => set({ user }),
       setAccessToken: (accessToken) => set({ accessToken }),
-      logout: () => set({ user: null, accessToken: null }),
+      // A sessão do Hub sai junto: sem isso, um token recusado pelo servidor
+      // continuaria sendo enviado depois de um novo login.
+      logout: () => { clearHubSession(); set({ user: null, accessToken: null }) },
     }),
     { name: 'datahub-auth', storage: createJSONStorage(() => localStorage) },
   ),
