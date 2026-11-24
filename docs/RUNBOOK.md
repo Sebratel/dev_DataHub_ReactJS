@@ -335,12 +335,20 @@ Conjunto manual, pausado ou ao vivo não tem prazo cobrado.
 
 ## Padrão de nomes dos conjuntos (desde 19/11/2026)
 
-`<camada>_<área>_<assunto>[_<período>]`, em minúsculas, com `_` entre as palavras.
+**Fonte (tabela de banco), desde 24/11/2026:** usa o nome da TABELA no banco, sem mudança, tanto no nome técnico quanto no de exibição (ex.: `contracts`).
+- Assim uma query copiada do banco (`select … from contracts`) roda no Data Hub sem ajuste.
+- As colunas sempre foram fiéis: a chave de cada campo é a coluna da fonte.
+- O nome só muda se outra conexão já tiver uma tabela com o mesmo nome. Aí entra `_2`, `_3`…
+- O prefixo de schema (`erp.contracts`) ainda não é aceito no SQL daqui: tire o `erp.`.
+- Fonte de API HTTP não tem tabela e segue a regra dos calculados.
 
-- Camadas: `bronze` (cópia da fonte), `prata` (tratado), `ouro` (pronto para a área).
-- Exemplos: `bronze_voalle_contratos`, `prata_cancelamentos_mensal`, `ouro_financeiro_titulos_abertos_diario`.
+**Calculado:** `<camada>_<área>_<assunto>[_<período>]`, em minúsculas, com `_` entre as palavras.
+
+- Camadas: `prata` (tratado) e `ouro` (oficial ou pronto para a área).
+- Exemplos: `prata_cancelamentos_mensal`, `ouro_financeiro_titulos_abertos_diario`.
 - Usamos sublinhado porque traço não vale como nome no SQL: só funciona entre aspas.
-- Conjunto novo já nasce no padrão. Fonte vira `bronze_<fonte>_<nome>`; calculado e materializado de notebook viram `prata_<nome>`, a não ser que o nome dado já comece por uma camada.
+- Calculado e materializado de notebook nascem `prata_<nome>`, a não ser que o nome dado já comece por uma camada.
+- Entre 19/11 e 24/11, fonte nova nascia `bronze_<fonte>_<tabela>`. A tela "Padronizar nomes" agora devolve essas fontes ao nome da tabela, e o `bronze_…` fica como apelido.
 - Os conjuntos antigos são renomeados em **Conjuntos › Padronizar nomes**, só por admin. Conjunto oficial, só o master renomeia. A tela sugere o nome e renomeia um a um ou todos de uma vez.
 - O nome antigo vira **apelido** (`dataset_slug_aliases`, migration 046). Quem já usa o nome antigo continua funcionando: link, rota da API pública, SQL de calculado, notebook e modelo.
 - Na renomeação, o escopo dos tokens, a API do construtor, o modelo e o filtro de aba de painel passam a usar o nome novo. A pasta do lake muda junto.
@@ -350,17 +358,16 @@ Conjunto manual, pausado ou ao vivo não tem prazo cobrado.
 - O próximo envio de um conjunto renomeado é COMPLETO, para uma tabela com o nome novo. A tabela antiga fica lá e deve ser apagada à mão.
 - Os arquivos antigos no bucket GCS também ficam, com o caminho antigo.
 
-**Desde 24/11/2026: camada coerente e nome de exibição**
-- **Nome técnico:** a camada do nome precisa concordar com o selo do catálogo.
-  - Fonte: `bronze`.
+**Desde 24/11/2026: calculados com camada coerente e nome de exibição**
+- **Nome técnico:** a camada do nome do calculado precisa concordar com o selo do catálogo.
   - Calculado oficial: `ouro`.
-  - Calculado: `prata`, ou `ouro` quando já sai pronto para a área (como nos pacotes).
+  - Calculado não oficial: `prata`, ou `ouro` quando já sai pronto para a área (como nos pacotes).
   - A primeira rodada sugeria `prata_` para todo calculado. Por isso ficaram oficiais com selo Ouro e nome `prata_`. A tela agora acusa e sugere `ouro_`.
 - **Nome de exibição** (o que aparece em negrito): frase em português, com acentos e só a primeira letra maiúscula. Siglas e sistemas mantêm a grafia própria (SLAs, PPPoEs, Elleven, AutoISP). Ex.: "Protocolos de instalação - SLAs - técnicos - agendamentos".
   - A tela acusa o nome com cara de nome técnico (`cesta-produtos`), em CAIXA ALTA, Em Título, ou com "-cao" sem acento. Ela sugere o nome corrigido, editável antes de aplicar.
   - A sugestão não inventa palavra (não põe o "de" que faltou): revise antes de aplicar.
   - Qualquer admin troca o nome de exibição. O nome técnico de oficial continua só com o master.
-  - Fonte nova já nasce com o nome de exibição no padrão: `assignment_links` vira "Assignment links".
+- Para fonte, a tela mostra o nome da tabela fixo, sem campo para editar.
 - O selo "Ouro" também vale para calculado `ouro_`. O cartão "Camada ouro" conta esses e diz quantos são oficiais.
 
 ---

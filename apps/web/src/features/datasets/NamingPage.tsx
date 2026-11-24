@@ -1,11 +1,11 @@
-// Padronizar nomes dos conjuntos. Dois nomes, duas regras:
-//   técnico (slug)   <camada>_<área>_<assunto>, minúsculas e "_" (19/11/2026). A
-//                    camada concorda com o selo: fonte bronze, oficial ouro.
-//   de exibição      frase em português, com acentos e siglas na grafia certa
-//                    (24/11/2026): "Protocolos de instalação - SLAs - técnicos".
-// Conjunto novo já nasce assim; aqui ficam os antigos, com a sugestão pronta
-// para editar e aplicar. O nome técnico antigo vira apelido no servidor —
-// link, token, SQL e painel seguem funcionando.
+// Padronizar nomes dos conjuntos (19/11/2026, revisto em 24/11):
+//   FONTE       o nome da TABELA no banco, técnico e de exibição, sem mudança —
+//               uma query copiada do banco roda aqui sem ajuste. Não se edita.
+//   CALCULADO   técnico <camada>_<área>_<assunto> (oficial = ouro); exibição em
+//               frase com acentos e siglas: "Protocolos de instalação - SLAs".
+// Conjunto novo já nasce assim; aqui ficam os antigos, com a sugestão pronta.
+// O nome técnico antigo vira apelido no servidor — link, token, SQL e painel
+// seguem funcionando.
 //
 // Fica fora do menu, como a Lixeira: é tarefa de passagem. O caminho é o botão
 // "Padronizar nomes" em Conjuntos.
@@ -28,7 +28,9 @@ interface ItemNome {
   name: string
   kind: 'source' | 'derived'
   official: boolean
-  /** Nome técnico no padrão e com a camada certa. */
+  /** fonte = nome da tabela; api = fonte HTTP (padrão com camada); calculado. */
+  regra: 'fonte' | 'api' | 'calculado'
+  /** Nome técnico no padrão (fonte: o da tabela; calculado: camada certa). */
   conforme: boolean
   sugestao: string | null
   apelidos: string[]
@@ -39,7 +41,9 @@ interface ItemNome {
 
 const PADRAO = /^(bronze|prata|ouro)(_[a-z0-9]+)+$/
 const MAX = 80
-const valido = (s: string) => s.length <= MAX && PADRAO.test(s)
+// Fonte: só o nome da tabela que o servidor sugeriu vale (não se edita).
+const valido = (i: ItemNome, s: string) =>
+  i.regra === 'fonte' ? !!s && s === i.sugestao : s.length <= MAX && PADRAO.test(s)
 const NOME_MAX = 200
 const nomeValido = (s: string) => s.trim().length > 0 && s.trim().length <= NOME_MAX
 
@@ -52,6 +56,22 @@ const input = (invalido: boolean, mono: boolean) => clsx(
     ? 'border-crit/60 focus:ring-2 focus:ring-crit/15'
     : 'border-zinc-200 focus:border-accent focus:ring-2 focus:ring-accent/15 dark:border-zinc-700',
 )
+
+// Fonte não se edita: o nome é o da tabela no banco.
+function TabelaFixa({ nome, travada }: { nome: string; travada?: boolean }) {
+  return (
+    <span
+      className="flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] text-zinc-700 dark:text-zinc-300"
+      title={travada
+        ? 'Conjunto oficial: só um admin master troca o nome técnico.'
+        : 'Nome da tabela no banco — fonte não muda de nome, para a query do banco rodar aqui.'}
+    >
+      <Database size={11} className="shrink-0 text-zinc-400" />
+      <span className="truncate">{nome}</span>
+      {travada && <Lock size={11} className="shrink-0 text-zinc-400" aria-label="só master" />}
+    </span>
+  )
+}
 
 function NoPadrao({ title }: { title?: string }) {
   return (
@@ -95,7 +115,7 @@ export default function NamingPage() {
   // O nome técnico de um oficial é contrato com quem o usa: só o master troca.
   // O de exibição qualquer admin troca.
   const podeSlug = (i: ItemNome) => !i.official || isMaster
-  const trocaSlug = (i: ItemNome) => !i.conforme && podeSlug(i) && valido(slugs[i.id] ?? '') && slugs[i.id] !== i.slug
+  const trocaSlug = (i: ItemNome) => !i.conforme && podeSlug(i) && valido(i, slugs[i.id] ?? '') && slugs[i.id] !== i.slug
   const trocaNome = (i: ItemNome) => !i.nomeConforme && nomeValido(exibicoes[i.id] ?? '') && exibicoes[i.id].trim() !== i.name
   const aplicaveis = fora.filter((i) => trocaSlug(i) || trocaNome(i))
 
@@ -149,7 +169,7 @@ export default function NamingPage() {
       <PageHeader
         icon={Tags}
         title="Padronizar nomes"
-        subtitle="Nome técnico: camada_área_assunto, em minúsculas (ex.: ouro_financeiro_titulos_abertos). Nome de exibição: frase com acentos (ex.: Títulos em aberto por mês)."
+        subtitle="Fontes: o nome da tabela no banco, sem mudança, para uma query copiada do banco rodar aqui. Calculados: camada_área_assunto (ex.: ouro_financeiro_titulos_abertos) e nome de exibição em frase com acentos."
         back={(
           <Link to="/datasets" className="inline-flex items-center gap-1.5 text-[12px] text-zinc-500 hover:text-accent">
             <ArrowLeft size={13} /> Conjuntos
@@ -173,7 +193,7 @@ export default function NamingPage() {
           ]}
         />
         <span className="text-[11.5px] text-zinc-500">
-          Camadas: <b>bronze</b> cópia da fonte · <b>prata</b> tratado · <b>ouro</b> oficial ou pronto para a área
+          Calculados: <b>prata</b> tratado · <b>ouro</b> oficial ou pronto para a área
         </span>
         <SearchInput value={busca} onChange={setBusca} placeholder="Buscar conjunto" />
       </Toolbar>
@@ -198,7 +218,8 @@ export default function NamingPage() {
                 {visiveis.map((i) => {
                   const slug = slugs[i.id] ?? ''
                   const exib = exibicoes[i.id] ?? ''
-                  const slugInvalido = !i.conforme && podeSlug(i) && !valido(slug)
+                  const slugInvalido = !i.conforme && podeSlug(i) && !valido(i, slug)
+                  const fonte = i.regra === 'fonte'
                   const nomeInvalido = !i.nomeConforme && !nomeValido(exib)
                   const temAcao = !i.conforme || !i.nomeConforme
                   return (
@@ -213,6 +234,8 @@ export default function NamingPage() {
                       <Td>
                         {i.conforme ? (
                           <NoPadrao title={i.apelidos.length ? `Antes: ${i.apelidos.join(', ')}` : undefined} />
+                        ) : fonte ? (
+                          <TabelaFixa nome={slug} travada={!podeSlug(i)} />
                         ) : (
                           <span className="flex items-center gap-1.5">
                             <input
@@ -232,7 +255,7 @@ export default function NamingPage() {
                         )}
                       </Td>
                       <Td>
-                        {i.nomeConforme ? <NoPadrao /> : (
+                        {i.nomeConforme ? <NoPadrao /> : fonte ? <TabelaFixa nome={exib} /> : (
                           <input
                             id={`nome-${i.id}`}
                             aria-label={`Nome de exibição de ${i.name}`}
