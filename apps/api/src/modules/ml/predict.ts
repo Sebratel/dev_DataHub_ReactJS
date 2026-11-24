@@ -5,6 +5,7 @@
 import { db } from '../../db/pool.js'
 import { predictLogistic, predictLinear, type LinearModel } from './algorithms.js'
 import { encodeRow, runFeatureSql, type FeatureSchema } from './features.js'
+import type { AccessUser } from '../../core/access.js'
 
 export interface PromotedModel {
   modelId: string
@@ -80,14 +81,18 @@ export function scoreRows(pm: PromotedModel, rows: Record<string, unknown>[]): S
 // normal: "rode o churn na base ativa e me dê os 500 de maior risco".
 export interface BatchOptions { limit?: number; minScore?: number; keyColumns?: string[] }
 
+// A previsão DEVOLVE linhas (as colunas-chave ou a linha inteira, com o score):
+// é leitura de dado, não só execução de uma definição salva. Por isso roda com
+// as permissões de quem pede (S-05 do comitê) — um modelo criado por outra
+// pessoa sobre um conjunto privado não pode virar porta para lê-lo.
 export async function scoreBatch(
-  pm: PromotedModel, opts: BatchOptions = {},
+  pm: PromotedModel, opts: BatchOptions = {}, user?: AccessUser,
 ): Promise<{ scored: number; rows: Record<string, unknown>[] }> {
   if (!pm.featureSql) throw new Error('Modelo sem SQL de atributos — não há o que pontuar em lote.')
   const limit = Math.min(Math.max(1, opts.limit ?? 1000), 50_000)
   // Lê mais do que o limite de saída para o filtro por score ainda ter o que
   // devolver depois de cortar.
-  const source = await runFeatureSql(pm.tenantSlug, pm.featureSql, Math.max(limit * 10, 20_000))
+  const source = await runFeatureSql(pm.tenantSlug, pm.featureSql, Math.max(limit * 10, 20_000), user)
 
   const scored = scoreRows(pm, source)
   const filtered = opts.minScore != null

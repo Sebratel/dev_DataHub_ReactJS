@@ -246,14 +246,17 @@ mlRouter.post('/:slug/promote/:versionId', ...adminOnly, async (req, res) => {
 // ── Predizer ─────────────────────────────────────────────────────────────
 // Em lote sobre o próprio SQL de atributos: "rode o churn na base ativa e me dê
 // os N de maior risco".
+// Com as permissões de QUEM PEDE (S-05): a resposta traz linhas do conjunto.
 mlRouter.post('/:slug/predict', ...editorOnly, async (req, res) => {
   try {
     const pm = await loadPromoted(req.user!.tenant, req.params.slug)
+    // Recusa com o nome do conjunto que falta, em vez de um "tabela não existe".
+    if (pm.featureSql) await assertReferencesAllowed(req.user!.tenant, pm.featureSql, req.user!)
     const out = await scoreBatch(pm, {
       limit: Number(req.body?.limit) || 500,
       minScore: req.body?.minScore != null ? Number(req.body.minScore) : undefined,
       keyColumns: Array.isArray(req.body?.keyColumns) ? req.body.keyColumns.map(String) : undefined,
-    })
+    }, req.user!)
     res.json({ model: pm.slug, version: pm.version, task: pm.task, ...out })
   } catch (e) { fail(res, e) }
 })
