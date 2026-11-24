@@ -132,12 +132,13 @@ describe('MON-09 / QLD-10 prazo pela cadência', () => {
     const desde = e!.since
     await runStaleChecks(new Date())
     assert.deepEqual((await estado(ds.id, 'stale'))?.since, desde, 'reavaliar não reinicia o "desde quando"')
-    assert.equal((await alertas(/^Conjunto atrasado: Chamados H$/)).length, 1, 'avaliar de novo não pode repetir o aviso')
+    // Nome de exibição no padrão (naming.ts): a tabela chamados_h vira "Chamados h".
+    assert.equal((await alertas(/^Conjunto atrasado: Chamados h$/)).length, 1, 'avaliar de novo não pode repetir o aviso')
 
     await syncAndWait(ds.id)
     await runStaleChecks(new Date())
     assert.equal((await estado(ds.id, 'stale'))?.status, 'ok')
-    assert.equal((await alertas(/^Prazo em dia de novo: Chamados H$/)).length, 1)
+    assert.equal((await alertas(/^Prazo em dia de novo: Chamados h$/)).length, 1)
   })
 
   it('calculado em cascata que não acompanha o insumo fica atrasado', async () => {

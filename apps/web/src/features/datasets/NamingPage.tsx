@@ -1,10 +1,14 @@
-// Padronizar nomes dos conjuntos (19/11/2026): <camada>_<área>_<assunto>, em
-// minúsculas e com "_" entre as palavras. Conjunto novo já nasce assim; aqui
-// ficam os antigos, com o nome sugerido pronto para aplicar. O nome antigo
-// vira apelido no servidor — link, token, SQL e painel seguem funcionando.
+// Padronizar nomes dos conjuntos. Dois nomes, duas regras:
+//   técnico (slug)   <camada>_<área>_<assunto>, minúsculas e "_" (19/11/2026). A
+//                    camada concorda com o selo: fonte bronze, oficial ouro.
+//   de exibição      frase em português, com acentos e siglas na grafia certa
+//                    (24/11/2026): "Protocolos de instalação - SLAs - técnicos".
+// Conjunto novo já nasce assim; aqui ficam os antigos, com a sugestão pronta
+// para editar e aplicar. O nome técnico antigo vira apelido no servidor —
+// link, token, SQL e painel seguem funcionando.
 //
-// Fica fora do menu, como a Lixeira: é tarefa de passagem, e o menu Operar já
-// foi enxugado. O caminho é o botão "Padronizar nomes" em Conjuntos.
+// Fica fora do menu, como a Lixeira: é tarefa de passagem. O caminho é o botão
+// "Padronizar nomes" em Conjuntos.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, Tags, Loader2, Check, GitMerge, Database, Lock } from 'lucide-react'
@@ -24,22 +28,46 @@ interface ItemNome {
   name: string
   kind: 'source' | 'derived'
   official: boolean
+  /** Nome técnico no padrão e com a camada certa. */
   conforme: boolean
   sugestao: string | null
   apelidos: string[]
+  /** Nome de exibição no padrão. */
+  nomeConforme: boolean
+  sugestaoNome: string | null
 }
 
 const PADRAO = /^(bronze|prata|ouro)(_[a-z0-9]+)+$/
 const MAX = 80
 const valido = (s: string) => s.length <= MAX && PADRAO.test(s)
+const NOME_MAX = 200
+const nomeValido = (s: string) => s.trim().length > 0 && s.trim().length <= NOME_MAX
 
 type Filtro = 'fora' | 'todos'
+
+const input = (invalido: boolean, mono: boolean) => clsx(
+  'h-[26px] w-full rounded-md border bg-white px-2 text-[11.5px] outline-none disabled:opacity-60 dark:bg-zinc-900',
+  mono && 'font-mono',
+  invalido
+    ? 'border-crit/60 focus:ring-2 focus:ring-crit/15'
+    : 'border-zinc-200 focus:border-accent focus:ring-2 focus:ring-accent/15 dark:border-zinc-700',
+)
+
+function NoPadrao({ title }: { title?: string }) {
+  return (
+    <span className="text-[11.5px] text-zinc-500" title={title}>
+      <Check size={12} className="mr-1 inline text-ok dark:text-ok-dark" />
+      no padrão
+    </span>
+  )
+}
 
 export default function NamingPage() {
   const confirm = useConfirm()
   const isMaster = useAuthStore((s) => !!s.user?.master)
   const [items, setItems] = useState<ItemNome[] | null>(null)
-  const [nomes, setNomes] = useState<Record<string, string>>({})
+  const [slugs, setSlugs] = useState<Record<string, string>>({})
+  const [exibicoes, setExibicoes] = useState<Record<string, string>>({})
   const [filtro, setFiltro] = useState<Filtro>('fora')
   const [busca, setBusca] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -50,25 +78,35 @@ export default function NamingPage() {
     api<{ items: ItemNome[] }>('/api/v1/datasets/naming')
       .then((r) => {
         setItems(r.items)
-        setNomes(Object.fromEntries(r.items.filter((i) => i.sugestao).map((i) => [i.id, i.sugestao!])))
+        setSlugs(Object.fromEntries(r.items.filter((i) => i.sugestao).map((i) => [i.id, i.sugestao!])))
+        setExibicoes(Object.fromEntries(r.items.filter((i) => i.sugestaoNome).map((i) => [i.id, i.sugestaoNome!])))
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Falha ao carregar os nomes.'))
   }, [])
   useEffect(load, [load])
 
-  const fora = items?.filter((i) => !i.conforme) ?? []
+  const fora = useMemo(() => items?.filter((i) => !i.conforme || !i.nomeConforme) ?? [], [items])
   const visiveis = useMemo(() => {
     const q = busca.trim().toLowerCase()
     return (filtro === 'fora' ? fora : items ?? [])
       .filter((i) => !q || i.name.toLowerCase().includes(q) || i.slug.includes(q))
   }, [items, fora, filtro, busca])
 
-  const podeRenomear = (i: ItemNome) => !i.official || isMaster
-  const aplicaveis = fora.filter((i) => podeRenomear(i) && valido(nomes[i.id] ?? ''))
+  // O nome técnico de um oficial é contrato com quem o usa: só o master troca.
+  // O de exibição qualquer admin troca.
+  const podeSlug = (i: ItemNome) => !i.official || isMaster
+  const trocaSlug = (i: ItemNome) => !i.conforme && podeSlug(i) && valido(slugs[i.id] ?? '') && slugs[i.id] !== i.slug
+  const trocaNome = (i: ItemNome) => !i.nomeConforme && nomeValido(exibicoes[i.id] ?? '') && exibicoes[i.id].trim() !== i.name
+  const aplicaveis = fora.filter((i) => trocaSlug(i) || trocaNome(i))
 
   async function renomear(i: ItemNome): Promise<string | null> {
     try {
-      await api(`/api/v1/datasets/${i.id}/rename`, { method: 'POST', body: JSON.stringify({ slug: nomes[i.id] }) })
+      if (trocaSlug(i)) {
+        await api(`/api/v1/datasets/${i.id}/rename`, { method: 'POST', body: JSON.stringify({ slug: slugs[i.id] }) })
+      }
+      if (trocaNome(i)) {
+        await api(`/api/v1/datasets/${i.id}`, { method: 'PATCH', body: JSON.stringify({ name: exibicoes[i.id].trim() }) })
+      }
       return null
     } catch (e) {
       return `${i.name}: ${e instanceof Error ? e.message : 'falha ao renomear'}`
@@ -86,10 +124,11 @@ export default function NamingPage() {
 
   async function aplicarTodas() {
     const ok = await confirm({
-      title: `Renomear ${aplicaveis.length} conjunto(s)?`,
-      message: 'Cada um passa a usar o nome da coluna "Novo nome". O nome antigo continua funcionando como apelido ' +
-        '(links, tokens, SQL e painéis). No Databricks, a tabela é recriada com o nome novo no próximo envio.',
-      confirmLabel: 'Renomear todos',
+      title: `Padronizar ${aplicaveis.length} conjunto(s)?`,
+      message: 'Cada um passa a usar o nome técnico e o nome de exibição das colunas ao lado. O nome técnico antigo ' +
+        'continua funcionando como apelido (links, tokens, SQL e painéis). No Databricks, a tabela é recriada com o ' +
+        'nome novo no próximo envio.',
+      confirmLabel: 'Padronizar todos',
     })
     if (!ok) return
     setError(null)
@@ -101,7 +140,7 @@ export default function NamingPage() {
       setLote({ feitos: n + 1, total: aplicaveis.length })
     }
     setLote(null)
-    if (erros.length) setError(`${erros.length} não renomeado(s). ${erros.slice(0, 3).join(' · ')}${erros.length > 3 ? ' …' : ''}`)
+    if (erros.length) setError(`${erros.length} não padronizado(s). ${erros.slice(0, 3).join(' · ')}${erros.length > 3 ? ' …' : ''}`)
     load()
   }
 
@@ -110,7 +149,7 @@ export default function NamingPage() {
       <PageHeader
         icon={Tags}
         title="Padronizar nomes"
-        subtitle="Padrão: camada_área_assunto, em minúsculas. Ex.: bronze_voalle_contratos, ouro_financeiro_titulos_abertos."
+        subtitle="Nome técnico: camada_área_assunto, em minúsculas (ex.: ouro_financeiro_titulos_abertos). Nome de exibição: frase com acentos (ex.: Títulos em aberto por mês)."
         back={(
           <Link to="/datasets" className="inline-flex items-center gap-1.5 text-[12px] text-zinc-500 hover:text-accent">
             <ArrowLeft size={13} /> Conjuntos
@@ -118,7 +157,7 @@ export default function NamingPage() {
         )}
       >
         <PrimaryButton icon={lote ? undefined : Check} disabled={!aplicaveis.length || !!lote || !!busy} onClick={() => void aplicarTodas()}>
-          {lote ? <><Loader2 size={14} className="animate-spin" /> {lote.feitos}/{lote.total}</> : `Renomear todos (${aplicaveis.length})`}
+          {lote ? <><Loader2 size={14} className="animate-spin" /> {lote.feitos}/{lote.total}</> : `Padronizar todos (${aplicaveis.length})`}
         </PrimaryButton>
       </PageHeader>
 
@@ -134,7 +173,7 @@ export default function NamingPage() {
           ]}
         />
         <span className="text-[11.5px] text-zinc-500">
-          Camadas: <b>bronze</b> cópia da fonte · <b>prata</b> tratado · <b>ouro</b> pronto para a área
+          Camadas: <b>bronze</b> cópia da fonte · <b>prata</b> tratado · <b>ouro</b> oficial ou pronto para a área
         </span>
         <SearchInput value={busca} onChange={setBusca} placeholder="Buscar conjunto" />
       </Toolbar>
@@ -150,14 +189,18 @@ export default function NamingPage() {
               <thead>
                 <tr>
                   <Th>Conjunto</Th>
-                  <Th className="w-[44%]">Novo nome</Th>
-                  <Th className="w-[120px]" right>Ação</Th>
+                  <Th className="w-[31%]">Nome técnico</Th>
+                  <Th className="w-[29%]">Nome de exibição</Th>
+                  <Th className="w-[112px]" right>Ação</Th>
                 </tr>
               </thead>
               <tbody>
                 {visiveis.map((i) => {
-                  const nome = nomes[i.id] ?? ''
-                  const invalido = !i.conforme && !valido(nome)
+                  const slug = slugs[i.id] ?? ''
+                  const exib = exibicoes[i.id] ?? ''
+                  const slugInvalido = !i.conforme && podeSlug(i) && !valido(slug)
+                  const nomeInvalido = !i.nomeConforme && !nomeValido(exib)
+                  const temAcao = !i.conforme || !i.nomeConforme
                   return (
                     <Tr key={i.id}>
                       <Td>
@@ -169,40 +212,48 @@ export default function NamingPage() {
                       </Td>
                       <Td>
                         {i.conforme ? (
-                          <span className="text-[11.5px] text-zinc-500" title={i.apelidos.length ? `Apelidos: ${i.apelidos.join(', ')}` : undefined}>
-                            <Check size={12} className="mr-1 inline text-ok dark:text-ok-dark" />
-                            no padrão{i.apelidos.length ? ` · antes: ${i.apelidos.join(', ')}` : ''}
-                          </span>
+                          <NoPadrao title={i.apelidos.length ? `Antes: ${i.apelidos.join(', ')}` : undefined} />
                         ) : (
+                          <span className="flex items-center gap-1.5">
+                            <input
+                              id={`slug-${i.id}`}
+                              aria-label={`Nome técnico de ${i.name}`}
+                              value={slug}
+                              onChange={(e) => setSlugs((n) => ({ ...n, [i.id]: e.target.value.trim().toLowerCase() }))}
+                              disabled={!podeSlug(i)}
+                              spellCheck={false}
+                              title={!podeSlug(i)
+                                ? 'Conjunto oficial: só um admin master troca o nome técnico.'
+                                : slugInvalido ? 'Use camada_área_assunto: minúsculas, números e "_" (camada bronze, prata ou ouro).' : undefined}
+                              className={input(slugInvalido, true)}
+                            />
+                            {!podeSlug(i) && <Lock size={11} className="shrink-0 text-zinc-400" aria-label="só master" />}
+                          </span>
+                        )}
+                      </Td>
+                      <Td>
+                        {i.nomeConforme ? <NoPadrao /> : (
                           <input
-                            value={nome}
-                            onChange={(e) => setNomes((n) => ({ ...n, [i.id]: e.target.value.trim().toLowerCase() }))}
-                            spellCheck={false}
-                            title={invalido ? 'Use camada_área_assunto: minúsculas, números e "_" (camada bronze, prata ou ouro).' : undefined}
-                            className={clsx(
-                              'h-[26px] w-full rounded-md border bg-white px-2 font-mono text-[11.5px] outline-none dark:bg-zinc-900',
-                              invalido
-                                ? 'border-crit/60 focus:ring-2 focus:ring-crit/15'
-                                : 'border-zinc-200 focus:border-accent focus:ring-2 focus:ring-accent/15 dark:border-zinc-700',
-                            )}
+                            id={`nome-${i.id}`}
+                            aria-label={`Nome de exibição de ${i.name}`}
+                            value={exib}
+                            onChange={(e) => setExibicoes((n) => ({ ...n, [i.id]: e.target.value }))}
+                            title={nomeInvalido ? 'O nome de exibição não pode ficar vazio.' : undefined}
+                            className={input(nomeInvalido, false)}
                           />
                         )}
                       </Td>
                       <Td right>
-                        {!i.conforme && (podeRenomear(i) ? (
+                        {temAcao && (
                           <button
                             onClick={() => void aplicar(i)}
-                            disabled={invalido || busy === i.id || !!lote}
+                            disabled={!(trocaSlug(i) || trocaNome(i)) || busy === i.id || !!lote}
                             className="inline-flex h-[26px] items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 text-[11.5px] font-medium transition-colors hover:border-zinc-300 disabled:opacity-50 dark:border-zinc-700"
                           >
                             {busy === i.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                            Renomear
+                            Aplicar
                           </button>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400" title="Conjunto oficial: só um admin master renomeia.">
-                            <Lock size={11} /> só master
-                          </span>
-                        ))}
+                        )}
                       </Td>
                     </Tr>
                   )

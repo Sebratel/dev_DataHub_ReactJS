@@ -350,6 +350,19 @@ Conjunto manual, pausado ou ao vivo não tem prazo cobrado.
 - O próximo envio de um conjunto renomeado é COMPLETO, para uma tabela com o nome novo. A tabela antiga fica lá e deve ser apagada à mão.
 - Os arquivos antigos no bucket GCS também ficam, com o caminho antigo.
 
+**Desde 24/11/2026: camada coerente e nome de exibição**
+- **Nome técnico:** a camada do nome precisa concordar com o selo do catálogo.
+  - Fonte: `bronze`.
+  - Calculado oficial: `ouro`.
+  - Calculado: `prata`, ou `ouro` quando já sai pronto para a área (como nos pacotes).
+  - A primeira rodada sugeria `prata_` para todo calculado. Por isso ficaram oficiais com selo Ouro e nome `prata_`. A tela agora acusa e sugere `ouro_`.
+- **Nome de exibição** (o que aparece em negrito): frase em português, com acentos e só a primeira letra maiúscula. Siglas e sistemas mantêm a grafia própria (SLAs, PPPoEs, Elleven, AutoISP). Ex.: "Protocolos de instalação - SLAs - técnicos - agendamentos".
+  - A tela acusa o nome com cara de nome técnico (`cesta-produtos`), em CAIXA ALTA, Em Título, ou com "-cao" sem acento. Ela sugere o nome corrigido, editável antes de aplicar.
+  - A sugestão não inventa palavra (não põe o "de" que faltou): revise antes de aplicar.
+  - Qualquer admin troca o nome de exibição. O nome técnico de oficial continua só com o master.
+  - Fonte nova já nasce com o nome de exibição no padrão: `assignment_links` vira "Assignment links".
+- O selo "Ouro" também vale para calculado `ouro_`. O cartão "Camada ouro" conta esses e diz quantos são oficiais.
+
 ---
 
 ## Pacotes de conjuntos (catálogo como código, desde 19/11/2026)
