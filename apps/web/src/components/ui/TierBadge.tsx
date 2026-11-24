@@ -31,12 +31,13 @@ const TEXT: Record<Tier, string> = {
   ouro: 'text-tier-ouro dark:text-tier-ouro-dark',
 }
 
-// Deriva a camada a partir do que o catálogo já sabe hoje: fonte = bronze,
-// derivado = prata, derivado marcado como oficial = ouro. Quando a coluna
-// `tier` existir no banco, troque só esta função.
-export function tierOf(kind: string, official?: boolean): Tier {
+// Oficial = ouro (certificado); fonte = bronze; calculado = prata, ou ouro
+// quando o nome técnico começa por ouro_ (os pacotes criam calculados prontos
+// para a área assim). Mesma regra de camadaCoerente em naming.ts no servidor.
+export function tierOf(kind: string, official?: boolean, slug?: string): Tier {
   if (official) return 'ouro'
-  return kind === 'derived' ? 'prata' : 'bronze'
+  if (kind !== 'derived') return 'bronze'
+  return /^ouro_/.test(slug ?? '') ? 'ouro' : 'prata'
 }
 
 export default function TierBadge({ tier, showLabel = true, className }: {

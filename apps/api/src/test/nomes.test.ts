@@ -14,6 +14,7 @@ import {
 } from './harness.js'
 import {
   snake, nomePadrao, segueOPadrao, areaDaFonte, comSufixo, nomeLivre, nomesOcupados,
+  nomeExibicao, exibicaoForaDoPadrao, camadaCoerente,
 } from '../modules/catalog/naming.js'
 import { referencedSlugs } from '../modules/transform/derive.js'
 import { LAKE_ROOT } from '../core/lake.js'
@@ -66,6 +67,71 @@ describe('Padrão de nomes: regra', () => {
     })
     assert.equal(calc.status, 201, JSON.stringify(calc.body))
     assert.equal(calc.body.slug, 'prata_teste_comite_planos_ativos')
+  })
+})
+
+describe('Padrão de nomes: camada coerente e nome de exibição', () => {
+  // Os casos são os do catálogo de produção em 24/11/2026.
+  it('nome de exibição vira frase, com acento e siglas na grafia certa', () => {
+    const casos: Array<[string, string]> = [
+      ['cesta-produtos', 'Cesta produtos'],
+      ['clientes-ativos-na-base', 'Clientes ativos na base'],
+      ['faturas-de-contratos-renegociacao', 'Faturas de contratos renegociação'],
+      ['relatorio-clientes-cancelados', 'Relatório clientes cancelados'],
+      ['PROTOCOLOS DE INSTALAÇÃO - SLAs - TÉCNICOS - AGENDAMENTOS', 'Protocolos de instalação - SLAs - técnicos - agendamentos'],
+      ['PROTOCOLOS DE MANUTENÇÃO - SLAs - TÉCNICOS - AGENDAMENTOS', 'Protocolos de manutenção - SLAs - técnicos - agendamentos'],
+      ['RELACIONAMENTO ELLEVEN + INTENÇÕES CANCELAMENTOS', 'Relacionamento Elleven + intenções cancelamentos'],
+      ['RETORNA MASSIVAS POR SPLITTERS', 'Retorna massivas por Splitters'],
+      ['RETORNA QUEDAS DE PPPOEs', 'Retorna quedas de PPPoEs'],
+      ['Agenda do Dia - Visão Geral', 'Agenda do dia - visão geral'],
+      ['Agendamentos - Tempos de Atendimento e Deslocamento', 'Agendamentos - tempos de atendimento e deslocamento'],
+      ['assignment_links', 'Assignment links'],
+    ]
+    for (const [antes, depois] of casos) {
+      assert.equal(nomeExibicao(antes), depois, antes)
+      assert.equal(exibicaoForaDoPadrao(antes), true, `${antes} deveria estar fora do padrão`)
+      assert.equal(exibicaoForaDoPadrao(depois), false, `${depois} já está no padrão`)
+    }
+  })
+
+  it('nome que já está bom não é acusado nem mexido', () => {
+    for (const bom of ['Base ativa por mês', 'Contratos do AutoISP', 'Receita em risco (R$)', 'Instalações por dia', 'NPS do suporte']) {
+      assert.equal(exibicaoForaDoPadrao(bom), false, bom)
+      assert.equal(nomeExibicao(bom), bom, bom)
+    }
+  })
+
+  it('camada do nome concorda com o selo: fonte bronze, oficial ouro, calculado prata ou ouro', () => {
+    assert.equal(camadaCoerente({ kind: 'source', official: false, slug: 'bronze_voalle_contratos' }), true)
+    assert.equal(camadaCoerente({ kind: 'source', official: false, slug: 'prata_voalle_contratos' }), false)
+    assert.equal(camadaCoerente({ kind: 'derived', official: 1, slug: 'prata_cesta_produtos' }), false)
+    assert.equal(camadaCoerente({ kind: 'derived', official: 1, slug: 'ouro_cesta_produtos' }), true)
+    assert.equal(camadaCoerente({ kind: 'derived', official: 0, slug: 'ouro_campo_instalacoes_mensal' }), true, 'pacote')
+    assert.equal(camadaCoerente({ kind: 'derived', official: 0, slug: 'bronze_x' }), false)
+  })
+
+  it('a tela sugere a camada certa e o nome de exibição; aplicar tira da lista', async () => {
+    const id = await seedDataset({
+      slug: 'prata_teste_comite_oficial',
+      fields: [{ key: 'id', type: 'number' }],
+      rowsSql: `select * from (values (1)) t(id)`,
+    })
+    await db.query(`update datasets set kind = 'derived', official = true, name = 'RELATORIO-OFICIAL' where id = $1`, [id])
+
+    const r = await as('admin').get('/api/v1/datasets/naming')
+    const item = r.body.items.find((x: { id: string }) => x.id === id)
+    assert.equal(item.conforme, false, 'oficial com prata_')
+    assert.equal(item.sugestao, 'ouro_teste_comite_oficial')
+    assert.equal(item.nomeConforme, false)
+    assert.equal(item.sugestaoNome, 'Relatório oficial')
+
+    // Aplicar: o nome técnico é do master (oficial); o de exibição, de qualquer admin.
+    assert.equal((await as('master').post(`/api/v1/datasets/${id}/rename`, { slug: item.sugestao })).status, 200)
+    assert.equal((await as('admin').patch(`/api/v1/datasets/${id}`, { name: item.sugestaoNome })).status, 200)
+    const depois = (await as('admin').get('/api/v1/datasets/naming')).body.items.find((x: { id: string }) => x.id === id)
+    assert.equal(depois.conforme, true)
+    assert.equal(depois.nomeConforme, true)
+    assert.equal(depois.sugestaoNome, null)
   })
 })
 

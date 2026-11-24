@@ -176,7 +176,7 @@ export default function HomePage() {
     let totalRows = 0
     const ages: number[] = []
     for (const d of datasets) {
-      byTier[tierOf(d.kind, d.official)].push(d)
+      byTier[tierOf(d.kind, d.official, d.slug)].push(d)
       if (d.rowCount !== null) totalRows += d.rowCount
       const h = hoursSince(d.lastSyncAt)
       if (h !== null) ages.push(h)
@@ -299,7 +299,7 @@ export default function HomePage() {
                               </EntityCell>
                             </Link>
                           </Td>
-                          <Td><TierBadge tier={tierOf(d.kind, d.official)} /></Td>
+                          <Td><TierBadge tier={tierOf(d.kind, d.official, d.slug)} /></Td>
                           <Td right muted>{d.rowCount !== null ? d.rowCount.toLocaleString('pt-BR') : '—'}</Td>
                           <Td right muted>{d.fieldCount}</Td>
                           <Td muted>{lagSince(h)}</Td>

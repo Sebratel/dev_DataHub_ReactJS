@@ -21,7 +21,7 @@ import { usageSummary } from '../../core/usage.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
 import { trashDataset, datasetDependents, sendTrashError } from './trash.js'
 import { camadaDe, slugDeTabela } from '../databricks/publish.js'
-import { novoNome, areaDaFonte } from './naming.js'
+import { novoNome, areaDaFonte, nomeExibicao } from './naming.js'
 
 export const datasetsRouter = Router()
 
@@ -205,7 +205,8 @@ datasetsRouter.post('/', requireAuth({ role: 'admin' }), async (req, res) => {
   }
   if (!columns.length) return res.status(400).json({ error: 'Tabela sem colunas visíveis (ou inexistente).' })
 
-  const displayName = String(name || labelize(String(table)))
+  // Nome de exibição no padrão (naming.ts): "assignment_links" → "Assignment links".
+  const displayName = String(name || nomeExibicao(String(table)))
   const client = await db.connect()
   try {
     await client.query('begin')

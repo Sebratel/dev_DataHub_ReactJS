@@ -56,7 +56,7 @@ const ESTADO_RANK: Record<Exclude<LagTone, 'neutral'>, number> = { ok: 0, warn: 
 function valorDe(d: DatasetSummary, key: SortKey): string | number | null {
   switch (key) {
     case 'name': return d.name.toLowerCase()
-    case 'tier': return TIER_RANK[tierOf(d.kind, d.official)]
+    case 'tier': return TIER_RANK[tierOf(d.kind, d.official, d.slug)]
     case 'origem': return (d.kind === 'derived' ? 'calculado' : d.source?.connectionName ?? 'fonte').toLowerCase()
     case 'rows': return d.rowCount
     case 'fields': return d.fieldCount
@@ -177,6 +177,7 @@ export default function DatasetsPage() {
       source: list.filter((d) => d.kind === 'source').length,
       derived: list.filter((d) => d.kind === 'derived').length,
       official: list.filter((d) => d.official).length,
+      ouro: list.filter((d) => tierOf(d.kind, d.official, d.slug) === 'ouro').length,
       rows: list.reduce((s, d) => s + (d.rowCount ?? 0), 0),
       median: ages.length ? ages[Math.floor(ages.length / 2)] : null,
       stale: ages.filter((h) => h > 26).length,
@@ -243,7 +244,7 @@ export default function DatasetsPage() {
       value: stats.median !== null ? lagLabel(stats.median) : '—',
       foot: stats.stale ? `${stats.stale} atrasado(s)` : 'todos em dia',
     },
-    { label: 'Camada ouro', icon: BadgeCheck, value: String(stats.official), foot: 'certificados pela diretoria' },
+    { label: 'Camada ouro', icon: BadgeCheck, value: String(stats.ouro), foot: `${stats.official} certificado(s) pela diretoria` },
   ]
 
   return (
@@ -451,7 +452,7 @@ export default function DatasetsPage() {
                             </EntityCell>
                           </Link>
                         </Td>
-                        <Td><TierBadge tier={tierOf(d.kind, d.official)} /></Td>
+                        <Td><TierBadge tier={tierOf(d.kind, d.official, d.slug)} /></Td>
                         <Td>
                           <span className="flex items-center gap-1.5">
                             {/* `source` só vem para admin; para leitor sobra o

@@ -104,6 +104,145 @@ export async function novoNome(q: Consulta, tenantId: string, p: Parameters<type
   return nomeLivre(nomePadrao(p), await nomesOcupados(q, tenantId))
 }
 
+// ── Camada coerente com o selo do catálogo ────────────────────────────────
+// O selo diz: fonte = bronze, calculado = prata, calculado OFICIAL = ouro
+// (certificado). O nome tem de concordar. A primeira rodada de 19/11 sugeria
+// prata_ para todo calculado e deixou oficiais com selo Ouro e nome prata_.
+// Calculado não oficial pode ser prata ou ouro: os pacotes nascem ouro_
+// quando o conjunto já sai pronto para a área.
+interface CamadaInfo { kind: string; official: boolean | number; slug: string }
+
+export function camadaCoerente(d: CamadaInfo): boolean {
+  const c = camadaDoNome(d.slug)
+  if (d.kind !== 'derived') return c === 'bronze'
+  if (d.official) return c === 'ouro'
+  return c === 'prata' || c === 'ouro'
+}
+
+export function camadaSugerida(d: CamadaInfo): Camada {
+  if (d.kind !== 'derived') return 'bronze'
+  if (d.official) return 'ouro'
+  return camadaDoNome(d.slug) === 'ouro' ? 'ouro' : 'prata'
+}
+
+// ── Nome de exibição ──────────────────────────────────────────────────────
+// O que aparece em negrito no catálogo. Padrão: frase em português, com
+// acentos, só a primeira letra maiúscula; siglas e nomes de sistema na grafia
+// deles. Ex.: "Protocolos de instalação - SLAs - técnicos - agendamentos".
+// A sugestão é um ponto de partida (não sabe pôr um "de" que faltou): a tela
+// deixa editar antes de aplicar.
+const GRAFIA: Record<string, string> = Object.fromEntries([
+  'SLA', 'SLAs', 'ONU', 'ONUs', 'OLT', 'OLTs', 'CTO', 'CTOs', 'PPPoE', 'PPPoEs', 'FTTH', 'FTTX', 'IP', 'IPs', 'SVA', 'TV',
+  'CPF', 'CNPJ', 'CEP', 'UF', 'NF', 'NFe', 'NFs', 'NPS', 'CSAT', 'URA', 'SMS', 'ERP', 'ISP', 'CRM', 'BI', 'KPI', 'KPIs',
+  'API', 'APIs', 'IA', 'RH', 'DP', 'TI', 'ID', 'IDs', 'PF', 'PJ', 'LTV', 'MRR', 'ARPU', 'SAC', 'N1', 'N2', 'N3',
+  'Voalle', 'Elleven', 'AutoISP', 'Radius', 'Matrix', 'Native', 'Splitters', 'Sebratel', 'Hubsoft', 'Senior',
+  'Digisac', 'Jira', 'Zabbix', 'Databricks', 'WhatsApp', 'Google', 'n8n', 'Hub',
+].map((w) => [w.toLowerCase(), w]))
+
+// Palavra sem acento que quase sempre o tem. As terminações -ção/-ções/-são/-ão
+// têm regra própria (acentua) abaixo.
+const ACENTO: Record<string, string> = {
+  tecnico: 'técnico', tecnicos: 'técnicos', tecnica: 'técnica', tecnicas: 'técnicas',
+  relatorio: 'relatório', relatorios: 'relatórios', titulo: 'título', titulos: 'títulos',
+  diario: 'diário', diarios: 'diários', diaria: 'diária', diarias: 'diárias', mes: 'mês',
+  area: 'área', areas: 'áreas', periodo: 'período', periodos: 'períodos', historico: 'histórico',
+  servico: 'serviço', servicos: 'serviços', cobranca: 'cobrança', cobrancas: 'cobranças',
+  analise: 'análise', analises: 'análises', usuario: 'usuário', usuarios: 'usuários',
+  credito: 'crédito', debito: 'débito', saude: 'saúde', numero: 'número', numeros: 'números',
+  indice: 'índice', indices: 'índices', media: 'média', medias: 'médias', unico: 'único',
+  ultimo: 'último', ultima: 'última', ultimos: 'últimos', ultimas: 'últimas', codigo: 'código',
+  inadimplencia: 'inadimplência', recorrencia: 'recorrência', frequencia: 'frequência',
+  ocorrencia: 'ocorrência', ocorrencias: 'ocorrências', referencia: 'referência', permanencia: 'permanência',
+  endereco: 'endereço', enderecos: 'endereços', metrica: 'métrica', metricas: 'métricas',
+  estatistica: 'estatística', estatisticas: 'estatísticas', logistica: 'logística', basico: 'básico',
+  orcamento: 'orçamento', preco: 'preço', precos: 'preços', inicio: 'início', proximo: 'próximo',
+  publico: 'público', eletronica: 'eletrônica', eletronico: 'eletrônico', automatico: 'automático',
+  negocio: 'negócio', negocios: 'negócios', funcionario: 'funcionário', funcionarios: 'funcionários',
+  salario: 'salário', horario: 'horário', horarios: 'horários', calendario: 'calendário',
+  veiculo: 'veículo', veiculos: 'veículos', pagina: 'página', cenario: 'cenário', ja: 'já', ate: 'até',
+}
+
+/** Palavra em minúsculas ASCII → com acento, se for o caso. */
+function acentua(w: string): string {
+  if (ACENTO[w]) return ACENTO[w]
+  if (w.length < 4) return w
+  const m = /^(.*[a-z])(cao|coes|sao|soes|xao|xoes)$/.exec(w)
+  if (m) {
+    const fim: Record<string, string> = { cao: 'ção', coes: 'ções', sao: 'são', soes: 'sões', xao: 'xão', xoes: 'xões' }
+    return m[1] + fim[m[2]]
+  }
+  return w
+}
+
+const LETRAS = /[A-Za-zÀ-ÖØ-öø-ÿ]/
+const ehMaiuscula = (w: string) => w === w.toLocaleUpperCase('pt-BR') && w !== w.toLocaleLowerCase('pt-BR')
+const ehCapitalizada = (w: string) => /^[A-ZÀ-Ö]/.test(w) && w.slice(1) === w.slice(1).toLocaleLowerCase('pt-BR')
+
+/** Palavras do nome (só letras e dígitos), sem as de grafia própria (siglas, sistemas). */
+function palavrasComuns(s: string): string[] {
+  return s.split(/\s+/).map((p) => p.replace(/[^0-9A-Za-zÀ-ÖØ-öø-ÿ]/g, ''))
+    .filter((p) => LETRAS.test(p) && !GRAFIA[p.toLocaleLowerCase('pt-BR')])
+}
+
+/** Nome em CAIXA ALTA: toda palavra comum de 2+ letras está em maiúsculas. */
+function emCaixaAlta(s: string): boolean {
+  const longas = palavrasComuns(s).filter((p) => p.length > 1)
+  return longas.length > 0 && longas.every(ehMaiuscula)
+}
+
+/** Nome de exibição no padrão, a partir do atual (ou do nome da tabela). */
+export function nomeExibicao(atual: string): string {
+  let s = String(atual ?? '').trim().replace(/\s+/g, ' ')
+  if (!s) return s
+  // Sem espaço nenhum ("cesta-produtos", "assignment_links"): o separador é o "_"/"-".
+  if (!/\s/.test(s)) s = s.replace(/[_\-.]+/g, ' ').trim()
+  else s = s.replace(/_+/g, ' ')
+  const caixaAlta = emCaixaAlta(s)
+  const palavras = s.split(' ')
+  const saida = palavras.map((p) => {
+    // Pontuação em volta da palavra ("(2024)", "SLAs,") fica como está.
+    const m = /^([^0-9A-Za-zÀ-ÖØ-öø-ÿ]*)(.*?)([^0-9A-Za-zÀ-ÖØ-öø-ÿ]*)$/.exec(p)!
+    const [, antes, w, depois] = m
+    if (!w || !LETRAS.test(w)) return p
+    const baixa = w.toLocaleLowerCase('pt-BR')
+    if (GRAFIA[baixa]) return antes + GRAFIA[baixa] + depois
+    // Fora de um nome todo em caixa alta, maiúscula que não é só a inicial foi
+    // de propósito: sigla (R$, CTO) ou grafia própria (AutoISP). Respeita.
+    if (!caixaAlta && w !== baixa && (!ehCapitalizada(w) || w.length === 1)) return p
+    // Ascii puro em minúsculas: tenta pôr o acento que faltou.
+    const final = /^[a-z0-9]+$/.test(baixa) ? acentua(baixa) : baixa
+    return antes + final + depois
+  })
+  // Primeira letra maiúscula (sem estragar sigla/nome com grafia própria).
+  const i = saida.findIndex((p) => LETRAS.test(p))
+  if (i >= 0 && !GRAFIA[saida[i].replace(/[^0-9A-Za-zÀ-ÖØ-öø-ÿ]/g, '').toLocaleLowerCase('pt-BR')]) {
+    const p = saida[i]
+    const j = p.search(LETRAS)
+    saida[i] = p.slice(0, j) + p[j].toLocaleUpperCase('pt-BR') + p.slice(j + 1)
+  }
+  return saida.join(' ')
+}
+
+/**
+ * O nome de exibição está fora do padrão? Só acusa o que é claramente fora —
+ * cara de nome técnico, caixa alta, Título Em Maiúsculas, primeira letra
+ * minúscula ou -cao/-coes sem acento —, para um nome bom com um nome próprio
+ * no meio ("Clientes da Cidade Nova") não ficar acusado para sempre.
+ */
+export function exibicaoForaDoPadrao(atual: string): boolean {
+  const s = String(atual ?? '').trim()
+  if (!s || nomeExibicao(s) === s) return false
+  const palavras = s.split(/\s+/).map((p) => p.replace(/[^0-9A-Za-zÀ-ÖØ-öø-ÿ]/g, '')).filter((p) => LETRAS.test(p))
+  const comuns = palavrasComuns(s)
+  const pareceTecnico = /[_]/.test(s) || (!/\s/.test(s) && /-/.test(s))
+  const caixaAlta = emCaixaAlta(s)
+  const longas = comuns.filter((p) => p.length >= 4)
+  const titulo = longas.length >= 3 && longas.every((p) => ehCapitalizada(p))
+  const primeiraMinuscula = /^[^A-Za-zÀ-ÖØ-öø-ÿ]*[a-zà-ÿ]/.test(s) && !GRAFIA[(palavras[0] ?? '').toLowerCase()]
+  const semAcento = palavras.some((p) => /^[a-z]{2,}(cao|coes)$/i.test(p))
+  return pareceTecnico || caixaAlta || titulo || primeiraMinuscula || semAcento
+}
+
 // ── Sugestão para os conjuntos que já existem ─────────────────────────────
 interface LinhaNome {
   id: string; slug: string; name: string; kind: string; official: boolean
@@ -112,7 +251,10 @@ interface LinhaNome {
 
 function sugestaoBase(d: LinhaNome): string {
   const derivado = d.kind === 'derived'
-  const camada = (d.databricks_layer as Camada | null) ?? (derivado ? 'prata' : 'bronze')
+  const camada = camadaSugerida(d)
+  // Já no padrão, só com a camada errada: troca a camada e mantém o resto.
+  const atual = camadaDoNome(d.slug)
+  if (atual && segueOPadrao(d.slug)) return `${camada}${d.slug.slice(atual.length)}`
   return nomePadrao({
     camada,
     area: derivado ? null : areaDaFonte(d.connection_id, d.schema_name),
@@ -122,7 +264,10 @@ function sugestaoBase(d: LinhaNome): string {
 
 export interface ItemNome {
   id: string; slug: string; name: string; kind: 'source' | 'derived'; official: boolean
+  /** Nome técnico no padrão e com a camada certa. */
   conforme: boolean; sugestao: string | null; apelidos: string[]
+  /** Nome de exibição no padrão (frase, acentos, siglas). */
+  nomeConforme: boolean; sugestaoNome: string | null
 }
 
 export async function listaNomes(tenantSlug: string): Promise<ItemNome[]> {
@@ -137,7 +282,8 @@ export async function listaNomes(tenantSlug: string): Promise<ItemNome[]> {
   )).rows
   const ocupados = await nomesOcupados(db, String(tenant.id))
   return rows.map((d) => {
-    const conforme = segueOPadrao(d.slug)
+    const conforme = segueOPadrao(d.slug) && camadaCoerente(d)
+    const nomeConforme = !exibicaoForaDoPadrao(d.name)
     let sugestao: string | null = null
     if (!conforme) {
       // A sugestão de um conjunto não pode colidir com a de outro da lista.
@@ -153,6 +299,7 @@ export async function listaNomes(tenantSlug: string): Promise<ItemNome[]> {
       kind: d.kind === 'derived' ? 'derived' : 'source', official: !!d.official,
       conforme, sugestao,
       apelidos: apelidos.filter((a) => String(a.dataset_id) === String(d.id)).map((a) => String(a.old_slug)),
+      nomeConforme, sugestaoNome: nomeConforme ? null : nomeExibicao(String(d.name)),
     }
   })
 }
