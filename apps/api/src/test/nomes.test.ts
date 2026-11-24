@@ -14,20 +14,23 @@ import {
 } from './harness.js'
 import {
   snake, nomePadrao, segueOPadrao, areaDaFonte, comSufixo, nomeLivre, nomesOcupados,
-  nomeExibicao, exibicaoForaDoPadrao, camadaCoerente,
+  nomeExibicao, exibicaoForaDoPadrao, camadaCoerente, nomeDaFonte, fonteConforme,
 } from '../modules/catalog/naming.js'
 import { referencedSlugs } from '../modules/transform/derive.js'
 import { LAKE_ROOT } from '../core/lake.js'
 
 let conn = ''
 let legadoId = ''
+// Fonte antiga, publicada antes do padrão com um nome que não é o da tabela.
+// O padrão de fonte é o nome da TABELA (clientes): é para ele que ela volta.
 const LEGADO = 'teste-comite-legado'
-const NOVO = 'bronze_legado_clientes'
+const NOVO = 'clientes'
 
 before(async () => {
   conn = await connectTestSource()
   legadoId = await seedDataset({
     slug: LEGADO,
+    objectName: 'clientes',
     fields: [{ key: 'id', type: 'number' }, { key: 'cliente' }],
     rowsSql: `select * from (values (1, 'ana'), (2, 'bia'), (3, 'caio'), (4, 'davi')) t(id, cliente)`,
   })
@@ -60,7 +63,14 @@ describe('Padrão de nomes: regra', () => {
   it('publicar e criar calculado já nascem no padrão', async () => {
     await fonteDb.query(`create table fonte.planos as select g as id, 'plano ' || g as nome from generate_series(1, 6) g`)
     const fonte = await publishSource(conn, 'planos', { syncMode: 'snapshot' })
-    assert.equal(fonte.slug, 'bronze_teste_comite_fonte_planos')
+    // Fonte fiel ao banco: o nome da tabela, técnico e de exibição.
+    assert.equal(fonte.slug, 'planos')
+    assert.equal((await db.query('select name from datasets where id = $1', [fonte.id])).rows[0].name, 'planos')
+    // A query copiada do banco roda como está.
+    await syncAndWait(fonte.id)
+    const q = await as('admin').post('/api/v1/datasets/derived/preview', { sql: 'select count(*) as n from planos' })
+    assert.equal(q.status, 200, JSON.stringify(q.body))
+    assert.equal(Number(q.body.rows?.[0]?.n), 6, JSON.stringify(q.body))
 
     const calc = await as('editor').post('/api/v1/datasets/derived', {
       name: 'TESTE-COMITE Planos ativos', sql: `select id from ${LEGADO.replace(/-/g, '_')}`,
@@ -85,7 +95,6 @@ describe('Padrão de nomes: camada coerente e nome de exibição', () => {
       ['RETORNA QUEDAS DE PPPOEs', 'Retorna quedas de PPPoEs'],
       ['Agenda do Dia - Visão Geral', 'Agenda do dia - visão geral'],
       ['Agendamentos - Tempos de Atendimento e Deslocamento', 'Agendamentos - tempos de atendimento e deslocamento'],
-      ['assignment_links', 'Assignment links'],
     ]
     for (const [antes, depois] of casos) {
       assert.equal(nomeExibicao(antes), depois, antes)
@@ -101,9 +110,16 @@ describe('Padrão de nomes: camada coerente e nome de exibição', () => {
     }
   })
 
-  it('camada do nome concorda com o selo: fonte bronze, oficial ouro, calculado prata ou ouro', () => {
-    assert.equal(camadaCoerente({ kind: 'source', official: false, slug: 'bronze_voalle_contratos' }), true)
-    assert.equal(camadaCoerente({ kind: 'source', official: false, slug: 'prata_voalle_contratos' }), false)
+  it('fonte usa o nome da tabela; outra fonte com a mesma tabela ganha _2', () => {
+    assert.equal(nomeDaFonte('contracts'), 'contracts')
+    assert.equal(nomeDaFonte('DB_Native_Stops'), 'db_native_stops', 'o SQL daqui não diferencia maiúsculas')
+    assert.equal(fonteConforme('contracts', 'contracts'), true)
+    assert.equal(fonteConforme('contracts_2', 'contracts'), true)
+    assert.equal(fonteConforme('bronze_voalle_contracts', 'contracts'), false, 'nome do padrão de 19/11')
+    assert.equal(fonteConforme('contratos', 'contracts'), false)
+  })
+
+  it('camada do calculado concorda com o selo: oficial ouro, demais prata ou ouro', () => {
     assert.equal(camadaCoerente({ kind: 'derived', official: 1, slug: 'prata_cesta_produtos' }), false)
     assert.equal(camadaCoerente({ kind: 'derived', official: 1, slug: 'ouro_cesta_produtos' }), true)
     assert.equal(camadaCoerente({ kind: 'derived', official: 0, slug: 'ouro_campo_instalacoes_mensal' }), true, 'pacote')
@@ -169,16 +185,22 @@ describe('Padrão de nomes: renomear sem quebrar quem usa o nome antigo', () => 
     const r = await as('admin').get('/api/v1/datasets/naming')
     assert.equal(r.status, 200, JSON.stringify(r.body))
     const it = r.body.items.find((x: { id: string }) => x.id === legadoId)
+    assert.equal(it.regra, 'fonte')
     assert.equal(it.conforme, false)
-    assert.equal(it.sugestao, 'bronze_teste_comite_legado')
+    assert.equal(it.sugestao, 'clientes', 'fonte volta ao nome da tabela')
+    assert.equal(it.nomeConforme, false)
+    assert.equal(it.sugestaoNome, 'clientes', 'nome de exibição da fonte = a tabela')
     assert.equal((await as('editor').get('/api/v1/datasets/naming')).status, 403)
   })
 
-  it('recusa nome fora do padrão, nome de outro conjunto e quem não é admin', async () => {
+  it('recusa nome que não é o da tabela, nome de outro conjunto e quem não é admin', async () => {
     const ad = as('admin')
     assert.equal((await ad.post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'Clientes Legado' })).status, 400)
-    assert.equal((await ad.post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'legado_clientes' })).status, 400, 'sem camada')
-    assert.equal((await ad.post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'bronze_teste_comite_fonte_planos' })).status, 409)
+    assert.equal((await ad.post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'legado_clientes' })).status, 400, 'não é a tabela')
+    assert.equal((await ad.post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'bronze_teste_clientes' })).status, 400, 'fonte não leva camada')
+    // O nome no formato certo, mas já de outro conjunto: ocupado.
+    await seedDataset({ slug: 'clientes_9', objectName: 'outra_tabela', fields: [{ key: 'id', type: 'number' }], rowsSql: 'select 1 as id' })
+    assert.equal((await ad.post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'clientes_9' })).status, 409)
     assert.equal((await as('editor').post(`/api/v1/datasets/${legadoId}/rename`, { slug: NOVO })).status, 403)
   })
 
@@ -224,13 +246,13 @@ describe('Padrão de nomes: renomear sem quebrar quem usa o nome antigo', () => 
   it('oficial só o master renomeia', async () => {
     await db.query('update datasets set official = true where id = $1', [legadoId])
     try {
-      assert.equal((await as('admin').post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'bronze_legado_clientes_v2' })).status, 403)
-      const m = await as('master').post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'bronze_legado_clientes_v2' })
+      assert.equal((await as('admin').post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'clientes_2' })).status, 403)
+      const m = await as('master').post(`/api/v1/datasets/${legadoId}/rename`, { slug: 'clientes_2' })
       assert.equal(m.status, 200, JSON.stringify(m.body))
       // Os dois nomes anteriores seguem respondendo.
       for (const antigo of [LEGADO, NOVO]) {
         const d = await as('viewer').get(`/api/v1/datasets/${antigo}`)
-        assert.equal(d.body.dataset?.slug, 'bronze_legado_clientes_v2', antigo)
+        assert.equal(d.body.dataset?.slug, 'clientes_2', antigo)
       }
     } finally {
       await db.query('update datasets set official = false where id = $1', [legadoId])

@@ -160,7 +160,8 @@ describe('Defeitos silenciosos que a conciliação acusa', () => {
     const r = await as('admin').get('/api/v1/quality/alerts')
     assert.equal(r.status, 200)
     const titulos: string[] = r.body.events.map((e: any) => e.title)
-    for (const nome of [/faturas empate/i, /clientes del/i, /sem chave/i]) {
+    // O título traz o nome de exibição da fonte, que é o nome da tabela (naming.ts).
+    for (const nome of [/faturas_empate/i, /clientes_del/i, /sem_chave/i]) {
       assert.ok(titulos.some((t) => /^Conciliação divergente: /.test(t) && nome.test(t)), `${nome}: ${JSON.stringify(titulos)}`)
     }
     assert.ok(r.body.events.every((e: any) => e.status === 'no-channel'), 'sem webhook, nada sai — mas fica registrado')

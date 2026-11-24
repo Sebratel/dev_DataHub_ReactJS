@@ -21,7 +21,7 @@ import { applySyncConfig, type SyncConfigInput } from '../sync/syncConfig.js'
 import { enqueueSync } from '../sync/ingest.js'
 import { validateTransformSql, assertSafeLakeSql, type LakeRef } from '../transform/derive.js'
 import { recordSqlVersion } from '../transform/versions.js'
-import { novoNome, segueOPadrao } from './naming.js'
+import { novoNomeFonte, segueOPadrao } from './naming.js'
 import { currentSlugFor } from '../../core/slugAliases.js'
 import type { RenameUser } from './naming.js'
 import { ONDA_1 } from './packs/onda1.js'
@@ -252,11 +252,12 @@ export async function installPack(
         })
         continue
       }
-      const slug = await novoNome(db, tenantId, { camada: 'bronze', area: s.system, nome: s.table })
+      // Fonte fiel ao banco (naming.ts): nome técnico e de exibição = a tabela.
+      const slug = await novoNomeFonte(db, tenantId, s.table)
       const ds = (await db.query(
         `insert into datasets (tenant_id, connection_id, schema_name, object_name, slug, name, description, owner_email)
          values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
-        [tenantId, connectionId, s.schema, s.table, slug, s.name, s.description, user.email],
+        [tenantId, connectionId, s.schema, s.table, slug, s.table, s.description, user.email],
       )).rows[0]
       for (const [i, c] of s.columns.entries()) {
         await db.query(

@@ -21,7 +21,7 @@ import { usageSummary } from '../../core/usage.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
 import { trashDataset, datasetDependents, sendTrashError } from './trash.js'
 import { camadaDe, slugDeTabela } from '../databricks/publish.js'
-import { novoNome, areaDaFonte, nomeExibicao } from './naming.js'
+import { novoNome, novoNomeFonte, areaDaFonte } from './naming.js'
 
 export const datasetsRouter = Router()
 
@@ -205,17 +205,14 @@ datasetsRouter.post('/', requireAuth({ role: 'admin' }), async (req, res) => {
   }
   if (!columns.length) return res.status(400).json({ error: 'Tabela sem colunas visíveis (ou inexistente).' })
 
-  // Nome de exibição no padrão (naming.ts): "assignment_links" → "Assignment links".
-  const displayName = String(name || nomeExibicao(String(table)))
+  // Fonte fica fiel ao banco (naming.ts): nome técnico e de exibição = nome da
+  // tabela, para uma query copiada do banco rodar aqui sem ajuste.
+  const displayName = String(name || table)
   const client = await db.connect()
   try {
     await client.query('begin')
     const tenant = (await client.query('select id from tenants where slug = $1', [req.user!.tenant])).rows[0]
-
-    // Nome no padrão (naming.ts): bronze_<fonte>_<nome>, único no tenant.
-    const slug = await novoNome(client, String(tenant.id), {
-      camada: 'bronze', area: areaDaFonte(String(connectionId), String(schema)), nome: displayName,
-    })
+    const slug = await novoNomeFonte(client, String(tenant.id), String(table))
 
     const ds = (await client.query(
       `insert into datasets (tenant_id, connection_id, schema_name, object_name, slug, name, description, owner_email)

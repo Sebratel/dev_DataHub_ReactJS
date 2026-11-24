@@ -55,7 +55,8 @@ describe('QLD-08 volume do snapshot', () => {
     const caiu = await esperaEstado(ds.id, 'volume', 'fail')
     assert.equal(caiu?.status, 'fail', JSON.stringify(caiu))
     assert.match(caiu!.detail, /1\.000 linhas; a anterior, 1\.500/)
-    assert.equal((await esperaAlertas(/^Volume caiu: Produtos$/, 1)).length, 1)
+    // Fonte fiel ao banco: o nome de exibição é o da tabela.
+    assert.equal((await esperaAlertas(/^Volume caiu: produtos$/, 1)).length, 1)
 
     // A régua é carga contra a anterior: de 1.000 para 1.000 não é queda, e o
     // estado volta ao normal (com um aviso só, logo abaixo).
@@ -64,8 +65,8 @@ describe('QLD-08 volume do snapshot', () => {
     await fonteDb.query(`insert into fonte.produtos select g, 'p' || g from generate_series(1001, 1500) g`)
     await syncAndWait(ds.id)
     assert.equal((await esperaEstado(ds.id, 'volume', 'ok'))?.status, 'ok')
-    assert.equal((await alertas(/^Volume caiu: Produtos$/)).length, 1, 'o mesmo aviso saiu duas vezes')
-    assert.equal((await esperaAlertas(/^Volume normal de novo: Produtos$/, 1)).length, 1)
+    assert.equal((await alertas(/^Volume caiu: produtos$/)).length, 1, 'o mesmo aviso saiu duas vezes')
+    assert.equal((await esperaAlertas(/^Volume normal de novo: produtos$/, 1)).length, 1)
   })
 })
 
@@ -132,13 +133,13 @@ describe('MON-09 / QLD-10 prazo pela cadência', () => {
     const desde = e!.since
     await runStaleChecks(new Date())
     assert.deepEqual((await estado(ds.id, 'stale'))?.since, desde, 'reavaliar não reinicia o "desde quando"')
-    // Nome de exibição no padrão (naming.ts): a tabela chamados_h vira "Chamados h".
-    assert.equal((await alertas(/^Conjunto atrasado: Chamados h$/)).length, 1, 'avaliar de novo não pode repetir o aviso')
+    // Fonte fiel ao banco (naming.ts): o nome de exibição é o da tabela.
+    assert.equal((await alertas(/^Conjunto atrasado: chamados_h$/)).length, 1, 'avaliar de novo não pode repetir o aviso')
 
     await syncAndWait(ds.id)
     await runStaleChecks(new Date())
     assert.equal((await estado(ds.id, 'stale'))?.status, 'ok')
-    assert.equal((await alertas(/^Prazo em dia de novo: Chamados h$/)).length, 1)
+    assert.equal((await alertas(/^Prazo em dia de novo: chamados_h$/)).length, 1)
   })
 
   it('calculado em cascata que não acompanha o insumo fica atrasado', async () => {

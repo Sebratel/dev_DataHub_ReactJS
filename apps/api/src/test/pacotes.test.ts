@@ -114,9 +114,11 @@ describe('Pacotes de conjuntos: onda 1', () => {
     assert.equal(nbs.length, slugsDosNotebooks.length)
     assert.ok(nbs.every((n) => n.visibility === 'private' && n.owner_email === USERS.master), JSON.stringify(nbs))
 
-    // A cópia bronze nasce no padrão de nomes e não traz coluna que o pacote não usa.
-    const bronze = (await db.query(`select id, slug from datasets where object_name = 'people' and kind = 'source'`)).rows[0]
-    assert.equal(bronze.slug, 'bronze_voalle_people')
+    // A cópia bronze é fiel ao banco (nome da tabela, técnico e de exibição) e
+    // não traz coluna que o pacote não usa.
+    const bronze = (await db.query(`select id, slug, name from datasets where object_name = 'people' and kind = 'source'`)).rows[0]
+    assert.equal(bronze.slug, 'people')
+    assert.equal(bronze.name, 'people')
     const colunas = (await db.query('select source_column from dataset_fields where dataset_id = $1', [bronze.id])).rows.map((x) => x.source_column)
     assert.ok(!colunas.includes('name'), 'o nome da pessoa foi para o lake')
 
