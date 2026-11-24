@@ -36,7 +36,10 @@ ENV API_PORT=8790
 
 EXPOSE 8790
 
+# /api/health/live = processo de pé. O /api/health (estrito, 503 com o banco
+# fora) é para o Zabbix; aqui ele impediria o datahub-web de subir num deploy
+# com o banco fora (D-12). 127.0.0.1, não localhost: no Alpine, localhost é ::1.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:8790/api/health >/dev/null 2>&1 || exit 1
+  CMD wget -qO- http://127.0.0.1:8790/api/health/live >/dev/null 2>&1 || exit 1
 
 CMD ["npx", "tsx", "apps/api/src/index.ts"]

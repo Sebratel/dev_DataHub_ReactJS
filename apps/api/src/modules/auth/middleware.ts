@@ -109,7 +109,10 @@ async function getUserFromToken(token: string): Promise<SessionUser | null> {
 
 // O cache é por TOKEN, e o do Firebase dura 1h: guardar por 5 min mantém a
 // propagação de mudança de papel igual à do caminho antigo.
+// Sessão montada com o banco FORA (papel só de ADMIN_EMAILS) não entra: senão,
+// quando o banco volta, o editor seguiria como viewer por mais 5 minutos (D-12).
 function cacheToken(token: string, user: SessionUser): void {
+  if (!isDbAvailable()) return
   tokenCache.set(token, { user, exp: Date.now() + TOKEN_TTL_MS })
   if (tokenCache.size > 1000) {
     const now = Date.now()
@@ -164,6 +167,17 @@ export function requireAuth({ role }: { role?: 'master' | 'admin' | 'editor' } =
       user = null
     }
     if (!user) return res.status(401).json({ error: 'Sessão inválida ou expirada. Entre novamente.' })
+    // Banco de metadados fora: o papel vem só de ADMIN_EMAILS (modo degradado),
+    // e um editor de verdade levaria "sem permissão" — uma mentira. Diz o que é.
+    const precisa = role === 'master' ? user.master
+      : role === 'admin' ? user.roles.includes('admin')
+        : role === 'editor' ? user.roles.some((r) => r === 'admin' || r === 'editor')
+          : true
+    if (!precisa && !isDbAvailable()) {
+      return res.status(503).json({
+        error: 'Banco de metadados indisponível no momento: não dá para conferir o seu papel. Tente de novo em alguns minutos.',
+      })
+    }
     if (role === 'master' && !user.master) {
       return res.status(403).json({ error: MASTER_ONLY_MESSAGE })
     }

@@ -5,7 +5,7 @@
 // caches de processo, agendador, embeddings e o listen.
 // ─────────────────────────────────────────────────────────────────────────
 import { config } from './core/config.js'
-import { runMigrations, isDbAvailable } from './db/pool.js'
+import { runMigrations, isDbAvailable, startDbWatch } from './db/pool.js'
 import { createApp } from './app.js'
 import express from 'express'
 import { reloadAiProviders } from './modules/ai/providerStore.js'
@@ -44,7 +44,8 @@ if (config.manutencao) {
 
 function iniciarManutencao(): void {
   const m = express()
-  m.get('/api/health', (_req, res) => { res.json({ status: 'manutencao', manutencao: true }) })
+  // Os dois: o /live é o do healthcheck do contêiner (D-12).
+  m.get(['/api/health', '/api/health/live'], (_req, res) => { res.json({ status: 'manutencao', manutencao: true }) })
   m.use((_req, res) => {
     res.status(503).json({ error: 'Data Hub em manutenção (troca do banco de metadados). Volta em alguns minutos.' })
   })
@@ -119,8 +120,34 @@ async function iniciar(): Promise<void> {
   } catch (e) {
     console.warn(`[lake] faxina de parquet falhou: ${(e as Error).message}`)
   }
-  // Carrega as conexões GERENCIADAS (cadastradas na tela) para o registry.
+  // O que depende do banco: roda agora, se ele subiu; senão, quando o vigia o
+  // encontrar de volta (D-12) — antes, banco fora no boot = degradado para sempre.
+  if (isDbAvailable()) await bootComBanco()
+  startDbWatch({
+    onRecovered: async () => {
+      await bootComBanco()
+      void reindexEmbeddings().catch((e) =>
+        console.warn(`[embeddings] indexação inicial falhou: ${(e as Error).message}`))
+    },
+  })
+  startScheduler() // sync diário na madrugada (ETL_HOUR)
+  startHealthChecks() // Fase 3: monitor de uptime a cada 60s
+  // Catálogo semântico: indexa em background os datasets sem embedding (ou com
+  // texto desatualizado). Não bloqueia o boot — na 1ª vez baixa o modelo (~120MB).
   if (isDbAvailable()) {
+    void reindexEmbeddings().catch((e) =>
+      console.warn(`[embeddings] indexação inicial falhou: ${(e as Error).message}`))
+  }
+  app.listen(config.apiPort, () => {
+    console.log(`[api] Data Hub API em http://localhost:${config.apiPort}`)
+  })
+}
+
+// Boot que depende do banco de metadados: caches de processo (conexões,
+// masters, apelidos, upstreams, provedores de IA) e a arrumação do que um
+// processo anterior deixou pela metade.
+async function bootComBanco(): Promise<void> {
+  {
     // Execuções penduradas em 'running' de um processo que morreu no meio. Sem
     // isto o conjunto fica "sincronizando" para sempre na tela e o botão de
     // sincronizar nunca reabilita.
@@ -178,15 +205,4 @@ async function iniciar(): Promise<void> {
     await ensureApiRuntimeWidget().catch((e) =>
       console.warn(`[api-metrics] widget de latência no tempo falhou: ${(e as Error).message}`))
   }
-  startScheduler() // sync diário na madrugada (ETL_HOUR)
-  startHealthChecks() // Fase 3: monitor de uptime a cada 60s
-  // Catálogo semântico: indexa em background os datasets sem embedding (ou com
-  // texto desatualizado). Não bloqueia o boot — na 1ª vez baixa o modelo (~120MB).
-  if (isDbAvailable()) {
-    void reindexEmbeddings().catch((e) =>
-      console.warn(`[embeddings] indexação inicial falhou: ${(e as Error).message}`))
-  }
-  app.listen(config.apiPort, () => {
-    console.log(`[api] Data Hub API em http://localhost:${config.apiPort}`)
-  })
 }

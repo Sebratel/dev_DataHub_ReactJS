@@ -552,6 +552,12 @@ O dashia, que aparece em Painéis, precisa da **mesma** lista no nginx dele. O `
 
 ## 10. Recuperação rápida (ordem sugerida num incidente)
 
+**Saúde da API (desde 24/11/2026, D-12):**
+- `GET /api/health` confere o banco de metadados ao vivo e responde **503** com `metadataDb: "offline"` quando ele está fora. É esse endereço que o Zabbix deve vigiar (M-02).
+- `GET /api/health/live` só diz que o processo está de pé. É o do healthcheck do contêiner: com o estrito ali, um deploy com o banco fora deixaria o `datahub-web` sem subir.
+- Banco fora no boot: a API sobe degradada e um vigia tenta de novo a cada 15 s. Quando o banco volta, ela completa o boot sozinha (caches, conexões, masters). Não precisa reiniciar.
+- Banco caindo com a API no ar: as rotas que dependem dele respondem 503 até ele voltar. Quem precisa de papel (editor, admin) recebe "Banco de metadados indisponível", e não "sem permissão".
+
 0. **Operar › Saúde da plataforma** — "Precisa de atenção agora" lista, do
    estado atual, cargas pausadas ou falhando, conciliações divergentes,
    verificações falhando, envio ao Databricks com erro, endpoints fora e disco

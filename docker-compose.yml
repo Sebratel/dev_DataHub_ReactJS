@@ -224,7 +224,10 @@ services:
       # abre o socket em :: (dual-stack) --, mas bastaria alguem fixar
       # '0.0.0.0' no listen para esta checagem quebrar sem motivo aparente.
       # Foi o que derrubou o healthcheck do datahub-web (ver Dockerfile).
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/api/health']
+      # /api/health/live (processo de pe), nao /api/health: o estrito responde
+      # 503 com o banco fora e prenderia o datahub-web, que espera a API
+      # saudavel para subir (D-12). O Zabbix vigia o /api/health.
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/api/health/live']
       interval: 30s
       timeout: 3s
       retries: 3
