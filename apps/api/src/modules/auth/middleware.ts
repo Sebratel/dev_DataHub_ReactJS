@@ -140,7 +140,15 @@ function looksLikeJwt(token: string): boolean {
 
 async function getUserFromToken(token: string, req: Request): Promise<{ user: SessionUser; via: Via } | null> {
   const cached = tokenCache.get(token)
-  if (cached && cached.exp > Date.now()) return { user: cached.user, via: cached.via }
+  if (cached && cached.exp > Date.now()) {
+    // Só pelo Hub: sessão do Google já em cache também para de valer.
+    if (cached.via !== 'hub' && hubOnlyActive()) {
+      tokenCache.delete(token)
+      void registraNegado(req, cached.user.email, 'hub_only', 'google')
+      throw new HubOnlyError()
+    }
+    return { user: cached.user, via: cached.via }
+  }
 
   if (!looksLikeJwt(token)) return null
 
@@ -164,8 +172,9 @@ async function getUserFromToken(token: string, req: Request): Promise<{ user: Se
     void registraNegado(req, email, 'dominio', 'google')
     return null
   }
-  // Só pelo Hub: login direto fica para o master (caminho de recuperação).
-  if (hubOnlyActive() && !isMaster(email)) {
+  // Só pelo Hub: login direto recusado para todos, master inclusive. A porta
+  // de emergência (Hub fora) é HUB_ONLY=false + redeploy.
+  if (hubOnlyActive()) {
     void registraNegado(req, email, 'hub_only', 'google')
     throw new HubOnlyError()
   }

@@ -586,8 +586,8 @@ No Hub Apps, vá em Administração › Apps › Data Hub e marque:
 - **Abrir dentro do Hub**. Essa opção depende da migration 20 do hub-api, que é aplicada sozinha quando ele sobe.
 
 **Bloquear o acesso por fora do Hub (`HUB_ONLY=true`)**
-- Quem não é master e tenta entrar direto pelo Google recebe `403 HUB_ONLY`. A tela de login mostra "Acesse pelo Hub Apps".
-- O **master** continua entrando direto. Esse é o caminho de recuperação se o Hub cair.
+- Quem tenta entrar direto pelo Google recebe `403 HUB_ONLY`, **master inclusive**. A tela de login mostra só "Acesse pelo Hub Apps", sem o botão do Google. Sessão do Google já aberta também para de valer.
+- O master entra pelo Hub como qualquer um e segue master dentro do sistema. **Porta de emergência** (Hub fora): `HUB_ONLY=false` na stack + redeploy.
 - A API pública (`/api/public/v1`, com token de API) e o `/api/health` não mudam.
 - Se `HUB_SSO_SECRET` ou `HUB_APP_ID` estiver vazio, `HUB_ONLY` é ignorado e o log de subida avisa. Sem esses dois valores ninguém entraria pelo Hub, então ligar o bloqueio trancaria todo mundo.
 - Ordem segura: primeiro ligue a entrada pelo Hub e confira que ela funciona. Depois mude `HUB_ONLY` para `true`.

@@ -193,8 +193,8 @@ services:
       # Entrada pelo Hub Apps (Data Hub embutido no Hub). HUB_SSO_SECRET = o
       # MESMO valor do SSO_JWT_SECRET da stack do Hub Apps. HUB_APP_ID = id do
       # Data Hub no cadastro de apps do Hub (o mesmo de PLATFORM_SUGGESTIONS_APP_ID).
-      # HUB_ONLY=true: login direto pelo Google so para master; os demais entram
-      # pelo Hub. Sem as duas primeiras, HUB_ONLY e ignorado (trancaria todos).
+      # HUB_ONLY=true: login direto pelo Google recusado para todos (master
+      # inclusive). Sem as duas primeiras, HUB_ONLY e ignorado (trancaria todos).
       HUB_SSO_SECRET: ${HUB_SSO_SECRET:-}
       HUB_APP_ID: ${HUB_APP_ID:-}
       HUB_ONLY: ${HUB_ONLY:-false}

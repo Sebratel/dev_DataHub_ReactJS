@@ -75,7 +75,7 @@ export const config = {
     // entraria aqui.
     appId: (process.env.HUB_APP_ID || '').trim(),
     url: (process.env.HUB_APPS_URL || 'https://hub-apps.sebratel.net.br').trim(),
-    // Só pelo Hub: recusa login direto (Google) de quem não é master. Lido a
+    // Só pelo Hub: recusa login direto (Google) de todos, master inclusive. Lido a
     // cada uso para o teste poder ligar e desligar sem reiniciar o processo.
     get only(): boolean {
       return ['1', 'true', 'sim'].includes((process.env.HUB_ONLY || '').trim().toLowerCase())
