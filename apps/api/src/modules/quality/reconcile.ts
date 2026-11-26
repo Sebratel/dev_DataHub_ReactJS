@@ -156,7 +156,7 @@ async function finishWithError(runId: string, datasetId: string, error: string):
     key: `reconcile:error:${datasetId}`,
     kind: 'reconcile-error',
     title: `Conciliação não concluída: ${ds.name}`,
-    lines: [`Conjunto ${ds.slug}.`, error.slice(0, 500), 'Veja em Operar › Qualidade dos dados.'],
+    lines: [`Conjunto ${ds.slug}.`, error.slice(0, 500), 'Veja em Operar › Saúde e qualidade › Qualidade dos dados.'],
   })
 }
 
@@ -292,7 +292,7 @@ export async function runReconcile(runId: string): Promise<void> {
         lines.push(`Dias diferentes: ${diffDays.length} de ${c.daysCompared}. ${amostra}${diffDays.length > 5 ? '; …' : ''}.`)
       }
       if (diagnosis) lines.push(diagnosis)
-      lines.push('Veja em Operar › Qualidade dos dados.')
+      lines.push('Veja em Operar › Saúde e qualidade › Qualidade dos dados.')
       await notify(tenantId, { key: `reconcile:diverged:${datasetId}`, kind: 'reconcile-diverged', title: `Conciliação divergente: ${name}`, lines })
     } else {
       // Voltou a bater depois de divergir ou falhar: quem recebeu o alerta

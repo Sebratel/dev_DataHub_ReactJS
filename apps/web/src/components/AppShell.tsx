@@ -15,7 +15,7 @@ import { NavLink, Outlet, Navigate, Link, useLocation } from 'react-router-dom'
 import {
   Home, Boxes, LayoutDashboard, Sparkles, ShieldCheck, ScrollText,
   Moon, Sun, LogOut, Activity, Webhook, ChevronDown, Search, Database, Brain, NotebookText, Sparkle,
-  Wand2, ListChecks, ClipboardCheck, ExternalLink, Lightbulb,
+  ListChecks, ExternalLink, Lightbulb,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
@@ -57,11 +57,9 @@ const NAV_GROUPS: { title: string; items: NavEntry[] }[] = [
   {
     title: 'Operar',
     items: [
-      { to: '/admin/health', label: 'Saúde da plataforma', icon: Activity, role: 'admin' },
+      { to: '/admin/health', label: 'Saúde e qualidade', icon: Activity, role: 'admin' },
       { to: '/admin/connections', label: 'Conexões', icon: Database, role: 'admin' },
       { to: '/admin/sync-rules', label: 'Regras de atualização', icon: ListChecks, role: 'admin' },
-      { to: '/admin/quality', label: 'Qualidade dos dados', icon: ClipboardCheck, role: 'admin' },
-      { to: '/admin/autotune', label: 'Padronizar atualização', icon: Wand2, role: 'admin' },
       { to: '/admin/ai-providers', label: 'Provedores de IA', icon: Sparkle, role: 'admin' },
       { to: '/admin/access', label: 'Usuários e Acessos', icon: ShieldCheck, role: 'admin' },
       { to: '/admin/audit', label: 'Auditoria', icon: ScrollText, role: 'admin' },
@@ -78,7 +76,7 @@ const CRUMB: Record<string, string> = {
   'gateway-apis': 'Gateway de APIs', models: 'Modelos', notebooks: 'Notebooks',
   'ai-providers': 'Provedores de IA', schedules: 'Agendamentos',
   autotune: 'Padronizar atualização', 'sync-rules': 'Regras de atualização',
-  quality: 'Qualidade dos dados', health: 'Saúde da plataforma',
+  quality: 'Qualidade dos dados', health: 'Saúde e qualidade',
   lixeira: 'Lixeira', 'padronizar-nomes': 'Padronizar nomes', pacotes: 'Pacotes de conjuntos',
   sugestoes: 'Sugestões',
 }

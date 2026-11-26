@@ -19,7 +19,7 @@ código; aqui é o **o que fazer quando**.
   comprimido** (`.jsonl.gz`) → converte para **Parquet** no lake. O staging vive
   do começo ao fim da carga e é ele, não o Parquet, que faz o disco subir
   durante uma sincronização longa.
-- **Uso de disco**: a tela *Padronizar atualização* mostra no topo o percentual
+- **Uso de disco**: a tela *Regras de atualização › Padronizar* mostra no topo o percentual
   do volume, quanto o lake ocupa e os maiores conjuntos. Acima de
   `SYNC_DISK_WARN_PERCENT` (85 por padrão) o card fica em alerta e diz se há
   carga na fila — porque com fila o pico ainda vai subir.
@@ -37,7 +37,7 @@ código; aqui é o **o que fazer quando**.
   passam de `SYNC_COMPACT_MAX_PARTS`. O histórico mostra `dispensada` ou o
   tempo gasto.
 - Configurado na tela do conjunto → "Sincronização com o lake", ou em lote em
-  **Administração › Padronizar atualização**. Mexer na regra de um conjunto de
+  **Operar › Regras de atualização › Padronizar**. Mexer na regra de um conjunto de
   FONTE exige **admin master**; calculados seguem com admin/editor.
 
 **Regra de ouro:** tabela grande = **incremental**, nunca snapshot. Snapshot com
@@ -278,7 +278,7 @@ catálogo e volume forem mantidos. O provisionamento é a sequência acima.
 
 ## 9. Qualidade dos dados — conciliação fonte × lake e alertas
 
-Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos dados**.
+Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Saúde e qualidade › Qualidade dos dados**.
 
 - **Todo dia, a partir de `RECONCILE_HOUR`**, o sistema escolhe um conjunto
   pequeno, um médio e um grande — os oficiais primeiro, depois quem está há mais
@@ -294,7 +294,7 @@ Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos d
   lake, QLD-07) contam como divergência.
 - **Ficam fora:** calculados, modo ao vivo e fontes que não são Postgres/MySQL
   (a tela mostra o motivo de cada um).
-- **Onde os alertas aparecem:** em **Operar › Saúde da plataforma** (histórico
+- **Onde os alertas aparecem:** em **Operar › Saúde e qualidade** (histórico
   com "marcar como visto"), no **sino do cabeçalho** (só admin) e, desde a R6
   (D-MON-3), no **Google Chat**. O webhook `{"text": …}` só o master cadastra,
   no cartão de alertas; sem ele, o alerta fica só no sistema ("sem canal").
@@ -618,7 +618,7 @@ O dashia, que aparece em Painéis, precisa da **mesma** lista no nginx dele. O `
 - Banco fora no boot: a API sobe degradada e um vigia tenta de novo a cada 15 s. Quando o banco volta, ela completa o boot sozinha (caches, conexões, masters). Não precisa reiniciar.
 - Banco caindo com a API no ar: as rotas que dependem dele respondem 503 até ele voltar. Quem precisa de papel (editor, admin) recebe "Banco de metadados indisponível", e não "sem permissão".
 
-0. **Operar › Saúde da plataforma** — "Precisa de atenção agora" lista, do
+0. **Operar › Saúde e qualidade** — "Precisa de atenção agora" lista, do
    estado atual, cargas pausadas ou falhando, conciliações divergentes,
    verificações falhando, envio ao Databricks com erro, endpoints fora e disco
    acima do limite; "Falhas nas últimas 24 h" responde o que quebrou à noite.

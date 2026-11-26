@@ -39,7 +39,7 @@ export default function AlertsBell() {
 
   const n = b?.unseenAlerts ?? 0
   const abertos = b?.problems ?? 0
-  const titulo = !b ? 'Saúde da plataforma'
+  const titulo = !b ? 'Saúde e qualidade'
     : `${n ? `${n} alerta(s) não visto(s)` : 'Nenhum alerta novo'}` +
       ` · ${abertos ? `${abertos} problema(s) aberto(s)${b.crit ? `, ${b.crit} crítico(s)` : ''}` : 'nada precisando de atenção'}`
 

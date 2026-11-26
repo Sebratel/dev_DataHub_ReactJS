@@ -333,7 +333,7 @@ export default function QualityPage() {
           </div>
 
           <p className="text-[11px] text-zinc-500">
-            Divergências e verificações falhando também aparecem em{' '}
+            Divergências e verificações falhando também aparecem na aba{' '}
             <Link to="/admin/health" className="font-medium text-info hover:underline dark:text-info-dark">Saúde da plataforma</Link>,
             com o histórico de alertas.
           </p>

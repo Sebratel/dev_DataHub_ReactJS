@@ -179,7 +179,7 @@ recebe muita edição — vale olhar se a cadência está agressiva demais.
 
 ## 3. As telas
 
-### 3.1 Administração › Padronizar atualização
+### 3.1 Operar › Regras de atualização › Padronizar
 
 É a tela principal. Ela lê o catálogo de cada tabela de origem e monta uma
 proposta por conjunto.
@@ -351,7 +351,7 @@ um botão que troca todos de uma vez.
 
 ## 4. Roteiro A — padronizar um conjunto
 
-1. **Administração › Padronizar atualização** e aguarde a análise.
+1. **Operar › Regras de atualização › Padronizar** e aguarde a análise.
 2. Filtro **Prontos para aplicar**. Clique numa linha e leia **Por que esta
    regra**. Confira três coisas:
    - a **chave incremental** é mesmo a data de criação daquela tabela?
@@ -461,7 +461,7 @@ Uma execução normal **não reescreve o passado**: o incremental só traz o que
 passou do corte. Quando o que já está gravado no lake está errado — foi o caso
 do defeito de fuso de 28/09/2026 —, a única saída é reler a fonte inteira.
 
-O caminho é **Padronizar atualização › filtro "Precisam de recarga"**. Ali a
+O caminho é **Regras de atualização › Padronizar › filtro "Precisam de recarga"**. Ali a
 barra de ações muda: marque os conjuntos (há atalhos para *todos os que
 precisam* e para *os 5 menores*) e use **"Recarregar selecionados"** — a
 estimativa de fila aparece ao lado da contagem, antes do clique. Para um só,
@@ -480,7 +480,7 @@ explicado — conjunto em snapshot se refaz sozinho a cada execução, e fonte
 MySQL nunca foi afetada.
 
 **Onde acompanhar:** o card **Fila de sincronização**, no topo da própria tela
-de *Padronizar atualização*. Só **uma** sincronização roda por vez no hub
+de *Regras de atualização › Padronizar*. Só **uma** sincronização roda por vez no hub
 inteiro — se aparecerem várias em "rodando", ou uma com duração em dias, são
 execuções presas de um processo que morreu no meio; elas se fecham sozinhas no
 próximo boot da API.

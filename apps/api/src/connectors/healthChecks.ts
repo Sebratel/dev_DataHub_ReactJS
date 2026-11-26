@@ -28,7 +28,7 @@ async function avisaTroca(
       title: `${nome}: fora do ar`,
       lines: [
         `${String(c.url)} falhou duas verificações seguidas: ${status ? `HTTP ${status}` : (error ?? 'sem resposta')}.`,
-        'Veja em Operar › Saúde da plataforma.',
+        'Veja em Operar › Saúde e qualidade.',
       ],
     }
     : {

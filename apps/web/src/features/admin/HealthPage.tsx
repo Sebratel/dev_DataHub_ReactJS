@@ -109,7 +109,7 @@ export default function HealthPage() {
             <p className="text-[11px] text-zinc-500">
               Volume do lake: {fmtBytes(disk.totalBytes)} no total, {fmtBytes(disk.lakeBytes)} em conjuntos
               {disk.stagingBytes > 0 ? `, ${fmtBytes(disk.stagingBytes)} em arquivos temporários de carga` : ''}.
-              Os maiores conjuntos estão em <Link to="/admin/autotune" className="text-info hover:underline dark:text-info-dark">Padronizar atualização</Link>.
+              Os maiores conjuntos estão em <Link to="/admin/sync-rules#padronizar" className="text-info hover:underline dark:text-info-dark">Regras de atualização › Padronizar</Link>.
             </p>
           )}
 

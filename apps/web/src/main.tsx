@@ -8,11 +8,9 @@ import HomePage from '@/features/home/HomePage'
 import ConnectionsPage from '@/features/admin/ConnectionsPage'
 import AccessPage from '@/features/admin/AccessPage'
 import AuditPage from '@/features/admin/AuditPage'
-import HealthPage from '@/features/admin/HealthPage'
+import HealthModule from '@/features/admin/HealthModule'
 import AiProvidersPage from '@/features/admin/AiProvidersPage'
-import AutotunePage from '@/features/admin/AutotunePage'
-import SyncRulesPage from '@/features/admin/SyncRulesPage'
-import QualityPage from '@/features/admin/QualityPage'
+import UpdateRulesModule from '@/features/admin/UpdateRulesModule'
 import GatewayApisPage from '@/features/gateway-apis/GatewayApisPage'
 import NotebooksPage from '@/features/notebooks/NotebooksPage'
 import NotebookPage from '@/features/notebooks/NotebookPage'
@@ -71,16 +69,18 @@ const routes: RouteObject[] = [
       { path: 'admin/connections', element: <ConnectionsPage /> },
       { path: 'admin/access', element: <AccessPage /> },
       { path: 'admin/audit', element: <AuditPage /> },
-      { path: 'admin/health', element: <HealthPage /> },
+      // Saúde da plataforma e Qualidade dos dados viraram um módulo com abas (26/11/2026).
+      { path: 'admin/health', element: <HealthModule /> },
       // A antiga tela Monitoramento virou um cartão da Saúde da plataforma;
       // o endereço velho continua funcionando para quem o salvou.
       { path: 'admin/monitor', element: <Navigate to="/admin/health" replace /> },
       { path: 'admin/ai-providers', element: <AiProvidersPage /> },
-      { path: 'admin/sync-rules', element: <SyncRulesPage /> },
-      { path: 'admin/quality', element: <QualityPage /> },
+      // Regras de atualização e Padronizar atualização viraram um módulo com abas (26/11/2026).
+      { path: 'admin/sync-rules', element: <UpdateRulesModule /> },
+      { path: 'admin/quality', element: <Navigate to={{ pathname: '/admin/health', hash: '#qualidade' }} replace /> },
       // Agendamentos virou a faixa de cartões do topo das Regras de atualização.
       { path: 'admin/schedules', element: <Navigate to="/admin/sync-rules" replace /> },
-      { path: 'admin/autotune', element: <AutotunePage /> },
+      { path: 'admin/autotune', element: <Navigate to={{ pathname: '/admin/sync-rules', hash: '#padronizar' }} replace /> },
     ],
   },
 ]
