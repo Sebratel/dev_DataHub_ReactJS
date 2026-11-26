@@ -281,6 +281,8 @@ export default function LoginPage() {
                   )}
                 </AnimatePresence>
 
+                {/* Só pelo Hub: nenhum outro botão de login, nem para o master. */}
+                {!soPeloHub && (
                 <motion.button
                   type="button"
                   onClick={handleGoogle}
@@ -292,7 +294,7 @@ export default function LoginPage() {
                   className={
                     'group relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-xl px-4 text-sm font-semibold text-on-surface transition-shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60 ' +
                     (mostrarHub
-                      // Com o Hub em destaque, o Google vira a porta do master: discreto.
+                      // Com o Hub em destaque, o Google vira alternativa discreta.
                       ? 'min-h-[36px] border border-neutral-300 bg-white py-2 hover:bg-neutral-50'
                       : 'min-h-[44px] bg-[#FFB800] py-3.5 shadow-md hover:bg-[#e6a800] hover:shadow-lg')
                   }
@@ -305,15 +307,16 @@ export default function LoginPage() {
                     </span>
                   )}
                   <span className="relative z-10">
-                    {busy ? 'A autenticar…' : soPeloHub ? 'Entrar com Google (administrador master)' : 'Entrar com Google'}
+                    {busy ? 'A autenticar…' : 'Entrar com Google'}
                   </span>
                 </motion.button>
+                )}
 
-                <div className="flex items-center gap-3">
+                {!soPeloHub && <div className="flex items-center gap-3">
                   <div className="h-px flex-1 bg-neutral-200" />
                   <span className="text-[11px] font-medium uppercase tracking-wider text-on-surface-variant">ou</span>
                   <div className="h-px flex-1 bg-neutral-200" />
-                </div>
+                </div>}
 
                 <p className="text-center text-[11px] text-on-surface-variant">
                   <a

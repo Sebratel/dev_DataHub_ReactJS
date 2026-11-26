@@ -86,6 +86,7 @@ const TEST_ENV: Record<string, string> = {
   HUB_SSO_SECRET: 'segredo-do-hub-so-de-teste',
   HUB_APP_ID: 'app-datahub-teste',
   HUB_ONLY: 'false',
+  DASHIA_SSO_SECRET: '', // dashia.test.ts liga
   LAKE_ROOT: lakeRoot,
   SYNC_STAGING_DIR: join(lakeRoot, '.staging'),
   // Carga em lotes PEQUENOS e sem pausa: os testes de qualidade (QLD-01)

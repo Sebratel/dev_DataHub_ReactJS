@@ -17,8 +17,8 @@
 // admin) continua vindo do banco do Data Hub, igual ao login pelo Google.
 //
 // HUB_ONLY liga o "só pelo Hub": login direto pelo Google passa a ser recusado
-// para quem não é master. O master continua entrando direto — é o caminho de
-// recuperação se o Hub cair.
+// para todos, master inclusive. Porta de emergência (Hub fora): HUB_ONLY=false
+// + redeploy.
 // ─────────────────────────────────────────────────────────────────────────
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { config } from '../../core/config.js'

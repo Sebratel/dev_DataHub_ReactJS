@@ -91,7 +91,7 @@ async function iniciar(): Promise<void> {
   // "o bloqueio não funciona".
   if (config.hub.ssoSecret && config.hub.appId) {
     console.log(`[auth] entrada pelo Hub Apps ativa (app ${config.hub.appId}); ` +
-      (config.hub.only ? 'SÓ PELO HUB: login direto apenas para master.' : 'login direto também liberado.'))
+      (config.hub.only ? 'SÓ PELO HUB: login direto recusado para todos (master inclusive).' : 'login direto também liberado.'))
   } else if (config.hub.only) {
     console.warn('[auth] HUB_ONLY=true IGNORADO: faltam HUB_SSO_SECRET e/ou HUB_APP_ID. ' +
       'Sem eles ninguém entraria pelo Hub, então o login direto segue liberado.')
