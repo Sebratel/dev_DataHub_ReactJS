@@ -27,11 +27,11 @@ import { enqueueSync, setAfterSync, normalizaWatermark, type SyncOutcome } from 
 import { notify } from '../alerts/notify.js'
 import { postLoadChecks } from './checks.js'
 import {
-  planReconcile, ineligibleReason, bandOf, quoteFor, sourceCountSql, sourceLostSql, sourceDupIdentitySql, lakeCountSql,
+  planReconcile, ineligibleReason, bandOf, quoteFor, AUTOFIX_COOLDOWN_DAYS, sourceCountSql, sourceLostSql, sourceDupIdentitySql, lakeCountSql,
   lakeDupSql, diagnose, toBucket, compareBuckets, isMatch, sameSum, timestampLocal,
   type Dialect, type PlanDataset, type PlanRules,
 } from './reconcilePlan.js'
-import type { ReconcileBand } from '@datahub/shared'
+import type { ReconcileBand, ReconcileRun } from '@datahub/shared'
 
 export function rules(): PlanRules {
   return {
@@ -80,7 +80,7 @@ async function loadDataset(datasetId: string): Promise<{ row: Record<string, any
  * anterior espera devolve o anterior (índice único no banco).
  */
 export async function requestReconcile(
-  datasetId: string, trigger: 'daily' | 'manual', requestedBy: string,
+  datasetId: string, trigger: ReconcileRun['trigger'], requestedBy: string,
 ): Promise<{ id: string; already: boolean }> {
   const ds = await loadDataset(datasetId)
   if (!ds) throw new Error('Conjunto de dados não encontrado.')
@@ -156,7 +156,7 @@ async function finishWithError(runId: string, datasetId: string, error: string):
     key: `reconcile:error:${datasetId}`,
     kind: 'reconcile-error',
     title: `Conciliação não concluída: ${ds.name}`,
-    lines: [`Conjunto ${ds.slug}.`, error.slice(0, 500), 'Veja em Operar › Qualidade dos dados.'],
+    lines: [`Conjunto ${ds.slug}.`, error.slice(0, 500), 'Veja em Operar › Saúde e qualidade › Qualidade dos dados.'],
   })
 }
 
@@ -165,7 +165,7 @@ const fmtDia = (d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d.slice(8, 10)
 
 /** A conferência em si. Roda dentro da fila (ver afterSync). */
 export async function runReconcile(runId: string): Promise<void> {
-  const run = (await db.query(`select dataset_id from reconcile_runs where id = $1`, [runId])).rows[0]
+  const run = (await db.query(`select dataset_id, trigger from reconcile_runs where id = $1`, [runId])).rows[0]
   if (!run) return
   const datasetId = String(run.dataset_id)
   await db.query(`update reconcile_runs set status = 'running', started_at = now() where id = $1`, [runId])
@@ -243,6 +243,13 @@ export async function runReconcile(runId: string): Promise<void> {
         dupBy: dupKeys?.join(' + ') ?? null, hasIdentity: ds.plan.dedupeKeys.length > 0,
         keyField: plan.keyField?.key ?? null,
       })
+      // A recarga completa da madrugada não resolveu: o defeito não é de
+      // carga. Quem abre a linha precisa saber que tentar de novo não adianta.
+      if (run.trigger === 'autofix') {
+        notes.push('A correção automática da madrugada relê a fonte inteira, e a divergência continuou. ' +
+          'O defeito não é de carga e precisa de análise. Este conjunto só volta à correção automática ' +
+          `daqui a ${AUTOFIX_COOLDOWN_DAYS} dias.`)
+      }
     }
 
     await db.query(
@@ -285,7 +292,7 @@ export async function runReconcile(runId: string): Promise<void> {
         lines.push(`Dias diferentes: ${diffDays.length} de ${c.daysCompared}. ${amostra}${diffDays.length > 5 ? '; …' : ''}.`)
       }
       if (diagnosis) lines.push(diagnosis)
-      lines.push('Veja em Operar › Qualidade dos dados.')
+      lines.push('Veja em Operar › Saúde e qualidade › Qualidade dos dados.')
       await notify(tenantId, { key: `reconcile:diverged:${datasetId}`, kind: 'reconcile-diverged', title: `Conciliação divergente: ${name}`, lines })
     } else {
       // Voltou a bater depois de divergir ou falhar: quem recebeu o alerta

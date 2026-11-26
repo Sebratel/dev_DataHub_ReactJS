@@ -9,15 +9,63 @@
 // um grid/flex força o track a crescer (um track `1fr` tem min-width:auto) e a
 // PÁGINA INTEIRA passa a rolar na horizontal — foi exatamente o que acontecia
 // na tela de conjunto calculado.
+import { createContext, useContext } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import type { LucideIcon } from 'lucide-react'
 import { Search } from 'lucide-react'
 
+// Tela EMBUTIDA numa aba de módulo (ModulePage): a moldura e o título já são
+// do módulo. A tela de dentro continua igual; o Page dela não abre outro
+// container e o PageHeader dela vira uma linha com o subtítulo e as ações.
+const Embutida = createContext(false)
+
 export function Page({ children, className }: { children: React.ReactNode; className?: string }) {
+  if (useContext(Embutida)) return <div className={clsx('min-w-0', className)}>{children}</div>
   return (
     <div className={clsx('mx-auto min-w-0 max-w-[1600px]', className)}>
       {children}
     </div>
+  )
+}
+
+export interface ModuleTab {
+  /** Vai no hash da URL (#chave); a primeira aba é a padrão, sem hash. */
+  key: string
+  label: string
+  icon?: LucideIcon
+  render: () => React.ReactNode
+}
+
+// Um módulo com abas: telas que falam do mesmo assunto numa entrada só do
+// menu. A aba vai no hash, como no Gateway de APIs: o endereço antigo de cada
+// tela redireciona para a aba certa, e o link pode ser compartilhado.
+export function ModulePage({ icon, title, subtitle, tabs }: {
+  icon: LucideIcon
+  title: string
+  subtitle: string
+  tabs: ModuleTab[]
+}) {
+  const { hash } = useLocation()
+  const navigate = useNavigate()
+  const atual = tabs.find((t) => t.key === hash.replace('#', '')) ?? tabs[0]
+  return (
+    <Page>
+      <PageHeader icon={icon} title={title} subtitle={subtitle} />
+      <div className="mb-3 flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-zinc-800" role="tablist">
+        {tabs.map(({ key, label, icon: Icon }, i) => (
+          <button key={key} role="tab" aria-selected={atual.key === key}
+            onClick={() => navigate({ hash: i === 0 ? '' : key }, { replace: true })}
+            className={clsx('flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-[12.5px] transition-colors',
+              atual.key === key
+                ? 'border-accent font-semibold text-zinc-900 dark:text-zinc-100'
+                : 'border-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200')}>
+            {Icon && <Icon size={14} strokeWidth={1.6} />} {label}
+          </button>
+        ))}
+      </div>
+      <Embutida.Provider value>{atual.render()}</Embutida.Provider>
+    </Page>
   )
 }
 
@@ -32,6 +80,16 @@ export function PageHeader({ icon: Icon, title, subtitle, children, back }: {
   /** Link de volta, quando a tela é um detalhe. */
   back?: React.ReactNode
 }) {
+  // Dentro de uma aba de módulo: o título é o da aba; fica o que ela explica e as ações.
+  if (useContext(Embutida)) {
+    if (!subtitle && !children) return null
+    return (
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+        {subtitle && <p className="min-w-0 flex-1 text-[11.5px] text-zinc-500">{subtitle}</p>}
+        {children && <div className="flex shrink-0 items-center gap-1.5">{children}</div>}
+      </div>
+    )
+  }
   return (
     <div className="mb-3">
       {back}

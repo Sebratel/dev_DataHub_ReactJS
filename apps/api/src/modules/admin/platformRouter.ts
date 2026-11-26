@@ -56,7 +56,7 @@ export async function platformProblems(tenant: string): Promise<PlatformProblem[
     const k = CHECK[c.check_name] ?? { title: c.check_name, severity: 'warn', area: 'qualidade' }
     out.push({
       id: `check:${c.check_name}:${c.dataset_id}`, severity: k.severity, area: k.area,
-      title: `${c.name}: ${k.title}`, detail: curto(c.detail), since: iso(c.since), link: '/admin/quality',
+      title: `${c.name}: ${k.title}`, detail: curto(c.detail), since: iso(c.since), link: '/admin/health#qualidade',
     })
   }
 
@@ -111,7 +111,7 @@ export async function platformProblems(tenant: string): Promise<PlatformProblem[
       detail: diverge
         ? `Fonte ${Number(r.source_rows).toLocaleString('pt-BR')} linhas × lake ${Number(r.lake_rows).toLocaleString('pt-BR')}.`
         : curto(r.error),
-      since: iso(r.finished_at), link: '/admin/quality',
+      since: iso(r.finished_at), link: '/admin/health#qualidade',
     })
   }
 

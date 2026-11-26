@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import express from 'express'
 import { encaminharErrosAsync, respostaDeErro } from './core/asyncRoutes.js'
-import { isDbAvailable } from './db/pool.js'
+import { isDbAvailable, dbHealthy } from './db/pool.js'
 import { requireAuth } from './modules/auth/middleware.js'
 import { authHubRouter } from './modules/auth/hubRouter.js'
 import { connectionsRouter } from './modules/catalog/connectionsRouter.js'
@@ -69,7 +69,17 @@ export function createApp(): express.Express {
   // (padrão de nomes; ver core/slugAliases.ts).
   app.use(resolveDatasetSlugAlias)
 
-  app.get('/api/health', (_req, res) => {
+  // Saúde de VERDADE (D-12): confere o banco de metadados ao vivo e responde 503
+  // quando ele está fora. É o endereço para o Zabbix vigiar.
+  app.get('/api/health', async (_req, res) => {
+    const banco = await dbHealthy()
+    res.status(banco ? 200 : 503).json({ ok: banco, service: 'datahub-api', metadataDb: banco ? 'ok' : 'offline' })
+  })
+  // Só "o processo está de pé": é o que o healthcheck do contêiner usa. Com o
+  // /api/health estrito ali, um deploy com o banco fora deixaria o datahub-web
+  // sem subir (ele espera a API saudável) — o site inteiro fora, em vez de
+  // degradado avisando o que falta.
+  app.get('/api/health/live', (_req, res) => {
     res.json({ ok: true, service: 'datahub-api', metadataDb: isDbAvailable() ? 'ok' : 'offline' })
   })
 

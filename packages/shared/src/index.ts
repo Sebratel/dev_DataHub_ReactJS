@@ -413,7 +413,8 @@ export interface ReconcileRun {
   datasetId: string
   slug: string
   name: string
-  trigger: 'daily' | 'manual'
+  /** 'autofix' = a correção automática da madrugada (recarga completa + conferência). */
+  trigger: 'daily' | 'manual' | 'autofix'
   band: ReconcileBand | null
   status: ReconcileStatus
   /** 'per-day' separa por dia da chave de data; 'total' compara só o total. */
@@ -479,7 +480,11 @@ export interface QualityOverview {
   /** Só as que estão falhando agora — o "ok" é o normal e não precisa de lista. */
   failingChecks: DatasetCheckRow[]
   /** Faixas e horário em vigor (vêm da stack; ainda a confirmar pelo comitê). */
-  rules: { smallMaxRows: number; largeMinRows: number; largeWindowDays: number; reconcileHour: number }
+  rules: {
+    smallMaxRows: number; largeMinRows: number; largeWindowDays: number; reconcileHour: number
+    /** Correção automática da madrugada: hora e quantos por faixa, por noite. */
+    autofix: { enabled: boolean; hour: number; small: number; medium: number; large: number; cooldownDays: number }
+  }
 }
 
 export interface AlertSettingsView {
@@ -672,6 +677,30 @@ export interface GatewayUsage {
   /** Upstreams que este token alcança — opt-in explícito, vazio = nenhum. */
   upstream_slugs: string[]
   calls_today: number
+}
+
+/** Um conjunto do ponto de vista de quem consome por fora (Gateway › Conjuntos). */
+export interface GatewayDatasetUsage {
+  id: string
+  slug: string
+  name: string
+  official: boolean
+  /** APIs de leitura (/p) ativas que servem este conjunto. */
+  apis: { slug: string; name: string }[]
+  /** Tokens ativos com este conjunto no escopo (os de escopo "todos" ficam à parte). */
+  tokens: { id: string; name: string }[]
+  /** Leituras por token que deram certo, últimos 30 dias. */
+  calls30d: number
+  consumers30d: { name: string; calls: number }[]
+  lastReadAt: string | null
+}
+
+export interface GatewayDatasetsOverview {
+  /** Primeiro dia com leitura por token registrada; antes disso, "sem uso" não quer dizer nada. */
+  trackingSince: string | null
+  /** Tokens ativos sem escopo: leem todos os conjuntos. */
+  allAccessTokens: { id: string; name: string }[]
+  datasets: GatewayDatasetUsage[]
 }
 
 // ── Insight de widget ─────────────────────────────────────────

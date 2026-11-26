@@ -46,7 +46,7 @@ export async function setCheck(ds: Alvo, check: CheckName, status: 'ok' | 'fail'
       key: `check:${check}:fail:${ds.id}`,
       kind: `check-${check}`,
       title: `${ROTULO[check].falha}: ${ds.name}`,
-      lines: [`Conjunto ${ds.slug}.`, detail, 'Veja em Operar › Qualidade dos dados.'],
+      lines: [`Conjunto ${ds.slug}.`, detail, 'Veja em Operar › Saúde e qualidade › Qualidade dos dados.'],
     })
   } else if (status === 'ok' && antes === 'fail') {
     await notify(ds.tenantId, {

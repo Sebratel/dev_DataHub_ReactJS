@@ -19,6 +19,7 @@ import { assertReadOnly, stripNoise } from '../../core/guard.js'
 import { accessibleDatasetIds, type AccessUser } from '../../core/access.js'
 import { publicarDataset } from '../databricks/publish.js'
 import { aliasesForTenant, aliasesOfSlug, slugAliasVersion } from '../../core/slugAliases.js'
+import { traduzPostgres, type CompatTable } from './pgCompat.js'
 import type { FieldType, DerivedCadenceItem } from '@datahub/shared'
 
 // Além do guard read-only: bloqueia funções do DuckDB que alcançam o sistema
@@ -43,6 +44,21 @@ export interface LakeRef {
   glob: string
   /** Nome antigo de um conjunto renomeado (ver core/slugAliases.ts). */
   alias?: boolean
+  /** Fonte: schema e tabela de origem — é o que deixa citar `erp.contracts` (pgCompat). */
+  schema?: string | null
+  object?: string | null
+}
+
+/** As fontes citáveis como schema.tabela, entre as que o SQL alcança. */
+function tabelasDeFonte(refs: LakeRef[]): CompatTable[] {
+  return refs
+    .filter((r) => !r.alias && r.schema && r.object)
+    .map((r) => ({ schema: r.schema!, table: r.object!, slug: r.slug }))
+}
+
+/** SQL do Postgres → DuckDB, antes de qualquer validação (ver pgCompat.ts). */
+function traduz(userSql: string, refs: LakeRef[]): string {
+  return traduzPostgres(userSql, tabelasDeFonte(refs)).sql
 }
 
 export interface LakeRefOptions {
@@ -66,7 +82,7 @@ export interface LakeRefOptions {
 // scheduler.
 export async function lakeRefs(tenantSlug: string, opts: LakeRefOptions = {}): Promise<LakeRef[]> {
   const rows = (await db.query(
-    `select d.id, d.slug from datasets d join tenants t on t.id = d.tenant_id
+    `select d.id, d.slug, d.kind, d.schema_name, d.object_name from datasets d join tenants t on t.id = d.tenant_id
       where t.slug = $1 and d.kind in ('source', 'derived')`,
     [tenantSlug],
   )).rows
@@ -79,7 +95,14 @@ export async function lakeRefs(tenantSlug: string, opts: LakeRefOptions = {}): P
     if (opts.excludeSlug && slug === opts.excludeSlug) continue
     if (allowed && !allowed.has(String(r.id))) continue
     const dir = datasetDir(tenantSlug, slug)
-    if (listParquet(dir).length) refs.push({ id: String(r.id), slug, glob: parquetGlob(dir) })
+    const fonte = r.kind === 'source'
+    if (listParquet(dir).length) {
+      refs.push({
+        id: String(r.id), slug, glob: parquetGlob(dir),
+        schema: fonte ? (r.schema_name as string | null) : null,
+        object: fonte ? (r.object_name as string | null) : null,
+      })
+    }
   }
   // Nome antigo de conjunto renomeado: mais uma referência ao MESMO Parquet,
   // para o SQL salvo antes da renomeação continuar rodando.
@@ -343,6 +366,14 @@ export async function assertSafeLakeSql(userSql: string, refs: LakeRef[]): Promi
       const name = String(n.table_name ?? '')
       const lower = name.toLowerCase()
       citados.add(lower)
+      if (n.schema_name && !n.catalog_name && !PATHLIKE.test(name)) {
+        // schema.tabela que a tradução do Postgres não achou entre as fontes
+        // que esta pessoa alcança (pgCompat.ts).
+        throw new Error(
+          `A tabela "${n.schema_name}.${name}" não está no lake como fonte, ou você não tem acesso a ela. ` +
+          'Publique a tabela em Novo conjunto › Fonte, ou peça acesso ao dono do conjunto.',
+        )
+      }
       if (n.schema_name || n.catalog_name || PATHLIKE.test(name)) {
         throw new Error(
           `Referência não permitida no SQL: "${[n.catalog_name, n.schema_name, name].filter(Boolean).join('.')}". ` +
@@ -373,9 +404,10 @@ export async function assertSafeLakeSql(userSql: string, refs: LakeRef[]): Promi
 // de ML passam por aqui — inclusive na execução em segundo plano de uma
 // definição já salva, que pode ter sido gravada antes desta validação existir.
 export async function compileLakeSql(userSql: string, refs: LakeRef[]): Promise<string> {
-  validateTransformSql(userSql)
-  await assertSafeLakeSql(userSql, refs)
-  return buildLakeSql(userSql, refs)
+  const sql = traduz(userSql, refs)
+  validateTransformSql(sql)
+  await assertSafeLakeSql(sql, refs)
+  return buildLakeSql(sql, refs)
 }
 
 // Envolve o SQL do usuário com CTEs (um por conjunto do lake). O SQL vira uma
@@ -452,8 +484,9 @@ async function projecaoProtegida(r: LakeRef, admin: boolean): Promise<string> {
 }
 
 export async function compileNotebookSql(
-  userSql: string, refs: LakeRef[], opts: { admin: boolean },
+  original: string, refs: LakeRef[], opts: { admin: boolean },
 ): Promise<NotebookSql> {
+  const userSql = traduz(original, refs)
   validateTransformSql(userSql)
   const citados = await assertSafeLakeSql(userSql, refs)
   const usados = refs.filter((r) =>
@@ -494,6 +527,13 @@ function friendlyDuckError(e: Error, refs: LakeRef[]): Error {
       `Abra "${t[2]}" e use Materializar agora (ou Sincronizar agora, se for fonte): ` +
       'a nova carga substitui as partes antigas e o conjunto volta a ser legível. ' +
       `Arquivo: ${t[1]}`,
+    )
+  }
+  const f = /(?:Scalar|Table|Aggregate) Function with name (\S+) does not exist/.exec(e.message)
+  if (f) {
+    return new Error(
+      `A função ${f[1]} não existe no motor do lake (DuckDB) e não tem tradução do Postgres. ` +
+      'Veja as funções equivalentes em duckdb.org/docs/sql/functions ou avise a equipe de dados para incluir a tradução.',
     )
   }
   const m = /Table with name (\S+) does not exist/.exec(e.message)

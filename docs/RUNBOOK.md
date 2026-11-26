@@ -19,7 +19,7 @@ código; aqui é o **o que fazer quando**.
   comprimido** (`.jsonl.gz`) → converte para **Parquet** no lake. O staging vive
   do começo ao fim da carga e é ele, não o Parquet, que faz o disco subir
   durante uma sincronização longa.
-- **Uso de disco**: a tela *Padronizar atualização* mostra no topo o percentual
+- **Uso de disco**: a tela *Regras de atualização › Padronizar* mostra no topo o percentual
   do volume, quanto o lake ocupa e os maiores conjuntos. Acima de
   `SYNC_DISK_WARN_PERCENT` (85 por padrão) o card fica em alerta e diz se há
   carga na fila — porque com fila o pico ainda vai subir.
@@ -37,7 +37,7 @@ código; aqui é o **o que fazer quando**.
   passam de `SYNC_COMPACT_MAX_PARTS`. O histórico mostra `dispensada` ou o
   tempo gasto.
 - Configurado na tela do conjunto → "Sincronização com o lake", ou em lote em
-  **Administração › Padronizar atualização**. Mexer na regra de um conjunto de
+  **Operar › Regras de atualização › Padronizar**. Mexer na regra de um conjunto de
   FONTE exige **admin master**; calculados seguem com admin/editor.
 
 **Regra de ouro:** tabela grande = **incremental**, nunca snapshot. Snapshot com
@@ -162,6 +162,9 @@ Para deixar a ingestão mais gentil: lote menor + pausa maior (ex.:
 | `DQ_SMALL_MAX_ROWS` | `100000` | Até aqui o conjunto é "pequeno" (D-QLD-3) |
 | `DQ_LARGE_MIN_ROWS` | `2000000` | A partir daqui é "grande" |
 | `DQ_LARGE_WINDOW_DAYS` | `60` | Quantos dias o conjunto grande confere |
+| `DQ_AUTOFIX_ENABLED` | `true` | Liga a correção automática da madrugada |
+| `DQ_AUTOFIX_HOUR` | `1` | Hora da correção automática (só nessa hora; não recupera depois) |
+| `DQ_AUTOFIX_SMALL` / `_MEDIUM` / `_LARGE` | `3` / `2` / `1` | Quantos divergentes por faixa, por noite (0 tira a faixa) |
 
 > Variável nova **tem** que entrar no bloco `environment` do `docker-compose.yml`:
 > o que não estiver listado lá não chega ao contêiner, por mais preenchido que
@@ -275,7 +278,7 @@ catálogo e volume forem mantidos. O provisionamento é a sequência acima.
 
 ## 9. Qualidade dos dados — conciliação fonte × lake e alertas
 
-Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos dados**.
+Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Saúde e qualidade › Qualidade dos dados**.
 
 - **Todo dia, a partir de `RECONCILE_HOUR`**, o sistema escolhe um conjunto
   pequeno, um médio e um grande — os oficiais primeiro, depois quem está há mais
@@ -291,7 +294,7 @@ Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos d
   lake, QLD-07) contam como divergência.
 - **Ficam fora:** calculados, modo ao vivo e fontes que não são Postgres/MySQL
   (a tela mostra o motivo de cada um).
-- **Onde os alertas aparecem:** em **Operar › Saúde da plataforma** (histórico
+- **Onde os alertas aparecem:** em **Operar › Saúde e qualidade** (histórico
   com "marcar como visto"), no **sino do cabeçalho** (só admin) e, desde a R6
   (D-MON-3), no **Google Chat**. O webhook `{"text": …}` só o master cadastra,
   no cartão de alertas; sem ele, o alerta fica só no sistema ("sem canal").
@@ -319,6 +322,23 @@ Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos d
   = a identidade configurada junta linhas diferentes na compactação (QLD-04).
   Corrija a regra do conjunto ou recarregue (master) e use "Conciliar agora"
   para confirmar.
+- **Correção automática da madrugada** (26/11/2026, `modules/quality/autofix.ts`):
+  às `DQ_AUTOFIX_HOUR` (1h), o sistema faz sozinho o "Corrigir" da tela, que é
+  a recarga completa com a conferência na mesma carga. Corrige até 3 pequenos,
+  2 médios e 1 grande por noite e põe na fila do menor para o maior, então o
+  grande vai por último. Só entra o que a recarga conserta:
+  - a última conferência divergiu;
+  - o conjunto é incremental;
+  - a identidade é única na fonte e nenhuma linha fica fora por chave vazia;
+  - não houve correção automática dele nos últimos 7 dias.
+
+  Ficam fora os conjuntos `manual`, os pausados, os que estão carregando
+  naquela hora e os **com piso de datas**. Nesses, a recarga respeita o piso e
+  substitui o lake, então apagaria o histórico anterior a ele (QLD-05, aberto). Se a recarga não resolveu, a conferência diz isso numa nota, e o
+  conjunto espera 7 dias (e alguém analisar) antes de nova tentativa. Na tela,
+  essas conferências aparecem como "correção automática". O log do servidor
+  diz quem entrou e quem ficou fora, com o motivo (`[qualidade] correção
+  automática: …`).
 
 **Verificações contínuas (D-QLD-2 A)** — sem consultar a fonte, estado em
 `dataset_checks`, alerta só na troca de estado (passou a falhar / voltou):
@@ -481,6 +501,46 @@ O pacote também instala notebooks de análise (SQL + Python), definidos em `pac
 - **Código Python.** Escreva em `String.raw`: um `"\n"` num `print` viraria quebra de linha real e o Python recusaria.
 - **Valor do contrato.** `prata_voalle_contratos.valor_mensal` é o valor **atual**, sem histórico. Uma ponte de receita feita com ele não mostra reajuste.
 
+## SQL do Postgres nos calculados, notebooks e modelos (desde 26/11/2026)
+
+A consulta copiada do Voalle roda como está. Antes de validar e executar, o SQL
+passa por `modules/transform/pgCompat.ts`, que traduz só o que é do Postgres.
+O SQL escrito para o DuckDB passa intacto.
+
+- **Tabela com schema.** `erp.contracts` vira o conjunto de fonte daquela tabela,
+  entre os que a pessoa alcança. Tabela fora do lake (ou sem acesso) recusa e
+  explica. A mesma tabela em duas conexões pede o nome do conjunto.
+- **Funções:**
+  - `to_char` de data e de número, `to_date`, `to_timestamp(texto, molde)` e
+    `to_number`;
+  - `initcap` e `unaccent`;
+  - `format('%s')`, `concat`/`concat_ws` e `div`;
+  - `regexp_split_to_table`;
+  - `json(b)_array_elements[_text]` e `json(b)_extract_path[_text]`;
+  - `any('{a,b}')`, `::jsonb` e `::numeric` sem precisão.
+- **Idioma:** o mesmo do Voalle (pt_BR). Milhar com ponto, vírgula decimal, `L` = R$,
+  e nomes de mês e dia em português com `TM` (`TMMonth` → "Março"). Sem `TM`, os
+  nomes saem em inglês, como no Postgres. O gabarito é a saída do próprio Voalle,
+  fixada em `src/test/compatPostgres.test.ts`.
+- **Corrigido porque dava resultado diferente sem erro:**
+  - `~`, `~*`, `!~` e `!~*` procuram em qualquer parte do texto (no DuckDB o `~`
+    exigia casar o texto inteiro);
+  - `LIKE` com barra invertida escapa;
+  - `::numeric` deixou de cortar em 3 casas;
+  - número inteiro virando texto sai sem ".0" (`id::text`, `format`, `concat`).
+    O lake guarda toda coluna numérica como DOUBLE.
+- **Recusa com explicação, nunca aproxima:**
+  - molde que não é texto fixo;
+  - `TZ` e os sufixos `th`/`SP`;
+  - campos numéricos `S`, `MI`, `PR`, `V`, `EEEE` e `RN`;
+  - `format('%I')`/`%L`.
+- **Diferenças que continuam:**
+  - divisão entre inteiros dá decimal (`5/2` = 2,5; use `div(5, 2)`);
+  - `id || 'x'` dá "1.0x", porque o `||` não é traduzido; use `concat`;
+  - `SIMILAR TO` e `regexp_matches()` existem nos dois motores com significados
+    diferentes;
+  - os operadores `#>`/`#>>` não existem aqui; use `json(b)_extract_path`.
+
 ## Sugestões de melhoria (mesmo banco do Hub Apps, desde 21/11/2026)
 
 O menu **Sugestões** mostra as sugestões do Data Hub gravadas em `DB_Hub_Apps` (MariaDB 10.0.11.171), nas mesmas três tabelas do Hub Apps e do Splitters. Cada sistema filtra pela coluna `app_id`.
@@ -552,7 +612,13 @@ O dashia, que aparece em Painéis, precisa da **mesma** lista no nginx dele. O `
 
 ## 10. Recuperação rápida (ordem sugerida num incidente)
 
-0. **Operar › Saúde da plataforma** — "Precisa de atenção agora" lista, do
+**Saúde da API (desde 24/11/2026, D-12):**
+- `GET /api/health` confere o banco de metadados ao vivo e responde **503** com `metadataDb: "offline"` quando ele está fora. É esse endereço que o Zabbix deve vigiar (M-02).
+- `GET /api/health/live` só diz que o processo está de pé. É o do healthcheck do contêiner: com o estrito ali, um deploy com o banco fora deixaria o `datahub-web` sem subir.
+- Banco fora no boot: a API sobe degradada e um vigia tenta de novo a cada 15 s. Quando o banco volta, ela completa o boot sozinha (caches, conexões, masters). Não precisa reiniciar.
+- Banco caindo com a API no ar: as rotas que dependem dele respondem 503 até ele voltar. Quem precisa de papel (editor, admin) recebe "Banco de metadados indisponível", e não "sem permissão".
+
+0. **Operar › Saúde e qualidade** — "Precisa de atenção agora" lista, do
    estado atual, cargas pausadas ou falhando, conciliações divergentes,
    verificações falhando, envio ao Databricks com erro, endpoints fora e disco
    acima do limite; "Falhas nas últimas 24 h" responde o que quebrou à noite.

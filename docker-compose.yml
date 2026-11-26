@@ -131,6 +131,13 @@ services:
       DQ_SMALL_MAX_ROWS: ${DQ_SMALL_MAX_ROWS:-100000}
       DQ_LARGE_MIN_ROWS: ${DQ_LARGE_MIN_ROWS:-2000000}
       DQ_LARGE_WINDOW_DAYS: ${DQ_LARGE_WINDOW_DAYS:-60}
+      # Correcao automatica da madrugada: recarga completa + conferencia dos
+      # divergentes, ate N por faixa por noite (0 tira a faixa). false desliga.
+      DQ_AUTOFIX_ENABLED: ${DQ_AUTOFIX_ENABLED:-true}
+      DQ_AUTOFIX_HOUR: ${DQ_AUTOFIX_HOUR:-1}
+      DQ_AUTOFIX_SMALL: ${DQ_AUTOFIX_SMALL:-3}
+      DQ_AUTOFIX_MEDIUM: ${DQ_AUTOFIX_MEDIUM:-2}
+      DQ_AUTOFIX_LARGE: ${DQ_AUTOFIX_LARGE:-1}
       # Motor de consulta (DuckDB) — teto GLOBAL do DuckDB (não é por consulta).
       # 6GB dentro dos 16g da API deixa ~10g pro Node + embeddings + SO. Consultas
       # e cargas grandes derramam pra disco (spill) em vez de estourar (OOM).
@@ -224,7 +231,10 @@ services:
       # abre o socket em :: (dual-stack) --, mas bastaria alguem fixar
       # '0.0.0.0' no listen para esta checagem quebrar sem motivo aparente.
       # Foi o que derrubou o healthcheck do datahub-web (ver Dockerfile).
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/api/health']
+      # /api/health/live (processo de pe), nao /api/health: o estrito responde
+      # 503 com o banco fora e prenderia o datahub-web, que espera a API
+      # saudavel para subir (D-12). O Zabbix vigia o /api/health.
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/api/health/live']
       interval: 30s
       timeout: 3s
       retries: 3

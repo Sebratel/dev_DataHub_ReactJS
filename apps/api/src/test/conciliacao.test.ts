@@ -195,7 +195,9 @@ describe('Quem pode o quê', () => {
     assert.equal(cad.lastRun.status, 'match')
     assert.equal(cad.band, 'small')
     assert.equal(cad.ineligible, null)
-    assert.deepEqual(r.body.rules, { smallMaxRows: 100_000, largeMinRows: 2_000_000, largeWindowDays: 60, reconcileHour: 6 })
+    const { autofix, ...faixas } = r.body.rules
+    assert.deepEqual(faixas, { smallMaxRows: 100_000, largeMinRows: 2_000_000, largeWindowDays: 60, reconcileHour: 6 })
+    assert.equal(autofix.hour, 1)
   })
 
   it('o canal de alertas é do master; o endereço nunca volta inteiro', async () => {
@@ -278,5 +280,105 @@ describe('Rotina diária (D-QLD-3)', () => {
     const fim = await waitFor(async () => (await db.query(
       `select 1 from reconcile_runs where trigger = 'daily' and status not in ('queued', 'running')`)).rowCount, 30_000)
     assert.ok(fim, 'a conciliação da rotina diária não terminou')
+  })
+})
+
+describe('Correção automática da madrugada (pedido de 26/11/2026)', () => {
+  const regras = { smallMaxRows: 100, largeMinRows: 1_000, largeWindowDays: 60 }
+  const agora = new Date('2026-11-27T01:00:00')
+  const cand = (slug: string, rowCount: number, extra: Record<string, unknown> = {}) => ({
+    id: slug, slug, official: false, rowCount, lastRunAt: new Date('2026-11-20T06:00:00'),
+    lastAutofixAt: null, dupIdentity: 0, lostRows: 0, running: false, hasFloor: false, ...extra,
+  }) as import('../modules/quality/autofix.js').AutofixCandidate
+
+  it('cota por faixa (3 pequenos, 2 médios, 1 grande), do menor para o maior, oficiais primeiro', async () => {
+    const { chooseAutofix } = await import('../modules/quality/autofix.js')
+    const c = chooseAutofix([
+      cand('g1', 5_000), cand('g2', 9_000, { official: true }),
+      cand('m1', 500), cand('m2', 600), cand('m3', 700, { lastRunAt: new Date('2026-11-01T06:00:00') }),
+      cand('p1', 10), cand('p2', 20), cand('p3', 30), cand('p4', 40),
+    ], regras, { small: 3, medium: 2, large: 1 }, agora)
+    assert.deepEqual(c.chosen.map((x) => x.candidate.slug), ['p1', 'p2', 'p3', 'm3', 'm1', 'g2'],
+      'pequenos antes, grande por último; o oficial e a divergência mais antiga passam na frente')
+    assert.deepEqual(c.skipped.map((x) => x.slug).sort(), ['g1', 'm2', 'p4'])
+    assert.ok(c.skipped.every((x) => /cota/.test(x.reason)))
+  })
+
+  it('fica fora o que a recarga não conserta, o que já foi tentado na semana e o que está carregando', async () => {
+    const { chooseAutofix } = await import('../modules/quality/autofix.js')
+    const c = chooseAutofix([
+      cand('ident', 10, { dupIdentity: 3 }),
+      cand('vazia', 10, { lostRows: 4 }),
+      cand('semana', 10, { lastAutofixAt: new Date('2026-11-24T01:00:00') }),
+      cand('antiga', 10, { lastAutofixAt: new Date('2026-11-10T01:00:00') }),
+      cand('rodando', 10, { running: true }),
+      cand('piso', 10, { hasFloor: true }),
+    ], regras, { small: 3, medium: 2, large: 1 }, agora)
+    assert.deepEqual(c.chosen.map((x) => x.candidate.slug), ['antiga'], 'tentativa de mais de 7 dias volta a valer')
+    const motivo = Object.fromEntries(c.skipped.map((x) => [x.slug, x.reason]))
+    assert.match(motivo.piso, /histórico/, 'QLD-05: a recarga com piso apagaria o histórico')
+    assert.match(motivo.ident, /identidade repetida/)
+    assert.match(motivo.vazia, /chave vazia/)
+    assert.match(motivo.semana, /7 dias/)
+    assert.match(motivo.rodando, /carregando/)
+  })
+
+  it('recarrega e confere os divergentes: o apagado na fonte volta a bater, o empate de lote continua e diz por quê', async () => {
+    const { runNightlyAutofix } = await import('../modules/quality/autofix.js')
+    await fonteDb.query(`create table fonte.autofix_del as
+      select g as id, timestamp '2026-10-06' + (g || ' minutes')::interval as criado_em from generate_series(1, 12) g`)
+    const ds = await publishSource(conn, 'autofix_del', {
+      syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'],
+    })
+    await syncAndWait(ds.id)
+    await fonteDb.query('delete from fonte.autofix_del where id in (4, 5)')
+    assert.equal((await reconcileAndWait(ds.id)).status, 'diverged', 'o apagado na fonte precisa divergir antes')
+
+    // O mesmo defeito num conjunto com piso: a recarga cortaria o histórico (QLD-05).
+    await fonteDb.query(`create table fonte.autofix_piso as
+      select g as id, timestamp '2026-10-07' + (g || ' minutes')::interval as criado_em from generate_series(1, 8) g`)
+    const piso = await publishSource(conn, 'autofix_piso', {
+      syncMode: 'incremental', incrementalKey: 'criado_em', dedupeKeys: ['id'], syncSinceDays: 3650,
+    })
+    await syncAndWait(piso.id)
+    await fonteDb.query('delete from fonte.autofix_piso where id = 2')
+    assert.equal((await reconcileAndWait(piso.id)).status, 'diverged')
+
+    const pedidos = await runNightlyAutofix(new Date())
+    // Divergentes deste arquivo, todos pequenos: autofix_del e os do QLD-06 e
+    // QLD-01 entram; ficam fora o do QLD-07 (chave vazia: a recarga não o
+    // conserta) e o com piso.
+    const slugDe = async (tabela: string) =>
+      String((await db.query(`select slug from datasets where object_name = $1`, [tabela])).rows[0].slug)
+    assert.deepEqual([...pedidos].sort(),
+      [await slugDe('autofix_del'), await slugDe('clientes_del'), await slugDe('faturas_empate')].sort())
+    assert.deepEqual(await runNightlyAutofix(new Date()), [], 'a mesma noite não pode corrigir duas vezes')
+    assert.equal((await db.query(
+      `select 1 from reconcile_runs where dataset_id = $1 and trigger = 'autofix'`, [piso.id])).rowCount, 0)
+
+    const fimDe = async (tabela: string) => {
+      const run = await waitFor(async () => (await db.query(
+        `select r.* from reconcile_runs r join datasets d on d.id = r.dataset_id
+          where d.object_name = $1 and r.trigger = 'autofix' and r.status not in ('queued', 'running')`, [tabela])).rows[0], 60_000)
+      assert.ok(run, `a correção automática de ${tabela} não terminou`)
+      return run
+    }
+    const del = await fimDe('autofix_del')
+    assert.equal(del.status, 'match', JSON.stringify(del))
+    assert.deepEqual([Number(del.source_rows), Number(del.lake_rows)], [10, 10])
+    assert.equal(del.requested_by, 'correção automática')
+    assert.equal((await fimDe('clientes_del')).status, 'match')
+
+    // QLD-01 (empate na fronteira do lote) não é defeito de carga: a recarga
+    // relê pelo mesmo caminho e pula as mesmas linhas. A conferência avisa.
+    const empate = await fimDe('faturas_empate')
+    assert.equal(empate.status, 'diverged')
+    assert.ok((empate.notes as string[]).some((n) => /correção automática.*não é de carga/i.test(n)), JSON.stringify(empate.notes))
+
+    // A tela mostra a origem e as regras em vigor.
+    const h = await as('admin').get(`/api/v1/quality/datasets/${ds.id}/reconciliations`)
+    assert.equal(h.body.runs[0].trigger, 'autofix')
+    const o = await as('admin').get('/api/v1/quality/overview')
+    assert.deepEqual(o.body.rules.autofix, { enabled: true, hour: 1, small: 3, medium: 2, large: 1, cooldownDays: 7 })
   })
 })

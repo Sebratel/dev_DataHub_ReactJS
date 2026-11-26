@@ -2,7 +2,7 @@
 // troca o token do Hub Apps por uma sessão. Ver hubSso.ts.
 import { Router } from 'express'
 import { config } from '../../core/config.js'
-import { audit, provisionUser } from './middleware.js'
+import { audit, provisionUser, registraNegado } from './middleware.js'
 import { hubOnlyActive, hubSsoConfigured, issueHubSession, verifyHubLaunchToken } from './hubSso.js'
 
 export const authHubRouter = Router()
@@ -19,7 +19,11 @@ authHubRouter.post('/hub', async (req, res) => {
   if (!token) return res.status(400).json({ error: 'Token do Hub ausente.' })
 
   const r = verifyHubLaunchToken(token)
-  if (!r.ok) return res.status(r.status).json({ error: r.error })
+  if (!r.ok) {
+    // M-05: tentativa recusada fica registrada (sem e-mail: o token não foi aceito).
+    if (r.status !== 503) void registraNegado(req, null, 'token_do_hub', 'hub', { erro: r.error })
+    return res.status(r.status).json({ error: r.error })
+  }
 
   const user = await provisionUser({ email: r.email, name: r.name })
   const session = issueHubSession({ email: r.email, name: r.name })

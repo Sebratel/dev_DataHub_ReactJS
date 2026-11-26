@@ -76,10 +76,16 @@ function trainInWorker(input: TrainingInput): Promise<TrainingResult> {
   })
 }
 
-async function train(input: TrainingInput): Promise<TrainingResult> {
+// Recebe uma FÁBRICA da entrada, não a entrada: a matriz enviada ao worker é
+// transferida e fica vazia deste lado. Se o worker falhar depois disso, o plano
+// B (treinar em processo) precisa de uma matriz nova — reusar a transferida
+// estourava "Cannot perform Construct on a detached ArrayBuffer", e o treino
+// nunca concluía quando o worker não subia (é o que acontece sob o tsx: o
+// worker não resolve os imports .js → .ts).
+async function train(make: () => TrainingInput): Promise<TrainingResult> {
   if (!workerBroken) {
     try {
-      return await trainInWorker(input)
+      return await trainInWorker(make())
     } catch (e) {
       workerBroken = true
       console.warn(
@@ -88,7 +94,7 @@ async function train(input: TrainingInput): Promise<TrainingResult> {
       )
     }
   }
-  return runTraining(input)
+  return runTraining(make())
 }
 
 // ── Treino de um modelo ──────────────────────────────────────────────────
@@ -124,13 +130,13 @@ export function trainModel(
       const schema = buildSchema(rows, model.targetColumn, model.task, model.excludedColumns)
       const { matrix, skipped } = encodeMatrix(rows, schema)
 
-      const result = await train({
+      const result = await train(() => ({
         task: model.task,
         algorithm: model.algorithm as Algorithm,
         // encodeMatrix devolve SUBARRAY (vista sobre um buffer maior, porque as
         // linhas sem alvo válido foram descartadas). Transferir transfere o
-        // buffer inteiro, então copiamos para um do tamanho exato — é a única
-        // cópia da matriz em todo o caminho.
+        // buffer inteiro, então copiamos para um do tamanho exato. A matriz
+        // original fica aqui: é dela que o plano B monta outra cópia.
         x: new Float64Array(matrix.x),
         y: new Float64Array(matrix.y),
         rows: matrix.rows,
@@ -138,7 +144,7 @@ export function trainModel(
         featureNames: schema.features.map((f) => f.name),
         holdoutPct: model.holdoutPct,
         hyperparams: model.hyperparams,
-      })
+      }))
 
       const nextVersion = Number((await db.query(
         `select coalesce(max(version), 0) + 1 as v from ml_model_versions where model_id = $1`,
