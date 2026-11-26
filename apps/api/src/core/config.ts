@@ -75,10 +75,20 @@ export const config = {
     // entraria aqui.
     appId: (process.env.HUB_APP_ID || '').trim(),
     url: (process.env.HUB_APPS_URL || 'https://hub-apps.sebratel.net.br').trim(),
-    // Só pelo Hub: recusa login direto (Google) de quem não é master. Lido a
+    // Só pelo Hub: recusa login direto (Google) de todos, master inclusive. Lido a
     // cada uso para o teste poder ligar e desligar sem reiniciar o processo.
     get only(): boolean {
       return ['1', 'true', 'sim'].includes((process.env.HUB_ONLY || '').trim().toLowerCase())
+    },
+  },
+
+  // Menu "Painéis": o Data Hub passa a identidade para o dashia num token de
+  // 5 min. MESMO valor do DATAHUB_SSO_SECRET da stack do dashia, DIFERENTE do
+  // HUB_SSO_SECRET, 32+ caracteres. Vazio = Painéis sem entrada automática.
+  // Lido a cada uso (o teste liga e desliga). Nunca vai para o front.
+  dashia: {
+    get ssoSecret(): string {
+      return (process.env.DASHIA_SSO_SECRET || '').trim()
     },
   },
 

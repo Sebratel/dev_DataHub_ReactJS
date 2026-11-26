@@ -22,7 +22,7 @@ import { verifyFirebaseIdToken } from './firebaseToken.js'
 import { isMaster, anyMasterConfigured } from './masterAdmins.js'
 import { verifyHubSession, hubOnlyActive } from './hubSso.js'
 
-type Via = 'google' | 'hub'
+export type Via = 'google' | 'hub'
 const tokenCache = new Map<string, { user: SessionUser; exp: number; via: Via }>()
 const TOKEN_TTL_MS = 5 * 60 * 1000
 
@@ -140,7 +140,15 @@ function looksLikeJwt(token: string): boolean {
 
 async function getUserFromToken(token: string, req: Request): Promise<{ user: SessionUser; via: Via } | null> {
   const cached = tokenCache.get(token)
-  if (cached && cached.exp > Date.now()) return { user: cached.user, via: cached.via }
+  if (cached && cached.exp > Date.now()) {
+    // Só pelo Hub: sessão do Google já em cache também para de valer.
+    if (cached.via !== 'hub' && hubOnlyActive()) {
+      tokenCache.delete(token)
+      void registraNegado(req, cached.user.email, 'hub_only', 'google')
+      throw new HubOnlyError()
+    }
+    return { user: cached.user, via: cached.via }
+  }
 
   if (!looksLikeJwt(token)) return null
 
@@ -164,8 +172,9 @@ async function getUserFromToken(token: string, req: Request): Promise<{ user: Se
     void registraNegado(req, email, 'dominio', 'google')
     return null
   }
-  // Só pelo Hub: login direto fica para o master (caminho de recuperação).
-  if (hubOnlyActive() && !isMaster(email)) {
+  // Só pelo Hub: login direto recusado para todos, master inclusive. A porta
+  // de emergência (Hub fora) é HUB_ONLY=false + redeploy.
+  if (hubOnlyActive()) {
     void registraNegado(req, email, 'hub_only', 'google')
     throw new HubOnlyError()
   }
@@ -207,6 +216,8 @@ export function invalidateTokenCache(email?: string): void {
 declare module 'express-serve-static-core' {
   interface Request {
     user?: SessionUser
+    /** Origem da sessão: 'hub' (entrou pelo Hub Apps) ou 'google' (direto). */
+    authVia?: Via
   }
 }
 
@@ -258,6 +269,7 @@ export function requireAuth({ role }: { role?: 'master' | 'admin' | 'editor' } =
       return res.status(403).json({ error: 'Sua conta não tem permissão de edição.' })
     }
     req.user = user
+    req.authVia = sessao.via
     next()
   }
   // Nome legível no lugar de uma arrow anônima. Serve a duas coisas: o rastro

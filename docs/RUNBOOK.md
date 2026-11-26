@@ -586,11 +586,17 @@ No Hub Apps, vá em Administração › Apps › Data Hub e marque:
 - **Abrir dentro do Hub**. Essa opção depende da migration 20 do hub-api, que é aplicada sozinha quando ele sobe.
 
 **Bloquear o acesso por fora do Hub (`HUB_ONLY=true`)**
-- Quem não é master e tenta entrar direto pelo Google recebe `403 HUB_ONLY`. A tela de login mostra "Acesse pelo Hub Apps".
-- O **master** continua entrando direto. Esse é o caminho de recuperação se o Hub cair.
+- Quem tenta entrar direto pelo Google recebe `403 HUB_ONLY`, **master inclusive**. A tela de login mostra só "Acesse pelo Hub Apps", sem o botão do Google. Sessão do Google já aberta também para de valer.
+- O master entra pelo Hub como qualquer um e segue master dentro do sistema. **Porta de emergência** (Hub fora): `HUB_ONLY=false` na stack + redeploy.
 - A API pública (`/api/public/v1`, com token de API) e o `/api/health` não mudam.
 - Se `HUB_SSO_SECRET` ou `HUB_APP_ID` estiver vazio, `HUB_ONLY` é ignorado e o log de subida avisa. Sem esses dois valores ninguém entraria pelo Hub, então ligar o bloqueio trancaria todo mundo.
 - Ordem segura: primeiro ligue a entrada pelo Hub e confira que ela funciona. Depois mude `HUB_ONLY` para `true`.
+
+**Painéis (dashia) com o modo só pelo Hub (`DASHIA_SSO_SECRET`)**
+- A cada abertura do menu Painéis, a tela pede `POST /api/v1/dashia/sso-token` e abre o dashia com `?sso_token=`. O token (HS256, 300 s, uso único lá) leva `email`, `name` e `via` (origem da sessão do Data Hub: `hub` ou `google`).
+- `DASHIA_SSO_SECRET` aqui = `DATAHUB_SSO_SECRET` na stack do dashia (mesmo valor, 32+ caracteres, diferente do `HUB_SSO_SECRET`). Nunca vai para o front.
+- Vazio ou curto: a rota responde `503 DASHIA_SSO_OFF` e o quadro abre o dashia sem token, como antes.
+- Ordem segura: preencher `DASHIA_SSO_SECRET` (aqui) e `DATAHUB_SSO_SECRET` (dashia) com o mesmo valor, publicar as duas stacks e só então ligar `HUB_ONLY` no dashia. Com `HUB_ONLY` lá, só `via: hub` entra.
 
 **Quem pode exibir o Data Hub num quadro**
 

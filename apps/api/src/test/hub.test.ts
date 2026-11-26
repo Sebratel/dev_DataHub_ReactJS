@@ -132,19 +132,37 @@ describe('modo só pelo Hub (HUB_ONLY)', () => {
     assert.equal((await me(firebaseDe(USERS.viewer))).status, 200)
   })
 
-  it('HUB-12 ligado: login direto de quem não é master recebe 403 HUB_ONLY', async () => {
+  it('HUB-12 ligado: login direto recebe 403 HUB_ONLY, sem exceção de papel', async () => {
     process.env.HUB_ONLY = 'true'
     const r = await me(firebaseDe(USERS.viewer))
     assert.equal(r.status, 403)
     assert.equal(r.body.code, 'HUB_ONLY')
     assert.match(r.body.error!, /Hub Apps/)
-    // admin que não é master também passa pelo Hub
+    // admin também passa pelo Hub
     assert.equal((await me(firebaseDe(USERS.admin))).status, 403)
   })
 
-  it('HUB-13 ligado: o master continua entrando direto (caminho de recuperação)', async () => {
+  it('HUB-13 ligado: o master também não entra direto; pelo Hub entra como master', async () => {
     process.env.HUB_ONLY = 'true'
-    assert.equal((await me(firebaseDe(USERS.master))).status, 200)
+    const direto = await me(firebaseDe(USERS.master))
+    assert.equal(direto.status, 403)
+    assert.equal(direto.body.code, 'HUB_ONLY')
+    const r = await trocar(tokenDoHub({ email: USERS.master }))
+    assert.equal(r.status, 200)
+    const m = await me(r.body.token!)
+    assert.equal(m.status, 200)
+    const u = m.body.user as { email: string; master?: boolean }
+    assert.equal(u.email, USERS.master)
+    assert.equal(u.master, true) // o papel de master segue valendo dentro do sistema
+  })
+
+  it('HUB-15 ligado: sessão do Google aberta antes (em cache) para de valer', async () => {
+    const t = firebaseDe(USERS.master)
+    assert.equal((await me(t)).status, 200)
+    process.env.HUB_ONLY = 'true'
+    const r = await me(t)
+    assert.equal(r.status, 403)
+    assert.equal(r.body.code, 'HUB_ONLY')
   })
 
   it('HUB-14 ligado: quem entra pelo Hub trabalha normalmente', async () => {
