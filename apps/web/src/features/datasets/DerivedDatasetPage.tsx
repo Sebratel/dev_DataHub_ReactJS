@@ -1,4 +1,4 @@
-// Criação/edição de Conjunto DERIVADO: SQL (DuckDB) sobre os conjuntos já
+// Criação/edição de Conjunto DERIVADO: SQL (DuckDB, com tradução do Postgres) sobre os conjuntos já
 // sincronizados no lake — joins e tratamentos sem tocar nas fontes.
 // Rota: /datasets/derived/new (criar) e /datasets/derived/new?slug=x (editar).
 import { useEffect, useMemo, useState } from 'react'
@@ -154,8 +154,11 @@ export default function DerivedDatasetPage() {
             <div className="mt-4">
               <div className="mb-1 flex items-center justify-between">
                 <span className="text-xs font-medium text-zinc-500">Consulta SQL</span>
-                <span className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] font-medium text-secondary dark:bg-zinc-800">
-                  somente SELECT · DuckDB
+                <span
+                  title={'Pode colar a consulta do Voalle: erp.tabela, to_char, ~, jsonb e outras funções do Postgres são traduzidas. ' +
+                    'Diferença que fica: divisão entre inteiros dá decimal (5/2 = 2,5).'}
+                  className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] font-medium text-secondary dark:bg-zinc-800">
+                  somente SELECT · aceita SQL do Postgres
                 </span>
               </div>
               {sqlTravado && (

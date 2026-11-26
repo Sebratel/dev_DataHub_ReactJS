@@ -501,6 +501,46 @@ O pacote também instala notebooks de análise (SQL + Python), definidos em `pac
 - **Código Python.** Escreva em `String.raw`: um `"\n"` num `print` viraria quebra de linha real e o Python recusaria.
 - **Valor do contrato.** `prata_voalle_contratos.valor_mensal` é o valor **atual**, sem histórico. Uma ponte de receita feita com ele não mostra reajuste.
 
+## SQL do Postgres nos calculados, notebooks e modelos (desde 26/11/2026)
+
+A consulta copiada do Voalle roda como está. Antes de validar e executar, o SQL
+passa por `modules/transform/pgCompat.ts`, que traduz só o que é do Postgres.
+O SQL escrito para o DuckDB passa intacto.
+
+- **Tabela com schema.** `erp.contracts` vira o conjunto de fonte daquela tabela,
+  entre os que a pessoa alcança. Tabela fora do lake (ou sem acesso) recusa e
+  explica. A mesma tabela em duas conexões pede o nome do conjunto.
+- **Funções:**
+  - `to_char` de data e de número, `to_date`, `to_timestamp(texto, molde)` e
+    `to_number`;
+  - `initcap` e `unaccent`;
+  - `format('%s')`, `concat`/`concat_ws` e `div`;
+  - `regexp_split_to_table`;
+  - `json(b)_array_elements[_text]` e `json(b)_extract_path[_text]`;
+  - `any('{a,b}')`, `::jsonb` e `::numeric` sem precisão.
+- **Idioma:** o mesmo do Voalle (pt_BR). Milhar com ponto, vírgula decimal, `L` = R$,
+  e nomes de mês e dia em português com `TM` (`TMMonth` → "Março"). Sem `TM`, os
+  nomes saem em inglês, como no Postgres. O gabarito é a saída do próprio Voalle,
+  fixada em `src/test/compatPostgres.test.ts`.
+- **Corrigido porque dava resultado diferente sem erro:**
+  - `~`, `~*`, `!~` e `!~*` procuram em qualquer parte do texto (no DuckDB o `~`
+    exigia casar o texto inteiro);
+  - `LIKE` com barra invertida escapa;
+  - `::numeric` deixou de cortar em 3 casas;
+  - número inteiro virando texto sai sem ".0" (`id::text`, `format`, `concat`).
+    O lake guarda toda coluna numérica como DOUBLE.
+- **Recusa com explicação, nunca aproxima:**
+  - molde que não é texto fixo;
+  - `TZ` e os sufixos `th`/`SP`;
+  - campos numéricos `S`, `MI`, `PR`, `V`, `EEEE` e `RN`;
+  - `format('%I')`/`%L`.
+- **Diferenças que continuam:**
+  - divisão entre inteiros dá decimal (`5/2` = 2,5; use `div(5, 2)`);
+  - `id || 'x'` dá "1.0x", porque o `||` não é traduzido; use `concat`;
+  - `SIMILAR TO` e `regexp_matches()` existem nos dois motores com significados
+    diferentes;
+  - os operadores `#>`/`#>>` não existem aqui; use `json(b)_extract_path`.
+
 ## Sugestões de melhoria (mesmo banco do Hub Apps, desde 21/11/2026)
 
 O menu **Sugestões** mostra as sugestões do Data Hub gravadas em `DB_Hub_Apps` (MariaDB 10.0.11.171), nas mesmas três tabelas do Hub Apps e do Splitters. Cada sistema filtra pela coluna `app_id`.
