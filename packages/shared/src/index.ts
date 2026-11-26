@@ -413,7 +413,8 @@ export interface ReconcileRun {
   datasetId: string
   slug: string
   name: string
-  trigger: 'daily' | 'manual'
+  /** 'autofix' = a correção automática da madrugada (recarga completa + conferência). */
+  trigger: 'daily' | 'manual' | 'autofix'
   band: ReconcileBand | null
   status: ReconcileStatus
   /** 'per-day' separa por dia da chave de data; 'total' compara só o total. */
@@ -479,7 +480,11 @@ export interface QualityOverview {
   /** Só as que estão falhando agora — o "ok" é o normal e não precisa de lista. */
   failingChecks: DatasetCheckRow[]
   /** Faixas e horário em vigor (vêm da stack; ainda a confirmar pelo comitê). */
-  rules: { smallMaxRows: number; largeMinRows: number; largeWindowDays: number; reconcileHour: number }
+  rules: {
+    smallMaxRows: number; largeMinRows: number; largeWindowDays: number; reconcileHour: number
+    /** Correção automática da madrugada: hora e quantos por faixa, por noite. */
+    autofix: { enabled: boolean; hour: number; small: number; medium: number; large: number; cooldownDays: number }
+  }
 }
 
 export interface AlertSettingsView {

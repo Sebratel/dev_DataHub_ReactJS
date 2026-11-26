@@ -48,6 +48,11 @@ function situacaoDe(d: QualityDatasetRow): Situacao {
   return s
 }
 
+/** Quem pediu a conferência, em poucas palavras (lista e histórico). */
+const ORIGEM: Record<ReconcileRun['trigger'], string | null> = {
+  daily: 'rotina', autofix: 'correção automática', manual: null,
+}
+
 const fmt = (n: number | null | undefined) => (n == null ? '—' : n.toLocaleString('pt-BR'))
 const fmtDia = (d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : d)
 const quando = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pt-BR') : '—')
@@ -239,6 +244,12 @@ export default function QualityPage() {
               Faixas em vigor: pequeno até {fmt(r.smallMaxRows)} linhas · médio até {fmt(r.largeMinRows - 1)} ·
               grande a partir de {fmt(r.largeMinRows)}, que confere só os últimos {r.largeWindowDays} dias.
               Antes de conferir, o conjunto carrega: a comparação é com o lake recém-atualizado.
+              {r.autofix.enabled && (
+                <> Toda madrugada, à {r.autofix.hour}h, a correção automática recarrega da fonte e confere de novo
+                  até {r.autofix.small} pequeno(s), {r.autofix.medium} médio(s) e {r.autofix.large} grande(s) que
+                  divergem. Entram só os incrementais que a recarga conserta, sem piso de datas, e cada um
+                  no máximo uma vez a cada {r.autofix.cooldownDays} dias.</>
+              )}
             </p>
           )}
           {Object.entries(avisos).map(([id, a]) => (
@@ -365,7 +376,7 @@ function Linha({ d, aberto, onToggle, pedindo, podeCorrigir, onConciliar, onCorr
           {s === 'out'
             ? <span className="truncate text-[11px] text-zinc-500">{d.ineligible}</span>
             : run && <span className="truncate text-[11px] tabular-nums text-zinc-500">
-              {lagSince(hoursSince(run.finishedAt ?? run.createdAt))}{run.trigger === 'daily' ? ' · rotina' : ''}
+              {lagSince(hoursSince(run.finishedAt ?? run.createdAt))}{ORIGEM[run.trigger] ? ` · ${ORIGEM[run.trigger]}` : ''}
             </span>}
         </span>
       </Td>
@@ -524,7 +535,7 @@ function Detalhe({ d, isMaster, pedindo, onConciliar, onCorrigir }: {
                     <Pill tone={SITUACAO[s].tone}>{SITUACAO[s].label}</Pill>
                     <span>{quando(x.finishedAt ?? x.createdAt)}</span>
                     {x.sourceRows != null && <span>· fonte {fmt(x.sourceRows)} × lake {fmt(x.lakeRows)}</span>}
-                    <span className="text-zinc-400">· {x.trigger === 'daily' ? 'rotina' : x.requestedBy}</span>
+                    <span className="text-zinc-400">· {ORIGEM[x.trigger] ?? x.requestedBy}</span>
                   </li>
                 )
               })}

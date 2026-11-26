@@ -17,6 +17,12 @@ export function mariaFaltando(): string[] {
     .map((k) => `DATAHUB_MARIA_${k}`)
 }
 
+/** Inteiro >= 0 de uma variável; vazia ou inválida cai no padrão (0 vale). */
+function contagem(v: string | undefined, padrao: number): number {
+  const n = v == null || v.trim() === '' ? NaN : Math.floor(Number(v))
+  return Number.isFinite(n) && n >= 0 ? n : padrao
+}
+
 function dbDriver(v: string | undefined): 'postgres' | 'mariadb' {
   const d = (v || 'postgres').trim().toLowerCase()
   if (d !== 'postgres' && d !== 'mariadb') {
@@ -158,6 +164,20 @@ export const config = {
     // Conjunto grande confere só os últimos N dias, pela chave indexada — o
     // histórico inteiro de uma tabela de 15,9 milhões pesaria na fonte.
     largeWindowDays: Math.max(1, Number(process.env.DQ_LARGE_WINDOW_DAYS) || 60),
+    // Correção automática da madrugada (pedido de 26/11/2026): o "Corrigir" da
+    // tela — recarga completa + conferência — feito sozinho, num número
+    // limitado de conjuntos por noite, para não pesar na fonte nem prender a
+    // fila no expediente. Ver modules/quality/autofix.ts.
+    autofix: {
+      enabled: (process.env.DQ_AUTOFIX_ENABLED ?? 'true').toLowerCase() !== 'false',
+      // 1h: termina antes da janela diária (ETL_HOUR, 3h) na maioria das noites
+      // e muito antes do expediente, mesmo com a recarga de um conjunto grande.
+      hour: Math.min(23, contagem(process.env.DQ_AUTOFIX_HOUR, 1)),
+      // Quantos por faixa, por noite. 0 tira a faixa da correção automática.
+      small: contagem(process.env.DQ_AUTOFIX_SMALL, 3),
+      medium: contagem(process.env.DQ_AUTOFIX_MEDIUM, 2),
+      large: contagem(process.env.DQ_AUTOFIX_LARGE, 1),
+    },
   },
 
   // Publicação no Databricks — envio de saída, best-effort, depois da

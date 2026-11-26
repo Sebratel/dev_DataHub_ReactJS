@@ -20,6 +20,7 @@ import { orderDerived } from '../transform/derive.js'
 import { reindexEmbeddings } from '../ai/embeddings.js'
 import { runDueHealthChecks } from '../../connectors/healthChecks.js'
 import { runDailyPick } from '../quality/reconcile.js'
+import { runNightlyAutofix } from '../quality/autofix.js'
 import { runStaleChecks } from '../quality/checks.js'
 import { purgeExpiredTrash } from '../catalog/trash.js'
 import { purgeExpiredConversations } from '../ai/retention.js'
@@ -102,6 +103,13 @@ async function tick(): Promise<void> {
     if (now.getHours() >= config.quality.reconcileHour) {
       void runDailyPick(now).catch((e) =>
         console.warn(`[qualidade] escolha diária falhou: ${(e as Error).message}`))
+    }
+    // Correção automática dos divergentes, de madrugada. "===" e não ">=": ao
+    // contrário da escolha diária, recarga completa fora da hora marcada cairia
+    // no expediente — se o servidor estava fora, fica para a noite seguinte.
+    if (config.quality.autofix.enabled && now.getHours() === config.quality.autofix.hour) {
+      void runNightlyAutofix(now).catch((e) =>
+        console.warn(`[qualidade] correção automática falhou: ${(e as Error).message}`))
     }
     // Lixeira (D-DSP-3): o que passou de 30 dias é excluído de vez. Idempotente,
     // então rodar a cada hora só garante que o prazo vence no dia certo.

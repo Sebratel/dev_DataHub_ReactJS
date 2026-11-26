@@ -162,6 +162,9 @@ Para deixar a ingestão mais gentil: lote menor + pausa maior (ex.:
 | `DQ_SMALL_MAX_ROWS` | `100000` | Até aqui o conjunto é "pequeno" (D-QLD-3) |
 | `DQ_LARGE_MIN_ROWS` | `2000000` | A partir daqui é "grande" |
 | `DQ_LARGE_WINDOW_DAYS` | `60` | Quantos dias o conjunto grande confere |
+| `DQ_AUTOFIX_ENABLED` | `true` | Liga a correção automática da madrugada |
+| `DQ_AUTOFIX_HOUR` | `1` | Hora da correção automática (só nessa hora; não recupera depois) |
+| `DQ_AUTOFIX_SMALL` / `_MEDIUM` / `_LARGE` | `3` / `2` / `1` | Quantos divergentes por faixa, por noite (0 tira a faixa) |
 
 > Variável nova **tem** que entrar no bloco `environment` do `docker-compose.yml`:
 > o que não estiver listado lá não chega ao contêiner, por mais preenchido que
@@ -319,6 +322,23 @@ Decisão D-QLD-3 do comitê (R4, 30/10/2026). Tela: **Operar › Qualidade dos d
   = a identidade configurada junta linhas diferentes na compactação (QLD-04).
   Corrija a regra do conjunto ou recarregue (master) e use "Conciliar agora"
   para confirmar.
+- **Correção automática da madrugada** (26/11/2026, `modules/quality/autofix.ts`):
+  às `DQ_AUTOFIX_HOUR` (1h), o sistema faz sozinho o "Corrigir" da tela, que é
+  a recarga completa com a conferência na mesma carga. Corrige até 3 pequenos,
+  2 médios e 1 grande por noite e põe na fila do menor para o maior, então o
+  grande vai por último. Só entra o que a recarga conserta:
+  - a última conferência divergiu;
+  - o conjunto é incremental;
+  - a identidade é única na fonte e nenhuma linha fica fora por chave vazia;
+  - não houve correção automática dele nos últimos 7 dias.
+
+  Ficam fora os conjuntos `manual`, os pausados, os que estão carregando
+  naquela hora e os **com piso de datas**. Nesses, a recarga respeita o piso e
+  substitui o lake, então apagaria o histórico anterior a ele (QLD-05, aberto). Se a recarga não resolveu, a conferência diz isso numa nota, e o
+  conjunto espera 7 dias (e alguém analisar) antes de nova tentativa. Na tela,
+  essas conferências aparecem como "correção automática". O log do servidor
+  diz quem entrou e quem ficou fora, com o motivo (`[qualidade] correção
+  automática: …`).
 
 **Verificações contínuas (D-QLD-2 A)** — sem consultar a fonte, estado em
 `dataset_checks`, alerta só na troca de estado (passou a falhar / voltou):

@@ -19,7 +19,7 @@ import { getConnector } from '../../connectors/registry.js'
 import { requireAuth, audit } from '../auth/middleware.js'
 import { alertText, postWebhook, validateWebhookUrl, webhookHint } from '../alerts/notify.js'
 import { requestReconcile, rules } from './reconcile.js'
-import { bandOf, ineligibleReason } from './reconcilePlan.js'
+import { AUTOFIX_COOLDOWN_DAYS, bandOf, ineligibleReason } from './reconcilePlan.js'
 
 export const qualityRouter = Router()
 
@@ -106,7 +106,10 @@ qualityRouter.get('/overview', ...adminOnly, async (req, res) => {
   const body: QualityOverview = {
     datasets,
     failingChecks,
-    rules: { ...rules(), reconcileHour: config.quality.reconcileHour },
+    rules: {
+      ...rules(), reconcileHour: config.quality.reconcileHour,
+      autofix: { ...config.quality.autofix, cooldownDays: AUTOFIX_COOLDOWN_DAYS },
+    },
   }
   res.json(body)
 })

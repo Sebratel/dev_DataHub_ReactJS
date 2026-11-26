@@ -73,6 +73,9 @@ const SQL_KINDS = new Set(['postgres', 'mysql'])
 // acusaria uma diferença que não é perda de linha.
 export const MENOR_DATA = '1900-01-01 00:00:00.000'
 
+/** Dias sem nova tentativa depois de uma correção automática (autofix.ts). */
+export const AUTOFIX_COOLDOWN_DAYS = 7
+
 export function bandOf(rowCount: number | null, r: PlanRules): ReconcileBand {
   const n = Number(rowCount ?? 0)
   if (n <= r.smallMaxRows) return 'small'
