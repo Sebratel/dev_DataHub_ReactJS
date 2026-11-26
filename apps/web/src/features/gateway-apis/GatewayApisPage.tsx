@@ -7,6 +7,7 @@
 //
 //   Visão geral    o que está no ar, a fila única de aprovação, o consumo do dia
 //   APIs           catálogo único: leitura (/p), escrita (/w), serviço interno (/gw)
+//   Conjuntos      só admin: quais conjuntos saem por fora, quem pode e quem leu
 //   Tokens         só admin (D-SEG-3): escopo, limites e uso num painel só
 //   Como conectar  Power BI, Sheets, Excel, n8n, REST
 //
@@ -27,13 +28,14 @@ import { Dialog, BTN_SECONDARY, errMsg, type Credential } from './shared'
 import ApisTab, { toItems, type CatalogItem, type ApiKind } from './ApisTab'
 import OverviewTab from './OverviewTab'
 import TokensTab from './TokensTab'
+import DatasetsTab from './DatasetsTab'
 import ConnectTab from './ConnectTab'
 import ApiBuilder from './ApiBuilder'
 import UpstreamDialog from './UpstreamDialog'
 import TokenDialog, { type TokenSaved } from './TokenDialog'
 
-type TabKey = 'visao' | 'apis' | 'tokens' | 'conectar'
-const HASH_TABS: TabKey[] = ['apis', 'tokens', 'conectar']
+type TabKey = 'visao' | 'apis' | 'conjuntos' | 'tokens' | 'conectar'
+const HASH_TABS: TabKey[] = ['apis', 'conjuntos', 'tokens', 'conectar']
 
 export default function GatewayApisPage() {
   const user = useAuthStore((s) => s.user)
@@ -48,7 +50,7 @@ export default function GatewayApisPage() {
   // antiga /integrations mostrava para essa pessoa).
   const raw = hash.replace('#', '') as TabKey
   let tab: TabKey = HASH_TABS.includes(raw) ? raw : 'visao'
-  if (tab === 'tokens' && !isAdmin) tab = 'conectar'
+  if ((tab === 'tokens' || tab === 'conjuntos') && !isAdmin) tab = 'conectar'
   const go = (t: TabKey) => navigate({ hash: t === 'visao' ? '' : t }, { replace: true })
 
   const [products, setProducts] = useState<ApiProduct[]>([])
@@ -189,7 +191,11 @@ export default function GatewayApisPage() {
   const tabs: { key: TabKey; label: string; icon: typeof Webhook; count?: number }[] = [
     { key: 'visao', label: 'Visão geral', icon: LayoutGrid },
     { key: 'apis', label: 'APIs', icon: Webhook, count: items.length },
-    ...(isAdmin ? [{ key: 'tokens' as const, label: 'Tokens', icon: KeyRound, count: credentials?.length }] : []),
+    // Conjuntos e Tokens mostram token: só admin (D-SEG-3).
+    ...(isAdmin ? [
+      { key: 'conjuntos' as const, label: 'Conjuntos', icon: Database },
+      { key: 'tokens' as const, label: 'Tokens', icon: KeyRound, count: credentials?.length },
+    ] : []),
     { key: 'conectar', label: 'Como conectar', icon: Link2 },
   ]
 
@@ -270,6 +276,8 @@ export default function GatewayApisPage() {
       ) : tab === 'apis' ? (
         <ApisTab items={items} isAdmin={isAdmin} me={me} onNew={() => setChoosing(true)}
           onEdit={edit} onToggle={(it) => void toggle(it)} onDelete={(it) => void remove(it)} />
+      ) : tab === 'conjuntos' ? (
+        <DatasetsTab onGoTokens={() => go('tokens')} />
       ) : tab === 'tokens' ? (
         <TokensTab credentials={credentials} calls={calls} me={me} busyId={busyId}
           onNew={() => setTokenEdit('new')} onEdit={setTokenEdit}

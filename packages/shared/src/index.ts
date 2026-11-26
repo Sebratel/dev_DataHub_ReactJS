@@ -679,6 +679,30 @@ export interface GatewayUsage {
   calls_today: number
 }
 
+/** Um conjunto do ponto de vista de quem consome por fora (Gateway › Conjuntos). */
+export interface GatewayDatasetUsage {
+  id: string
+  slug: string
+  name: string
+  official: boolean
+  /** APIs de leitura (/p) ativas que servem este conjunto. */
+  apis: { slug: string; name: string }[]
+  /** Tokens ativos com este conjunto no escopo (os de escopo "todos" ficam à parte). */
+  tokens: { id: string; name: string }[]
+  /** Leituras por token que deram certo, últimos 30 dias. */
+  calls30d: number
+  consumers30d: { name: string; calls: number }[]
+  lastReadAt: string | null
+}
+
+export interface GatewayDatasetsOverview {
+  /** Primeiro dia com leitura por token registrada; antes disso, "sem uso" não quer dizer nada. */
+  trackingSince: string | null
+  /** Tokens ativos sem escopo: leem todos os conjuntos. */
+  allAccessTokens: { id: string; name: string }[]
+  datasets: GatewayDatasetUsage[]
+}
+
 // ── Insight de widget ─────────────────────────────────────────
 // Leitura de IA sobre UM gráfico: o que os números significam.
 export interface WidgetInsight {
