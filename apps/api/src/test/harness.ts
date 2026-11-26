@@ -265,6 +265,23 @@ export async function waitFor<T>(fn: () => Promise<T | null | undefined | false>
 }
 
 /**
+ * Espera a fila de cargas parar DE VEZ: nada carregando e nada esperando, em
+ * 4 leituras seguidas. Um calculado que já materializou uma vez pode ser
+ * refeito pela cascata quando outra fonte termina — e quem lê o Parquet nesse
+ * instante pega a parte antiga já apagada ("Cannot open file … No such file").
+ * A cascata enfileira o dependente logo DEPOIS que a carga termina, então um
+ * instante de fila vazia não basta. Foi o que derrubou o api-mariadb do PR #27.
+ */
+export async function waitQueueIdle(ms = 120_000): Promise<boolean> {
+  const { currentSync, pendingSyncs } = await import('../modules/sync/ingest.js')
+  let calmas = 0
+  return !!(await waitFor(async () => {
+    calmas = !currentSync() && !pendingSyncs().length ? calmas + 1 : 0
+    return calmas >= 4
+  }, ms))
+}
+
+/**
  * Conjunto de FONTE já sincronizado: linha no catálogo, campos com as marcas
  * de sensível/oculto e o Parquet no lake — o estado que uma carga deixaria.
  */

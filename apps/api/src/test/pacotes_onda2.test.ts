@@ -15,7 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, db, shutdown, connectTestSource, fonteDb, waitFor, lakeRows } from './harness.js'
+import { as, db, shutdown, connectTestSource, fonteDb, waitFor, waitQueueIdle, lakeRows } from './harness.js'
 import { ONDA_2 } from '../modules/catalog/packs/onda2.js'
 import { ONDA_1 } from '../modules/catalog/packs/onda1.js'
 
@@ -145,6 +145,8 @@ describe('Pacotes de conjuntos: onda 2 (campo)', () => {
       `select d.slug, (select error from sync_runs s where s.dataset_id = d.id order by started_at desc limit 1) as erro
          from datasets d where d.kind = 'derived' and d.slug = any($1) and d.last_sync_at is null`, [slugs])).rows
     assert.ok(prontos, `não materializaram: ${JSON.stringify(faltam)}`)
+    // A cascata pode refazer um calculado enquanto o próximo teste lê o Parquet (ver waitQueueIdle).
+    assert.ok(await waitQueueIdle(), 'a fila de cargas não parou')
   })
 
   it('protocolos: grupos, exclusões e horas até concluir', async () => {
