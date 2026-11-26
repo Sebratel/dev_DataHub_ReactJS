@@ -22,7 +22,7 @@ import { verifyFirebaseIdToken } from './firebaseToken.js'
 import { isMaster, anyMasterConfigured } from './masterAdmins.js'
 import { verifyHubSession, hubOnlyActive } from './hubSso.js'
 
-type Via = 'google' | 'hub'
+export type Via = 'google' | 'hub'
 const tokenCache = new Map<string, { user: SessionUser; exp: number; via: Via }>()
 const TOKEN_TTL_MS = 5 * 60 * 1000
 
@@ -216,6 +216,8 @@ export function invalidateTokenCache(email?: string): void {
 declare module 'express-serve-static-core' {
   interface Request {
     user?: SessionUser
+    /** Origem da sessão: 'hub' (entrou pelo Hub Apps) ou 'google' (direto). */
+    authVia?: Via
   }
 }
 
@@ -267,6 +269,7 @@ export function requireAuth({ role }: { role?: 'master' | 'admin' | 'editor' } =
       return res.status(403).json({ error: 'Sua conta não tem permissão de edição.' })
     }
     req.user = user
+    req.authVia = sessao.via
     next()
   }
   // Nome legível no lugar de uma arrow anônima. Serve a duas coisas: o rastro

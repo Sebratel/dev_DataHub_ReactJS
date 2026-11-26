@@ -592,6 +592,12 @@ No Hub Apps, vá em Administração › Apps › Data Hub e marque:
 - Se `HUB_SSO_SECRET` ou `HUB_APP_ID` estiver vazio, `HUB_ONLY` é ignorado e o log de subida avisa. Sem esses dois valores ninguém entraria pelo Hub, então ligar o bloqueio trancaria todo mundo.
 - Ordem segura: primeiro ligue a entrada pelo Hub e confira que ela funciona. Depois mude `HUB_ONLY` para `true`.
 
+**Painéis (dashia) com o modo só pelo Hub (`DASHIA_SSO_SECRET`)**
+- A cada abertura do menu Painéis, a tela pede `POST /api/v1/dashia/sso-token` e abre o dashia com `?sso_token=`. O token (HS256, 300 s, uso único lá) leva `email`, `name` e `via` (origem da sessão do Data Hub: `hub` ou `google`).
+- `DASHIA_SSO_SECRET` aqui = `DATAHUB_SSO_SECRET` na stack do dashia (mesmo valor, 32+ caracteres, diferente do `HUB_SSO_SECRET`). Nunca vai para o front.
+- Vazio ou curto: a rota responde `503 DASHIA_SSO_OFF` e o quadro abre o dashia sem token, como antes.
+- Ordem segura: preencher `DASHIA_SSO_SECRET` (aqui) e `DATAHUB_SSO_SECRET` (dashia) com o mesmo valor, publicar as duas stacks e só então ligar `HUB_ONLY` no dashia. Com `HUB_ONLY` lá, só `via: hub` entra.
+
 **Quem pode exibir o Data Hub num quadro**
 
 A lista fica no `docker/nginx.conf`, no cabeçalho `Content-Security-Policy: frame-ancestors`. Hoje ela libera o próprio Data Hub, `hub-apps.sebratel.net.br` e `hub-apps-staging.sebratel.net.br`.

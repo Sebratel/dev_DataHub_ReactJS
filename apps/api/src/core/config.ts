@@ -82,6 +82,16 @@ export const config = {
     },
   },
 
+  // Menu "Painéis": o Data Hub passa a identidade para o dashia num token de
+  // 5 min. MESMO valor do DATAHUB_SSO_SECRET da stack do dashia, DIFERENTE do
+  // HUB_SSO_SECRET, 32+ caracteres. Vazio = Painéis sem entrada automática.
+  // Lido a cada uso (o teste liga e desliga). Nunca vai para o front.
+  dashia: {
+    get ssoSecret(): string {
+      return (process.env.DASHIA_SSO_SECRET || '').trim()
+    },
+  },
+
   // Banco de METADADOS do hub (catálogo, usuários, dashboards…).
   // DATAHUB_DB_DRIVER escolhe ONDE ele está: 'postgres' (padrão, o de sempre)
   // ou 'mariadb' (D-DSP-4). Os dois conjuntos de variáveis convivem na stack —

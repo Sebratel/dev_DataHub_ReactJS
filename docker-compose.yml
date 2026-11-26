@@ -198,6 +198,10 @@ services:
       HUB_SSO_SECRET: ${HUB_SSO_SECRET:-}
       HUB_APP_ID: ${HUB_APP_ID:-}
       HUB_ONLY: ${HUB_ONLY:-false}
+      # Menu Paineis (dashia no quadro): token de 5 min com a identidade. MESMO
+      # valor do DATAHUB_SSO_SECRET da stack do dashia, DIFERENTE do HUB_SSO_SECRET,
+      # 32+ caracteres. Vazio = Paineis abrem o dashia sem entrada automatica.
+      DASHIA_SSO_SECRET: ${DASHIA_SSO_SECRET:-}
       # Publicacao no Databricks (piloto Native/Matrix). O hub consolida o
       # Parquet do lake e ENVIA; o Databricks nunca alcanca os bancos daqui.
       # Desligada por padrao: sem isto ligado, nenhum envio sai.
