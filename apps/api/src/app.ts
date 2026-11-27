@@ -29,6 +29,7 @@ import { dashboardsRouter } from './modules/dashboards/dashboardsRouter.js'
 import { aiWidgetsRouter } from './modules/dashboards/aiWidgetsRouter.js'
 import { aiRouter } from './modules/ai/aiRouter.js'
 import { aiProvidersRouter } from './modules/ai/aiProvidersRouter.js'
+import { knowledgeRouter, evaluationRouter } from './modules/ai/knowledgeRouter.js'
 import { credentialsRouter, publicRouter } from './modules/integrations/integrationsRouter.js'
 import { productsRouter } from './modules/integrations/productsRouter.js'
 import { gatewayRouter } from './modules/gateway/gatewayRouter.js'
@@ -127,6 +128,8 @@ export function createApp(): express.Express {
 
   // Chat IA e integrações.
   app.use('/api/v1/ai/providers', aiProvidersRouter) // provedores de IA geridos pela tela
+  app.use('/api/v1/ai/knowledge', knowledgeRouter)  // o que a IA sabe de cada conjunto
+  app.use('/api/v1/ai/eval', evaluationRouter)      // avaliação do assistente (admin)
   app.use('/api/v1/ai', aiRouter)
   app.use('/api/v1/credentials', credentialsRouter)
   app.use('/api/v1/products', productsRouter) // construtor de APIs (GET+POST, self-service)

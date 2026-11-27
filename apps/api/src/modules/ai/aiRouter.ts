@@ -1,16 +1,15 @@
 // Chat IA — conversas persistidas + loop agêntico com progresso via SSE.
-// Cada mensagem do usuário roda o loop (agent.ts: máx. 8 rodadas de tools e
-// uma resposta final, mesmo no limite); eventos intermediários informam o que
-// a IA está consultando; o texto final e os gráficos são persistidos e
+// Cada mensagem do usuário roda o assistente (assistant.ts: prompt, mapa do
+// catálogo e o loop de agent.ts, com o fôlego de config.ai e uma resposta
+// final mesmo no limite); eventos intermediários informam o que a IA está
+// consultando; o texto final, os gráficos e o rastro são persistidos e
 // enviados no fim.
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import { db, isDbAvailable } from '../../db/pool.js'
 import { requireAuth, audit } from '../auth/middleware.js'
-import type { AiMessage } from './provider.js'
 import { activeProvider } from './providerStore.js'
-import { AI_TOOLS, executeTool } from './tools.js'
-import { runAgent } from './agent.js'
+import { responder, historicoParaModelo } from './assistant.js'
 import { foldAndDeleteConversation } from './retention.js'
 
 export const aiRouter = Router()
@@ -20,30 +19,6 @@ function requireDb(_req: Request, res: Response, next: NextFunction): void {
   next()
 }
 const authed = [requireAuth(), requireDb]
-
-const MAX_TOOL_ITERATIONS = 8
-
-const SYSTEM_PROMPT = `Você é o assistente de dados do Data Hub da Sebratel (provedor de internet).
-Responda SEMPRE em português do Brasil.
-
-Estilo (IMPORTANTE):
-- Seja resumido, objetivo e direto. Responda a pergunta em 1 a 3 frases; só detalhe se pedirem.
-- Comece pela resposta (o número ou a conclusão), sem preâmbulo.
-- Se pedirem uma informação específica (ex.: "quantos clientes ativos?"), responda só isso — não liste o catálogo inteiro.
-- Escreva em TEXTO SIMPLES. Não use Markdown: nada de **negrito**, títulos com #, tabelas ou emojis decorativos. O front mostra o texto cru, então esses símbolos aparecem literalmente e poluem a resposta.
-- Para uma lista curta, use hífen (-) no começo da linha e poucos itens.
-
-Como trabalhar:
-- Use search_datasets para descobrir os conjuntos de dados e get_dataset_schema antes de consultar.
-- Quando a pergunta cita um VALOR de texto (tag, status, motivo, plano, cidade, categoria), nunca chute como ele está gravado: chame list_field_values com search no campo provável e use o valor exato que voltar. "Desbloqueio de confiança" pode estar gravado como ISA_DESBLOQUEIO_CONFIANÇA, e um filtro com a grafia errada devolve zero linhas sem avisar.
-- Se a busca de valores não achar nada, tente uma palavra só ou outro campo de texto do MESMO conjunto antes de trocar de conjunto.
-- Para frequência de uma tag ou categoria, list_field_values já devolve quantas linhas têm cada valor — muitas vezes é a resposta inteira.
-- Monte consultas com run_query (QueryDef estruturado — você nunca escreve SQL). Agregue no run_query (select com agg + groupBy) em vez de trazer linhas soltas.
-- Todo número citado deve vir de um run_query ou list_field_values desta conversa. Nunca invente valores.
-- Quando um gráfico ajudar, use render_chart (ele já exibe o gráfico; depois resuma o insight em UMA frase, sem repetir os pontos).
-- Se um conjunto não estiver sincronizado ou o dado não existir, diga isso em uma frase e sugira o caminho.
-
-Contexto de negócio: a Sebratel é um provedor de internet. As perguntas costumam ser sobre clientes (ativos, cancelados), contratos, serviços/planos e conexões. Ao responder indicadores da empresa, traga o número e uma leitura curta de negócio — não um relatório longo.`
 
 // ─── Conversas ─────────────────────────────────────────────────
 aiRouter.get('/conversations', ...authed, async (req, res) => {
@@ -129,32 +104,24 @@ aiRouter.post('/conversations/:id/messages', ...authed, async (req, res) => {
 
     // Histórico persistido → mensagens do provedor (texto simples; os blocos
     // de tool do turno atual são mantidos apenas em memória durante o loop).
+    // O histórico leva o SQL que cada resposta anterior usou: "e por cidade?"
+    // continua a análise em vez de recomeçá-la.
     const history = (await db.query(
-      `select role, content from messages where conversation_id = $1 order by created_at`,
+      `select role, content, trace from messages where conversation_id = $1 order by created_at`,
       [conv.id],
     )).rows
-    const messages: AiMessage[] = history
-      .filter((m) => m.content)
-      .map((m) => ({ role: m.role as 'user' | 'assistant', content: String(m.content) }))
+    const messages = historicoParaModelo(history as never)
 
-    const charts: Record<string, unknown>[] = []
-    // O rastro (o que a IA consultou, com filtros, linhas e erros) vem do
+    // O rastro (o que a IA consultou, com filtros, SQL, linhas e erros) vem do
     // loop: sem ele ninguém — nem quem usa, nem quem mantém — consegue saber
     // POR QUE uma resposta acabou no limite.
-    const { text: finalText, trace, limitReached } = await runAgent({
+    const { text: finalText, trace, limitReached, charts, notebooks } = await responder({
       provider,
-      system: SYSTEM_PROMPT,
+      user: req.user!,
       messages,
-      tools: AI_TOOLS,
-      maxRounds: MAX_TOOL_ITERATIONS,
-      exec: (call) => executeTool(call.name, call.input, req.user!),
       onToolStart: (call) => send('tool', { name: call.name, input: call.input }),
-      onOutcome: (_call, outcome) => {
-        if (outcome.chart) {
-          charts.push(outcome.chart)
-          send('chart', outcome.chart)
-        }
-      },
+      onChart: (chart) => send('chart', chart),
+      onNotebook: (nb) => send('notebook', nb),
     })
 
     const saved = (await db.query(
@@ -164,9 +131,11 @@ aiRouter.post('/conversations/:id/messages', ...authed, async (req, res) => {
        trace.length ? JSON.stringify(trace) : null],
     )).rows[0]
     await db.query(`update conversations set updated_at = now() where id = $1`, [conv.id])
-    await audit(req, 'ai.message', { type: 'conversation', id: String(conv.id) }, { tools: charts.length })
+    await audit(req, 'ai.message', { type: 'conversation', id: String(conv.id) }, {
+      tools: trace.length, charts: charts.length, notebooks: notebooks.length,
+    })
 
-    send('done', { id: saved.id, text: finalText, charts, trace, limitReached })
+    send('done', { id: saved.id, text: finalText, charts, trace, limitReached, notebooks })
   } catch (e) {
     send('error', { error: (e as Error).message })
   } finally {

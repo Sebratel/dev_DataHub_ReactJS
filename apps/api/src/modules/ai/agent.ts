@@ -32,12 +32,16 @@ export interface TraceStep {
   linhas?: number | null
   /** Mensagem do erro, quando houve. */
   motivo?: string | null
+  /** O SQL inteiro (run_sql), para refazer a consulta ou salvá-la como exemplo. É o pedido, nunca o resultado. */
+  sql?: string | null
 }
 
 export interface AgentResult {
   text: string
   trace: TraceStep[]
   limitReached: boolean
+  /** Rodadas com ferramenta que o modelo pediu. */
+  rounds: number
 }
 
 const curto = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
@@ -55,6 +59,12 @@ function valorCurto(v: unknown): string {
 
 /** O pedido de cada ferramenta numa linha: o que a IA de fato tentou. */
 export function detalheDaTool(name: string, input: Record<string, unknown>): string | null {
+  if (name === 'run_sql') {
+    const sql = String(input.sql ?? '').replace(/\s+/g, ' ').trim()
+    const obj = input.objetivo ? `${String(input.objetivo).trim()} · ` : ''
+    return curto(obj + sql, 220)
+  }
+  if (name === 'create_notebook') return input.name ? `notebook ${valorCurto(input.name)}` : null
   if (name === 'list_field_values') {
     const partes = [`campo ${input.field ?? '?'}`]
     if (input.search) partes.push(`busca ${valorCurto(input.search)}`)
@@ -79,7 +89,7 @@ export function linhasDoResultado(name: string, outcome: ToolOutcome): number | 
   if (outcome.isError) return null
   try {
     const j = JSON.parse(outcome.content) as unknown
-    if (name === 'run_query') return Number((j as { rowCount?: number }).rowCount ?? 0)
+    if (name === 'run_query' || name === 'run_sql') return Number((j as { rowCount?: number }).rowCount ?? 0)
     if (name === 'list_field_values') return ((j as { values?: unknown[] }).values ?? []).length
     if (name === 'search_datasets' && Array.isArray(j)) return j.length
   } catch { /* conteúdo não-JSON: sem contagem */ }
@@ -108,22 +118,30 @@ export function mensagemDeLimite(trace: TraceStep[], max: number): string {
       : ' Se foram muitos conjuntos diferentes, aponte o conjunto certo na pergunta.')
 }
 
+// SQL guardado no rastro: o bastante para refazer a consulta, sem virar dump.
+const MAX_SQL_NO_RASTRO = 4_000
+
 export async function runAgent(o: {
   provider: AIProvider
   system: string
   messages: AiMessage[]
   tools: AiToolDef[]
   maxRounds: number
+  /** Teto de tempo da pergunta inteira; esgotado, responde com o que tem. */
+  maxMs?: number
   exec: (call: AiToolCall) => Promise<ToolOutcome>
   onToolStart?: (call: AiToolCall) => void
   onOutcome?: (call: AiToolCall, outcome: ToolOutcome) => void
 }): Promise<AgentResult> {
   const { provider, system, messages, tools } = o
   const trace: TraceStep[] = []
+  const prazo = o.maxMs ? Date.now() + o.maxMs : Infinity
+  let rounds = 0
 
-  for (let i = 0; i < o.maxRounds; i++) {
+  for (let i = 0; i < o.maxRounds && Date.now() < prazo; i++) {
     const turn = await provider.chat(system, messages, tools)
-    if (!turn.toolCalls.length) return { text: turn.text, trace, limitReached: false }
+    if (!turn.toolCalls.length) return { text: turn.text, trace, limitReached: false, rounds }
+    rounds++
     messages.push({ role: 'assistant', content: turn.raw })
     // Todas as ferramentas do turno rodam e voltam juntas.
     const results = []
@@ -138,6 +156,8 @@ export async function runAgent(o: {
         detalhe: detalheDaTool(call.name, call.input),
         linhas: linhasDoResultado(call.name, outcome),
         motivo: outcome.isError ? curto(outcome.content.replace(/^Erro:\s*/, ''), 200) : null,
+        ...(call.name === 'run_sql' && call.input.sql
+          ? { sql: curto(String(call.input.sql), MAX_SQL_NO_RASTRO) } : {}),
       })
       results.push({ toolCallId: call.id, content: outcome.content, isError: outcome.isError })
     }
@@ -154,5 +174,5 @@ export async function runAgent(o: {
   } catch (e) {
     console.warn(`[ai] resposta final depois do limite falhou: ${(e as Error).message}`)
   }
-  return { text: text || mensagemDeLimite(trace, o.maxRounds), trace, limitReached: true }
+  return { text: text || mensagemDeLimite(trace, o.maxRounds), trace, limitReached: true, rounds }
 }

@@ -514,7 +514,7 @@ export async function compileNotebookSql(
 
 // Erro de "tabela não existe" do DuckDB → mensagem que explica as 3 causas
 // possíveis e lista o que ESTÁ disponível (apelidos com underscore).
-function friendlyDuckError(e: Error, refs: LakeRef[]): Error {
+export function friendlyDuckError(e: Error, refs: LakeRef[]): Error {
   // Parquet truncado no lake. A mensagem do DuckDB traz o CAMINHO do arquivo e
   // mais nada — nem qual conjunto é, nem que isso se conserta sozinho. Quem lê
   // "too small to be a Parquet file" procura erro no próprio SQL, que está

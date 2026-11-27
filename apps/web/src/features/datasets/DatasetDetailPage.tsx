@@ -22,6 +22,7 @@ import DataTable from './DataTable'
 import AccessDialog from './AccessDialog'
 import EditDatasetDialog from './EditDatasetDialog'
 import DatasetMetrics from '@/features/metrics/DatasetMetrics'
+import AiKnowledgePanel from './AiKnowledgePanel'
 
 const TYPE_LABEL: Record<string, string> = {
   text: 'Texto', number: 'Número', date: 'Data', bool: 'Sim/Não', json: 'Estruturado',
@@ -447,6 +448,9 @@ export default function DatasetDetailPage() {
           </table>
         </div>
       </section>
+
+      {/* O que a IA sabe deste conjunto — e o que a equipe ensina a ela */}
+      {dataset.lastSyncAt && <AiKnowledgePanel slug={dataset.slug} />}
 
       {/* SQL do derivado (editores/admins) */}
       {derived && dataset.transformSql != null && (

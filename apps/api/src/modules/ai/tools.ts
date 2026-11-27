@@ -1,8 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────
-// Tools da IA (docs §12). A IA NUNCA escreve SQL: ela consulta o catálogo e
-// monta QueryDef, executado pelo MESMO compilador/permissões do usuário
-// logado — a IA só vê o que ele pode ver, e nunca um campo sensível em claro,
-// nem quando quem pergunta é admin (SEG-05).
+// Tools da IA (docs §12). Tudo roda com o acesso do usuário logado — a IA só
+// vê o que ele pode ver, e nunca um campo sensível em claro, nem quando quem
+// pergunta é admin (SEG-05).
+//
+// Duas formas de consultar:
+//   • run_query — QueryDef estruturado, um conjunto por vez (o mesmo do
+//     explorador e dos painéis). Bom para contagem e agrupamento simples.
+//   • run_sql (27/11/2026) — SELECT livre sobre o lake, com JOIN entre
+//     conjuntos, CTE e janela. Passa pela MESMA porta do Notebook
+//     (compileNotebookSql): validação pela árvore do DuckDB, só os conjuntos
+//     que a pessoa lê, coluna oculta fora e sensível mascarado — sempre como
+//     não-admin, porque o resultado sai da empresa. Pergunta de negócio cruza
+//     contrato, fatura e cliente; sem JOIN o assistente não chegava lá.
 // ─────────────────────────────────────────────────────────────────────────
 import type { QueryDef, SessionUser, FieldType } from '@datahub/shared'
 import { db, dbDriver } from '../../db/pool.js'
@@ -13,7 +22,12 @@ import { recordUsage } from '../../core/usage.js'
 import { compileQuery } from '../query/compile.js'
 import { duckQuery } from '../query/duck.js'
 import { currentSlugFor } from '../../core/slugAliases.js'
+import {
+  lakeRefs, compileNotebookSql, validateTransformSql, assertReferencesAllowed, friendlyDuckError,
+} from '../transform/derive.js'
 import { embedQuery, toVectorLiteral, embeddingsEnabled } from './embeddings.js'
+import { conhecimentoDaTabela, conhecimentoDoPacote } from './knowledge.js'
+import { perfilDoConjunto, chavePerfil } from './profile.js'
 import type { AiToolDef } from './provider.js'
 
 export const AI_TOOLS: AiToolDef[] = [
@@ -28,7 +42,7 @@ export const AI_TOOLS: AiToolDef[] = [
   },
   {
     name: 'get_dataset_schema',
-    description: 'Retorna os campos de um conjunto (key, rótulo, tipo, descrição) e as métricas da biblioteca disponíveis. Chame antes de montar uma consulta.',
+    description: 'Abre um conjunto para você ENTENDÊ-LO antes de consultar: o que uma linha representa, as armadilhas conhecidas, o nome para usar no SQL, a tabela de origem, os campos (tipo, descrição, % de nulos, mínimo e máximo, e os valores reais com a contagem de cada um), o SQL que calcula o conjunto (se for calculado), as notas da equipe e as métricas da biblioteca. Chame antes de consultar um conjunto pela primeira vez.',
     inputSchema: {
       type: 'object',
       properties: { slug: { type: 'string', description: 'Slug do conjunto de dados' } },
@@ -48,6 +62,19 @@ export const AI_TOOLS: AiToolDef[] = [
         separator: { type: 'string', description: 'Opcional. Separador quando a célula guarda uma lista (ex.: ",", ";"). "||" é detectado sozinho.' },
       },
       required: ['dataset', 'field'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'run_sql',
+    description: 'Executa UMA consulta SELECT (ou WITH) em SQL do DuckDB sobre o lake e devolve as linhas. Pode juntar conjuntos (JOIN), usar CTE, subconsulta, janela (lag, row_number), date_trunc, filter (where …). Cite cada conjunto pelo nome_no_sql (o slug com "_" no lugar de "-"), ex.: select count(*) from prata_voalle_contratos where instalado and cancelado_em is null. Também aceita a maior parte do SQL do Postgres (to_char, ::text, ilike, erp.contracts para a fonte que copia essa tabela). AGREGUE no SQL: o resultado volta limitado a algumas centenas de linhas. Campo sensível vem mascarado. Se der erro, leia a mensagem, corrija e tente de novo.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sql: { type: 'string', description: 'Uma única consulta SELECT/WITH.' },
+        objetivo: { type: 'string', description: 'Em poucas palavras, o que esta consulta verifica (aparece para a pessoa enquanto você trabalha).' },
+      },
+      required: ['sql'],
       additionalProperties: false,
     },
   },
@@ -122,16 +149,50 @@ export const PROPOSE_WIDGETS_TOOL: AiToolDef = {
 
 // Ferramentas do construtor de widgets: reusa a descoberta/validação do chat
 // (busca semântica, schema, run_query) e troca render_chart por propose_widgets.
+// run_sql fica de fora: o widget é um QueryDef, e o SQL explorado ali não
+// viraria widget nenhum.
 export const WIDGET_BUILDER_TOOLS: AiToolDef[] = [
-  ...AI_TOOLS.filter((t) => t.name !== 'render_chart'),
+  ...AI_TOOLS.filter((t) => t.name !== 'render_chart' && t.name !== 'run_sql'),
   PROPOSE_WIDGETS_TOOL,
 ]
+
+// Só no chat: a análise vira um Notebook da pessoa (SQL + texto), que ela abre,
+// roda de novo, ajusta e compartilha. É o "relatório" que sobrevive à conversa.
+export const CREATE_NOTEBOOK_TOOL: AiToolDef = {
+  name: 'create_notebook',
+  description: 'Salva a análise como um Notebook da pessoa (privado, no nome dela): células de texto (markdown) explicando e células SQL com as consultas que você usou. Use quando pedirem relatório, análise para guardar/compartilhar, ou "monta um notebook". Cada célula SQL é conferida antes de salvar; se alguma falhar, corrija e chame de novo. Depois, dê o link na resposta.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'Nome curto do notebook (ex.: "Cancelamento por motivo — 2026").' },
+      description: { type: 'string', description: 'Uma frase sobre o que a análise responde.' },
+      cells: {
+        type: 'array',
+        description: 'Células na ordem: {kind: "markdown" | "sql", source}. Comece com um texto de contexto; cada SQL vem precedido de um texto curto dizendo o que mostra; termine com as conclusões.',
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['markdown', 'sql'] },
+            source: { type: 'string' },
+          },
+          required: ['kind', 'source'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['name', 'cells'],
+    additionalProperties: false,
+  },
+}
+
+export const CHAT_TOOLS: AiToolDef[] = [...AI_TOOLS, CREATE_NOTEBOOK_TOOL]
 
 export interface ToolOutcome {
   content: string
   isError?: boolean
   chart?: Record<string, unknown> // presença = render_chart bem-sucedido
   widgets?: Record<string, unknown>[] // presença = propose_widgets bem-sucedido
+  notebook?: { slug: string; name: string } // presença = create_notebook bem-sucedido
 }
 
 // Conjuntos referenciados no input de uma tool (para checar o escopo).
@@ -152,6 +213,12 @@ export async function executeTool(
   allowed?: Set<string>, // se definido, a IA só pode tocar nestes conjuntos (slug)
 ): Promise<ToolOutcome> {
   try {
+    // SQL livre não cabe num escopo fechado de conjuntos (o construtor de
+    // widgets): conferir conjunto a conjunto o que um SELECT cita é trabalho
+    // da porta do notebook, que lá não se aplica.
+    if (allowed && (name === 'run_sql' || name === 'create_notebook')) {
+      return { content: `A ferramenta ${name} não está disponível aqui. Use run_query.`, isError: true }
+    }
     // Escopo: barra qualquer conjunto fora da seleção (exceto a busca, que já é filtrada).
     if (allowed && name !== 'search_datasets') {
       const refs = slugsInInput(name, input).filter(Boolean)
@@ -165,6 +232,8 @@ export async function executeTool(
       case 'get_dataset_schema': return await getSchema(String(input.slug ?? ''), user)
       case 'list_field_values': return await listFieldValues(input, user)
       case 'run_query': return await runQuery(input as unknown as QueryDef, user)
+      case 'run_sql': return await runSql(input, user)
+      case 'create_notebook': return await createNotebook(input, user)
       case 'render_chart': return await renderChart(input, user)
       case 'propose_widgets': return await proposeWidgets(input, user)
       default: return { content: `Tool desconhecida: ${name}`, isError: true }
@@ -180,7 +249,7 @@ export async function executeTool(
 // memória custa milissegundos.
 async function nearestInProcess(tenant: string, q: number[]): Promise<Record<string, unknown>[]> {
   const cand = (await db.query(
-    `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at, d.embedding
+    `select d.id, d.slug, d.name, d.kind, d.official, d.description, d.row_count, d.last_sync_at, d.embedding
        from datasets d join tenants t on t.id = d.tenant_id
       where t.slug = $1 and d.embedding is not null`,
     [tenant],
@@ -218,7 +287,7 @@ async function searchDatasets(user: SessionUser, query?: string, scope?: Set<str
       } else {
       const vec = toVectorLiteral(q)
       rows = (await db.query(
-        `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at,
+        `select d.id, d.slug, d.name, d.kind, d.official, d.description, d.row_count, d.last_sync_at,
                 (d.embedding <=> $2::vector) as distance
            from datasets d join tenants t on t.id = d.tenant_id
           where t.slug = $1 and d.embedding is not null
@@ -237,9 +306,9 @@ async function searchDatasets(user: SessionUser, query?: string, scope?: Set<str
   // Fallback: sem query, ou nenhum dataset indexado ainda → lista alfabética.
   if (!rows.length) {
     rows = (await db.query(
-      `select d.id, d.slug, d.name, d.description, d.row_count, d.last_sync_at
+      `select d.id, d.slug, d.name, d.kind, d.official, d.description, d.row_count, d.last_sync_at
          from datasets d join tenants t on t.id = d.tenant_id
-        where t.slug = $1 order by d.name`,
+        where t.slug = $1 order by d.official desc, d.name`,
       [user.tenant],
     )).rows
   }
@@ -247,10 +316,11 @@ async function searchDatasets(user: SessionUser, query?: string, scope?: Set<str
   const list = rows
     .filter((r) => allowed.has(String(r.id))) // só o que o usuário acessa (após ordenar)
     .filter((r) => !scope || scope.has(String(r.slug))) // escopo selecionado no painel
-    .slice(0, query ? 8 : 50)                 // busca → só os mais relevantes
+    .slice(0, query ? 10 : 200)               // busca → só os mais relevantes
     .map((r) => ({
-      slug: r.slug, name: r.name, description: r.description,
-      rows: r.row_count, sincronizado: !!r.last_sync_at,
+      slug: r.slug, nome_no_sql: String(r.slug).replace(/-/g, '_'), name: r.name,
+      tipo: r.kind === 'derived' ? 'calculado' : 'fonte', ...(r.official ? { oficial: true } : {}),
+      description: r.description, rows: r.row_count, sincronizado: !!r.last_sync_at,
     }))
   return { content: JSON.stringify(list) }
 }
@@ -272,18 +342,103 @@ async function loadDataset(pedido: string, user: SessionUser) {
   return ds
 }
 
-async function getSchema(slug: string, user: SessionUser): Promise<ToolOutcome> {
-  const ds = await loadDataset(slug, user)
+// Teto do SQL de um calculado no que vai ao modelo: o SQL é a melhor
+// documentação do conjunto, mas os maiores passam de 10 mil caracteres.
+const MAX_SQL_DO_CALCULO = 6_000
+
+/** Notas que a equipe escreveu para o conjunto (ai_dataset_notes). */
+export async function notasDaEquipe(datasetId: string): Promise<string | null> {
+  const r = (await db.query(`select notes from ai_dataset_notes where dataset_id = $1`, [datasetId])).rows[0]
+  const t = String(r?.notes ?? '').trim()
+  return t || null
+}
+
+/**
+ * Tudo o que o assistente sabe de UM conjunto, juntando as quatro camadas
+ * (knowledge.ts) e o perfil automático. É o que get_dataset_schema devolve e
+ * o que a tela "O que a IA sabe" mostra.
+ */
+export async function conhecimentoDoConjunto(ds: Record<string, unknown>, opts: { perfil: boolean }) {
+  const slug = String(ds.slug)
+  const fonte = ds.kind !== 'derived'
+  const daTabela = fonte ? conhecimentoDaTabela(ds.schema_name as string | null, ds.object_name as string | null) : null
+  const doPacote = conhecimentoDoPacote(slug)
+  const notas = await notasDaEquipe(String(ds.id))
+
   const fields = (await db.query(
     `select key, label, description, type, sensitive from dataset_fields
       where dataset_id = $1 and not hidden order by sort_order`,
     [ds.id],
-  )).rows
+  )).rows as { key: string; label: string; description: string | null; type: string; sensitive: boolean }[]
+
+  const notaDoCampo = (k: string) => doPacote?.campos?.[k] ?? daTabela?.campos?.[k] ?? null
+  let perfil: Awaited<ReturnType<typeof perfilDoConjunto>> | null = null
+  if (opts.perfil) {
+    const dir = datasetDir(String(ds.tenant_slug), slug)
+    if (listParquet(dir).length) {
+      perfil = await perfilDoConjunto(
+        chavePerfil(String(ds.id), ds.last_sync_at, ds.row_count), parquetGlob(dir),
+        fields.map((f) => ({ key: f.key, type: f.type, sensitive: !!f.sensitive })),
+      )
+    }
+  }
+  const perfilDe = new Map((perfil?.campos ?? []).map((p) => [p.key, p]))
+
+  const campos = fields.map((f) => {
+    const p = perfilDe.get(f.key)
+    const { key: _k, tipo: _t, sensivel: _s, ...stats } = p ?? { key: '', tipo: '' }
+    return {
+      key: f.key,
+      ...(f.label && f.label !== f.key ? { label: f.label } : {}),
+      type: f.type,
+      ...(f.description ? { description: f.description } : {}),
+      ...(notaDoCampo(f.key) ? { nota: notaDoCampo(f.key) } : {}),
+      ...(f.sensitive ? { sensivel: 'valor mascarado; não filtre, agrupe nem ordene por ele' } : {}),
+      ...stats,
+    }
+  })
+
+  const conhecimento = {
+    ...(doPacote ? { pacote: doPacote.pacote } : {}),
+    resumo: doPacote?.resumo ?? daTabela?.resumo ?? null,
+    grao: doPacote?.grao ?? daTabela?.grao ?? null,
+    armadilhas: [...(daTabela?.armadilhas ?? []), ...(doPacote?.armadilhas ?? [])],
+    ...(notas ? { notas_da_equipe: notas } : {}),
+  }
+  const sql = !fonte && ds.transform_sql ? String(ds.transform_sql) : null
+  return {
+    dataset: slug,
+    nome: ds.name,
+    tipo: fonte ? 'fonte' : 'calculado',
+    nome_no_sql: slug.replace(/-/g, '_'),
+    ...(fonte && ds.object_name ? { tabela_de_origem: [ds.schema_name, ds.object_name].filter(Boolean).join('.') } : {}),
+    linhas: perfil?.linhas ?? (ds.row_count == null ? null : Number(ds.row_count)),
+    atualizado_em: ds.last_sync_at ?? null,
+    descricao: ds.description || null,
+    conhecimento,
+    ...(perfil?.chave_provavel.length ? { chave_provavel: perfil.chave_provavel } : {}),
+    ...(perfil?.erro ? { perfil_indisponivel: perfil.erro } : {}),
+    campos,
+    ...(sql ? {
+      sql_do_calculo: sql.length > MAX_SQL_DO_CALCULO ? `${sql.slice(0, MAX_SQL_DO_CALCULO)}\n-- … (cortado)` : sql,
+    } : {}),
+  }
+}
+
+async function getSchema(slug: string, user: SessionUser): Promise<ToolOutcome> {
+  const ds = await loadDataset(slug, user)
+  const info = await conhecimentoDoConjunto(ds, { perfil: true })
   const metrics = (await db.query(
     `select slug, name, description, agg, field_key, format from metrics where dataset_id = $1`,
     [ds.id],
   )).rows
-  return { content: JSON.stringify({ dataset: slug, fields, metrics }) }
+  // Mesmo uso que uma consulta: abrir o conjunto conta como usá-lo pela IA.
+  await recordUsage({
+    tenant: user.tenant, actor: user.email, resourceType: 'dataset', resourceId: String(ds.id), via: 'ai',
+  })
+  // `fields` continua com esse nome para o construtor de widgets, que lê só key e type.
+  const { campos, ...resto } = info
+  return { content: JSON.stringify({ ...resto, fields: campos, metrics }) }
 }
 
 async function executeQueryDef(def: QueryDef, user: SessionUser) {
@@ -417,6 +572,115 @@ async function listFieldValues(input: Record<string, unknown>, user: SessionUser
 async function runQuery(def: QueryDef, user: SessionUser): Promise<ToolOutcome> {
   const { rows } = await executeQueryDef({ ...def, limit: Math.min(def.limit ?? 100, 500) }, user)
   return { content: JSON.stringify({ rowCount: rows.length, rows: rows.slice(0, 100) }) }
+}
+
+// ── SQL livre (run_sql) ──────────────────────────────────────────────────
+// A mesma preparação da célula do notebook (notebooksRouter.prepararCelula):
+// conjuntos que a pessoa lê, validação pela árvore, projeção protegida. A única
+// diferença é a máscara: aqui ela vale SEMPRE (admin: false), como no resto
+// do que vai para a IA.
+async function prepararSqlDaIa(user: SessionUser, sql: string, admin: boolean) {
+  validateTransformSql(sql)
+  await assertReferencesAllowed(user.tenant, sql, user)
+  const refs = await lakeRefs(user.tenant, { user })
+  return { refs, ...(await compileNotebookSql(sql, refs, { admin })) }
+}
+
+// Texto longo numa célula só gasta a leitura do modelo; o começo basta.
+const MAX_CELULA = 300
+function celulaCurta(v: unknown): unknown {
+  return typeof v === 'string' && v.length > MAX_CELULA ? `${v.slice(0, MAX_CELULA - 1)}…` : v
+}
+
+async function runSql(input: Record<string, unknown>, user: SessionUser): Promise<ToolOutcome> {
+  const sql = String(input.sql ?? '').trim()
+  if (!sql) return { content: 'Informe a consulta em "sql".', isError: true }
+  const max = config.ai.sqlMaxRows
+  const inicio = Date.now()
+  const { sql: wrapped, datasets, refs } = await prepararSqlDaIa(user, sql, false)
+  let result
+  try {
+    // Uma linha a mais que o teto: é como se sabe que há mais sem contar tudo.
+    result = await duckQuery(`select * from (${wrapped}) as __ia limit ${max + 1}`, [], {
+      timeoutMs: config.duck.queryTimeoutMs, adhoc: true,
+    })
+  } catch (e) {
+    throw friendlyDuckError(e as Error, refs)
+  }
+  for (const d of datasets) {
+    if (!d.id) continue
+    await recordUsage({
+      tenant: user.tenant, actor: user.email, resourceType: 'dataset', resourceId: d.id, via: 'ai',
+      audit: { action: 'ai.sql', resource: d.slug },
+    })
+  }
+  const truncado = result.rows.length > max
+  const linhas = (truncado ? result.rows.slice(0, max) : result.rows)
+    .map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, celulaCurta(v)])))
+  return {
+    content: JSON.stringify({
+      colunas: result.columns,
+      rowCount: linhas.length,
+      truncado,
+      ms: Date.now() - inicio,
+      ...(truncado ? { aviso: `Só as primeiras ${max} linhas voltaram. Agregue no SQL (group by, count, sum) em vez de trazer linhas soltas.` } : {}),
+      linhas,
+    }),
+  }
+}
+
+// ── Notebook com a análise (create_notebook) ─────────────────────────────
+const MAX_CELULAS = 40
+
+function slugDoNotebook(name: string): string {
+  return name.normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'analise'
+}
+
+async function createNotebook(input: Record<string, unknown>, user: SessionUser): Promise<ToolOutcome> {
+  const name = String(input.name ?? '').trim().slice(0, 120)
+  if (!name) return { content: 'Informe o nome do notebook em "name".', isError: true }
+  const brutas = Array.isArray(input.cells) ? (input.cells as Record<string, unknown>[]) : []
+  const cells = brutas
+    .map((c) => ({ kind: c.kind === 'sql' ? 'sql' : 'markdown', source: String(c.source ?? '').trim() }))
+    .filter((c) => c.source)
+  if (!cells.length) return { content: 'Informe as células em "cells".', isError: true }
+  if (cells.length > MAX_CELULAS) return { content: `No máximo ${MAX_CELULAS} células.`, isError: true }
+
+  // Toda célula SQL roda (uma linha) antes de salvar: notebook que abre com
+  // erro é pior que nenhum. Roda com o papel real da pessoa — o notebook é
+  // dela, e é com esse papel que ele vai rodar quando ela abrir.
+  const erros: string[] = []
+  for (const [i, c] of cells.entries()) {
+    if (c.kind !== 'sql') continue
+    try {
+      const { sql: wrapped, refs } = await prepararSqlDaIa(user, c.source, user.roles.includes('admin'))
+      try {
+        await duckQuery(`select * from (${wrapped}) as __ia limit 1`, [], { timeoutMs: config.duck.queryTimeoutMs, adhoc: true })
+      } catch (e) { throw friendlyDuckError(e as Error, refs) }
+    } catch (e) {
+      erros.push(`célula ${i + 1}: ${(e as Error).message}`)
+    }
+  }
+  if (erros.length) {
+    return { content: `Nada foi salvo. Corrija e chame de novo:\n- ${erros.join('\n- ')}`, isError: true }
+  }
+
+  const tenant = (await db.query('select id from tenants where slug = $1', [user.tenant])).rows[0]
+  const taken = new Set((await db.query('select slug from notebooks where tenant_id = $1', [tenant.id])).rows.map((r) => String(r.slug)))
+  const base = slugDoNotebook(name)
+  let slug = base
+  for (let i = 2; taken.has(slug); i++) slug = `${base}-${i}`
+  const comId = cells.map((c, i) => ({ id: `c${i + 1}`, kind: c.kind, source: c.source }))
+  await db.query(
+    `insert into notebooks (tenant_id, slug, name, description, cells, visibility, owner_email)
+     values ($1,$2,$3,$4,$5,'private',$6)`,
+    [tenant.id, slug, name, String(input.description ?? '').slice(0, 500), JSON.stringify(comId), user.email],
+  )
+  return {
+    content: JSON.stringify({ ok: true, slug, link: `/notebooks/${slug}`, celulas: comId.length, visibilidade: 'privado (só a pessoa vê; ela pode compartilhar)' }),
+    notebook: { slug, name },
+  }
 }
 
 // Monta o MESMO QueryDef que o widget executará no frontend (fonte única da

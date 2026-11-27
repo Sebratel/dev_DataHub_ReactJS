@@ -15,7 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { as, db, shutdown, connectTestSource, fonteDb, waitFor, waitQueueIdle, lakeRows } from './harness.js'
+import { as, db, shutdown, connectTestSource, fonteDb, waitFor, waitQueueIdle, lakeRows, USERS } from './harness.js'
 import { ONDA_2 } from '../modules/catalog/packs/onda2.js'
 import { ONDA_1 } from '../modules/catalog/packs/onda1.js'
 
@@ -226,5 +226,21 @@ describe('Pacotes de conjuntos: onda 2 (campo)', () => {
     assert.equal(r.status, 200)
     assert.ok(r.body.report.sources.every((s: { status: string }) => s.status === 'reaproveitada'))
     assert.ok(r.body.report.datasets.every((d: { status: string }) => d.status === 'ja-existe'))
+  })
+
+  // Par do teste da onda 1: as perguntas de campo da avaliação do assistente.
+  it('o SQL de referência das perguntas de campo da avaliação roda sobre a onda 2', async () => {
+    const { CASOS, gabarito } = await import('../modules/ai/evaluation.js')
+    const daOnda = new Set(ONDA_2.datasets.map((d) => d.slug))
+    const casos = CASOS.filter((c) => {
+      const citados = [...c.sql.matchAll(/\b((?:prata|ouro)_[a-z0-9_]+)\b/g)].map((m) => m[1])
+      return citados.length && citados.every((s) => daOnda.has(s))
+    })
+    assert.ok(casos.length >= 4, `só ${casos.length} perguntas da onda 2`)
+    const admin = { email: USERS.admin, name: 'admin', roles: ['admin'], tenant: 'sebratel', master: false, masterConfigured: true } as never
+    for (const c of casos) {
+      const linha = await gabarito(admin, c.sql).catch((e: Error) => assert.fail(`${c.id}: ${e.message}`))
+      if (linha) for (const ch of c.checar) assert.ok(ch.coluna in linha, `${c.id}: coluna ${ch.coluna} não existe`)
+    }
   })
 })

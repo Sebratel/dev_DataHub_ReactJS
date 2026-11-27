@@ -2,14 +2,16 @@
 // por SSE: eventos 'tool' viram indicadores de progresso, 'chart' renderiza
 // gráficos (mesmo componente dos dashboards) e 'done' traz o texto final.
 import { useEffect, useRef, useState } from 'react'
-import { Sparkles, Send, Plus, Trash2, Loader2, Search, Database, BarChart3, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
+import { Sparkles, Send, Plus, Trash2, Loader2, Search, Database, BarChart3, ChevronDown, ChevronRight, AlertTriangle, NotebookPen } from 'lucide-react'
 import clsx from 'clsx'
+import { Link } from 'react-router-dom'
 import type { Widget, WidgetType, QueryFilter, Aggregation } from '@datahub/shared'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/store/authStore'
 import { currentToken } from '@/store/authProvider'
 import { useConfirm } from '@/components/Dialogs'
 import WidgetCard from '@/features/dashboards/WidgetCard'
+import Markdown from '@/features/notebooks/markdown'
 
 interface Conversation { id: string; title: string }
 interface ChartDef {
@@ -30,7 +32,10 @@ interface TraceStep {
   detalhe?: string | null
   linhas?: number | null
   motivo?: string | null
+  sql?: string | null
 }
+
+interface NotebookRef { slug: string; name: string }
 
 interface ChatMessage {
   id: string
@@ -44,24 +49,38 @@ interface ChatMessage {
   // deixa ninguém investigar nada.
   trace?: TraceStep[]
   limitReached?: boolean
+  notebooks?: NotebookRef[]
 }
 
 const TOOL_LABEL: Record<string, { icon: typeof Search; label: string }> = {
   search_datasets: { icon: Search, label: 'Procurando conjuntos de dados…' },
-  get_dataset_schema: { icon: Database, label: 'Lendo os campos do conjunto…' },
+  get_dataset_schema: { icon: Database, label: 'Entendendo o conjunto…' },
   list_field_values: { icon: Search, label: 'Conferindo como os valores estão gravados…' },
   run_query: { icon: Database, label: 'Consultando o lake…' },
+  run_sql: { icon: Database, label: 'Consultando o lake…' },
   render_chart: { icon: BarChart3, label: 'Montando o gráfico…' },
+  create_notebook: { icon: NotebookPen, label: 'Salvando a análise como notebook…' },
+}
+
+// O que aparece enquanto a IA trabalha: o rótulo da ferramenta e, quando há,
+// o alvo ou o objetivo que ela mesma declarou ("Consultando: base ativa por PF/PJ").
+function rotuloDoPasso(name: string, input: Record<string, unknown> | undefined): string {
+  const base = TOOL_LABEL[name]?.label ?? `Executando ${name}…`
+  if (name === 'run_sql' && input?.objetivo) return `Consultando: ${String(input.objetivo)}`
+  if (name === 'get_dataset_schema' && input?.slug) return `Entendendo ${String(input.slug)}…`
+  return base
 }
 
 // Rótulo curto do passo, COM o alvo: "run_query · db-senior-collaborators".
 // Sem o alvo, oito linhas iguais não distinguem laço de garimpo.
 const PASSO_LABEL: Record<string, string> = {
   search_datasets: 'Buscou conjuntos',
-  get_dataset_schema: 'Leu os campos de',
+  get_dataset_schema: 'Abriu',
   list_field_values: 'Viu os valores de',
   run_query: 'Consultou',
+  run_sql: 'Consultou (SQL)',
   render_chart: 'Montou gráfico de',
+  create_notebook: 'Salvou',
 }
 
 function chartToWidget(c: ChartDef, i: number): Widget {
@@ -179,7 +198,7 @@ export default function AiPage() {
           const event = eventLine.slice(7).trim()
           const data = JSON.parse(dataLine.slice(6))
           if (event === 'tool') {
-            const label = TOOL_LABEL[data.name]?.label ?? `Executando ${data.name}…`
+            const label = rotuloDoPasso(data.name, data.input)
             setMessages((m) => m.map((msg) => msg.id === pendingId
               ? { ...msg, progress: [...(msg.progress ?? []), label] } : msg))
           } else if (event === 'chart') {
@@ -191,6 +210,7 @@ export default function AiPage() {
                   charts: data.charts?.length ? data.charts : undefined,
                   trace: data.trace?.length ? (data.trace as TraceStep[]) : undefined,
                   limitReached: !!data.limitReached,
+                  notebooks: data.notebooks?.length ? (data.notebooks as NotebookRef[]) : undefined,
                 }
               : msg))
           } else if (event === 'error') {
@@ -210,9 +230,9 @@ export default function AiPage() {
   }
 
   const SUGGESTIONS = [
-    'Quais conjuntos de dados estão disponíveis?',
-    'Quantos registros tem cada conjunto?',
-    'Monte um gráfico de barras com os dados de auditoria por ação.',
+    'Quantos contratos ativos temos hoje, e qual o ticket médio?',
+    'Analise o cancelamento dos últimos 12 meses por motivo e monte um relatório.',
+    'Qual a receita dos contratos ativos que estão com fatura em atraso há mais de 30 dias?',
   ]
 
   return (
@@ -253,12 +273,13 @@ export default function AiPage() {
               </div>
               <h1 className="mt-4 text-[15px] font-semibold">Assistente de Dados</h1>
               <p className="mt-1 max-w-md text-sm text-zinc-500">
-                Pergunte em linguagem natural, {user?.name.split(' ')[0]} — eu consulto os conjuntos de dados e monto gráficos.
+                Pergunte em linguagem natural, {user?.name.split(' ')[0]}. Eu cruzo os conjuntos, confiro os números
+                e, se você pedir, monto o relatório num notebook.
               </p>
               <div className="mt-4 grid gap-2">
                 {SUGGESTIONS.map((s) => (
                   <button key={s} onClick={() => setInput(s)}
-                    className="rounded-full border border-zinc-200 px-4 py-1.5 text-sm text-zinc-600 hover:border-accent hover:text-accent dark:border-zinc-700 dark:text-zinc-400">
+                    className="rounded-lg border border-zinc-200 px-4 py-1.5 text-sm text-zinc-600 hover:border-accent hover:text-accent dark:border-zinc-700 dark:text-zinc-400">
                     {s}
                   </button>
                 ))}
@@ -283,7 +304,19 @@ export default function AiPage() {
                       {m.progress.length === 0 && <span className="flex items-center gap-2 text-xs"><Loader2 size={12} className="animate-spin" /> Pensando…</span>}
                     </span>
                   )}
-                  {m.content && <p className="whitespace-pre-wrap">{m.content}</p>}
+                  {m.content && (m.role === 'user'
+                    ? <p className="whitespace-pre-wrap">{m.content}</p>
+                    : <Markdown source={m.content} className="text-sm text-zinc-800 dark:text-zinc-200" />)}
+                  {m.notebooks && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.notebooks.map((nb) => (
+                        <Link key={nb.slug} to={`/notebooks/${nb.slug}`}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-2 py-1 text-xs text-zinc-700 hover:border-accent hover:text-accent dark:border-zinc-700 dark:text-zinc-300">
+                          <NotebookPen size={12} /> {nb.name}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
                   {m.trace && <TraceBlock trace={m.trace} aberto={!!m.limitReached} />}
                   {m.charts && (
                     <div className="mt-3 grid gap-3">
@@ -310,7 +343,7 @@ export default function AiPage() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }}
             rows={2}
-            placeholder="Ex.: quantos eventos de auditoria por ação? Monte um gráfico."
+            placeholder="Ex.: qual a taxa de cancelamento dos últimos 6 meses? Compare com a inadimplência."
             className="flex-1 resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent dark:border-zinc-700 dark:bg-zinc-900"
           />
           <button onClick={() => void send()} disabled={busy || !input.trim()}
@@ -338,9 +371,11 @@ function TraceBlock({ trace, aberto }: { trace: TraceStep[]; aberto: boolean }) 
   const erros = trace.filter((t) => t.erro).length
 
   // Repetição do MESMO passo sobre o MESMO alvo: o sinal mais forte de laço.
+  // SQL não tem alvo: o que se repete num laço é a MESMA consulta, então a
+  // chave é o próprio pedido — várias consultas diferentes são análise.
   const repetido = new Map<string, number>()
   for (const t of trace) {
-    const k = `${t.name}|${t.alvo ?? ''}`
+    const k = `${t.name}|${t.alvo ?? t.sql ?? t.detalhe ?? ''}`
     repetido.set(k, (repetido.get(k) ?? 0) + 1)
   }
   const maisRepetido = [...repetido.values()].reduce((a, b) => Math.max(a, b), 0)

@@ -190,6 +190,18 @@ export const config = {
     },
   },
 
+  // Assistente IA (pedido de 27/11/2026: "fôlego" para analisar como um
+  // analista). Uma pergunta de negócio cruza conjuntos, confere e refaz — 8
+  // rodadas acabavam no meio do caminho. O teto de tempo segura o custo e a
+  // conexão (o navegador espera a resposta numa só requisição).
+  ai: {
+    maxRounds: Math.max(1, contagem(process.env.AI_MAX_ROUNDS, 25)),
+    maxSeconds: Math.max(30, contagem(process.env.AI_MAX_SECONDS, 300)),
+    // Linhas que uma consulta SQL devolve ao modelo. Mais que isso não cabe na
+    // leitura dele: o certo é agregar no SQL.
+    sqlMaxRows: Math.min(1000, Math.max(10, contagem(process.env.AI_SQL_MAX_ROWS, 200))),
+  },
+
   // Publicação no Databricks — envio de saída, best-effort, depois da
   // materialização. Ver docs do piloto Native/Matrix.
   databricks: {

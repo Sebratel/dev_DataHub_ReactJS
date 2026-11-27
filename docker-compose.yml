@@ -150,6 +150,11 @@ services:
       DUCK_MAX_ADHOC_CONCURRENCY: ${DUCK_MAX_ADHOC_CONCURRENCY:-2}
       DUCK_MAX_EXPORT_CONCURRENCY: ${DUCK_MAX_EXPORT_CONCURRENCY:-1}
       AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-}
+      # Folego do assistente por pergunta (rodadas e segundos) e linhas que uma
+      # consulta SQL dele devolve.
+      AI_MAX_ROUNDS: ${AI_MAX_ROUNDS:-25}
+      AI_MAX_SECONDS: ${AI_MAX_SECONDS:-300}
+      AI_SQL_MAX_ROWS: ${AI_SQL_MAX_ROWS:-200}
       GATEWAY_MAX_BODY: ${GATEWAY_MAX_BODY:-}
       # Fontes de dados (somente leitura — use usuário só-SELECT).
       DB_ELLEVEN_HOST: ${DB_ELLEVEN_HOST:-}
