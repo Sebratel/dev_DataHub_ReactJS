@@ -879,16 +879,19 @@ async function runSync(datasetId: string): Promise<string> {
                           updated_at = now() where id = $1`,
       [datasetId, count, newWatermark, newWatermark2, replaceParts],
     )
+    // A fonte respondeu: se ela estava em espera por queda, a espera acaba e o
+    // "de volta" sai uma vez. Sem await: aviso não segura a fila. Vem ANTES de
+    // a carga constar como concluída: quem lê "done" (a tela, o agendador, o
+    // teste) não pode ver a fonte ainda em espera — era uma corrida de
+    // milissegundos que derrubava o fonteFora.test no MariaDB sob carga.
+    void onSourceSuccess({ id: datasetId, connectionId: (ds.connection_id as string | null) ?? null })
+      .catch((e) => console.warn(`[sync] aviso de fonte de volta falhou: ${(e as Error).message}`))
     await db.query(
       `update sync_runs set status = 'done', rows = $2, bytes = $3, finished_at = now(),
                            compacted = $4, compact_ms = $5, parts = $6 where id = $1`,
       [run.id, total, dirBytes(dir), compacted, compactMs, listParquet(dir).length],
     )
     console.log(`[sync] ${ds.slug}: ${mode}, ${total} linha(s) novas, total no lake ${count}.`)
-    // A fonte respondeu: se ela estava em espera por queda, a espera acaba e o
-    // "de volta" sai uma vez. Sem await: aviso não segura a fila.
-    void onSourceSuccess({ id: datasetId, connectionId: (ds.connection_id as string | null) ?? null })
-      .catch((e) => console.warn(`[sync] aviso de fonte de volta falhou: ${(e as Error).message}`))
     // Publicação no Databricks: DEPOIS de a sincronização estar fechada no
     // banco, e sem poder desfazê-la. `publicarDataset` não lança — se lançasse,
     // uma indisponibilidade do Databricks viraria "a sincronização falhou", com
