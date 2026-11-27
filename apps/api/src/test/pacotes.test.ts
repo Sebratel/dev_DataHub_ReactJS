@@ -216,4 +216,23 @@ describe('Pacotes de conjuntos: onda 1', () => {
     assert.ok(l.body.packs[0].datasets.every((d: { instalado: boolean }) => d.instalado))
     assert.ok(l.body.packs[0].notebooks.every((n: { instalado: boolean }) => n.instalado))
   })
+
+  // A avaliação do assistente (modules/ai/evaluation.ts) calcula o gabarito
+  // com SQL sobre estes conjuntos. Se um nome de coluna do pacote mudar, a
+  // pergunta passaria a ser "pulada" em produção sem ninguém notar — aqui quebra.
+  it('o SQL de referência de cada pergunta da avaliação roda sobre a onda 1', async () => {
+    const { CASOS, gabarito } = await import('../modules/ai/evaluation.js')
+    const daOnda = new Set(slugsDoPacote)
+    const casos = CASOS.filter((c) => {
+      const citados = [...c.sql.matchAll(/\b((?:prata|ouro)_[a-z0-9_]+)\b/g)].map((m) => m[1])
+      return citados.length && citados.every((s) => daOnda.has(s))
+    })
+    assert.ok(casos.length >= 15, `só ${casos.length} perguntas da onda 1`)
+    const admin = { email: USERS.admin, name: 'admin', roles: ['admin'], tenant: 'sebratel', master: false, masterConfigured: true } as never
+    for (const c of casos) {
+      const linha = await gabarito(admin, c.sql).catch((e: Error) => assert.fail(`${c.id}: ${e.message}`))
+      // Linha vazia é aceitável no laboratório (mês sem movimento); coluna errada não.
+      if (linha) for (const ch of c.checar) assert.ok(ch.coluna in linha, `${c.id}: coluna ${ch.coluna} não existe`)
+    }
+  })
 })

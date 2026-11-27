@@ -9,7 +9,7 @@ import ConnectionsPage from '@/features/admin/ConnectionsPage'
 import AccessPage from '@/features/admin/AccessPage'
 import AuditPage from '@/features/admin/AuditPage'
 import HealthModule from '@/features/admin/HealthModule'
-import AiProvidersPage from '@/features/admin/AiProvidersPage'
+import AiModule from '@/features/admin/AiModule'
 import UpdateRulesModule from '@/features/admin/UpdateRulesModule'
 import GatewayApisPage from '@/features/gateway-apis/GatewayApisPage'
 import NotebooksPage from '@/features/notebooks/NotebooksPage'
@@ -74,7 +74,7 @@ const routes: RouteObject[] = [
       // A antiga tela Monitoramento virou um cartão da Saúde da plataforma;
       // o endereço velho continua funcionando para quem o salvou.
       { path: 'admin/monitor', element: <Navigate to="/admin/health" replace /> },
-      { path: 'admin/ai-providers', element: <AiProvidersPage /> },
+      { path: 'admin/ai-providers', element: <AiModule /> },
       // Regras de atualização e Padronizar atualização viraram um módulo com abas (26/11/2026).
       { path: 'admin/sync-rules', element: <UpdateRulesModule /> },
       { path: 'admin/quality', element: <Navigate to={{ pathname: '/admin/health', hash: '#qualidade' }} replace /> },

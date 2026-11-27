@@ -165,6 +165,9 @@ Para deixar a ingestão mais gentil: lote menor + pausa maior (ex.:
 | `DQ_AUTOFIX_ENABLED` | `true` | Liga a correção automática da madrugada |
 | `DQ_AUTOFIX_HOUR` | `1` | Hora da correção automática (só nessa hora; não recupera depois) |
 | `DQ_AUTOFIX_SMALL` / `_MEDIUM` / `_LARGE` | `3` / `2` / `1` | Quantos divergentes por faixa, por noite (0 tira a faixa) |
+| `AI_MAX_ROUNDS` | `25` | Rodadas de consulta do assistente por pergunta |
+| `AI_MAX_SECONDS` | `300` | Teto de tempo do assistente por pergunta (no limite, responde com o que tem) |
+| `AI_SQL_MAX_ROWS` | `200` | Linhas que uma consulta SQL do assistente devolve a ele |
 
 > Variável nova **tem** que entrar no bloco `environment` do `docker-compose.yml`:
 > o que não estiver listado lá não chega ao contêiner, por mais preenchido que
@@ -540,6 +543,44 @@ O SQL escrito para o DuckDB passa intacto.
   - `SIMILAR TO` e `regexp_matches()` existem nos dois motores com significados
     diferentes;
   - os operadores `#>`/`#>>` não existem aqui; use `json(b)_extract_path`.
+
+## Assistente IA como analista (desde 27/11/2026)
+
+O assistente falhava menos por raciocínio e mais por ferramenta e contexto: só consultava um conjunto
+por vez (sem JOIN), parava em 8 rodadas, não conhecia as regras do Voalle e respondia em 1 a 3 frases.
+
+**O que ele tem agora:**
+- **`run_sql`**: SELECT livre sobre o lake, com JOIN, CTE e janela. Passa pela mesma porta do Notebook
+  (`compileNotebookSql`): só os conjuntos que a pessoa lê, coluna oculta fora, sensível mascarado
+  **sempre** (também para admin, SEG-05). Aceita SQL do Postgres (`erp.contracts`, `to_char`…).
+  Devolve até `AI_SQL_MAX_ROWS` linhas (padrão 200). Não existe no construtor de widgets.
+- **Fôlego**: `AI_MAX_ROUNDS` (25) rodadas e `AI_MAX_SECONDS` (300) por pergunta. No limite, ainda
+  responde com o que já consultou.
+- **Conhecimento** (`modules/ai/knowledge.ts`), em camadas que valem sozinhas para conjunto novo:
+  1. regras gerais do negócio (no prompt de toda pergunta);
+  2. por **tabela de origem** (`erp.contracts`, `erp.financial_receivable_titles`…): vale para
+     qualquer conjunto que copie aquela tabela, com o nome que tiver;
+  3. por conjunto de **pacote** (descrição do pacote + notas de campo) e, para todo calculado, o
+     próprio SQL;
+  4. **notas da equipe**: tela do conjunto › "O que o assistente sabe". Escreve o dono do conjunto
+     ou um admin; vai junto em toda pergunta sobre ele (até 8 mil caracteres).
+  Por cima, o **perfil automático** (`profile.ts`): nulos, distintos, mínimo e máximo, e os valores
+  com a contagem dos campos de texto com poucos valores — lido do Parquet na primeira vez e guardado
+  até a próxima carga. Campo sensível não leva valor nenhum.
+- **Mapa** no prompt: os conjuntos dos pacotes que estão no lake e os oficiais.
+- **Relatório**: pergunta direta → número em 1 a 3 frases; pedido de análise → Markdown com tabela;
+  "salva/monta um relatório" → `create_notebook` (privado, no nome de quem perguntou, com cada SQL
+  conferido antes de salvar).
+
+**Avaliação** (Operar › Assistente IA › Avaliação, só admin): 26 perguntas reais de negócio
+(`modules/ai/evaluation.ts`). O gabarito é um SQL sobre os conjuntos dos pacotes, calculado **na
+hora**, no mesmo lake; a pergunta passa quando a resposta traz o número (com tolerância). Pergunta
+cujo conjunto não está instalado é "pulada". Rode depois de trocar de modelo, de prompt ou de
+conhecimento: é o que diz se melhorou. As perguntas da avaliação nunca entram no conhecimento
+(vazaria o gabarito).
+
+**Para ensinar uma regra nova:** se vale para uma tabela do Voalle, acrescente em
+`CONHECIMENTO_TABELAS` (código, revisado em PR); se é de um conjunto só, use as notas da equipe.
 
 ## Sugestões de melhoria (mesmo banco do Hub Apps, desde 21/11/2026)
 
